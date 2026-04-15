@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { Student } from './Student/Student';
+import { ValidationError } from './Error/ValidationError';
 
 // Load environment variables
 dotenv.config();
@@ -52,12 +53,13 @@ app.get('/api/students/:numero_libreta', async (req, res) => {
 app.post('/api/students', async (req, res) => {
   try {
     const student = new Student(req.body);
-    if (!student.validateStudent()) {
-      return res.status(400).json({ error: 'Invalid student data' });
-    }
     const created = await Student.createStudent(pool, student);
     res.status(201).json(created);
   } catch (error) {
+    if (error instanceof ValidationError ) {
+      console.error('Validation error creating student:', error.message);
+      return res.status(400).json({ error: 'Invalid student data' });
+    }
     console.error('Error creating student:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

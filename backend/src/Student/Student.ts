@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
-import { StudentStatus } from './StudentStatus'
+import { StudentStatus } from './StudentStatus';
+import {ValidationError} from '../Error/ValidationError';
+
 export class Student {
     nro_libreta: string;
     dni: string;
@@ -20,6 +22,9 @@ export class Student {
     }
 
     static async createStudent(pool: Pool, student: Student): Promise<Student> {
+
+        student.validateStudent();
+        
         const result = await pool.query(
             'INSERT INTO students (numero_libreta, dni, first_name, last_name, email, enrollment_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
             [student.nro_libreta, student.dni, student.first_name, student.last_name, student.email, student.enrollment_date, student.status]
@@ -36,15 +41,14 @@ export class Student {
         });
     }
 
-    validateStudent() : string {
-        if (!validateNroLibreta(this.nro_libreta)) return 'Invalid nro_libreta';
-        if (!validateDni(this.dni)) return 'Invalid dni';
-        if (!validateName(this.first_name)) return 'Invalid first_name';
-        if (!validateName(this.last_name)) return 'Invalid last_name';
-        if (!validateEmail(this.email)) return 'Invalid email';
-        if (!validateEnrollmentDate(this.enrollment_date)) return 'Invalid enrollment_date';
-        if (!validateStatus(this.status)) return 'Invalid status';
-        return '';
+    validateStudent() : void {
+        if (!validateNroLibreta(this.nro_libreta)) throw new ValidationError('Invalid nro_libreta');
+        if (!validateDni(this.dni)) throw new ValidationError('Invalid dni');
+        if (!validateName(this.first_name)) throw new ValidationError('Invalid first_name');
+        if (!validateName(this.last_name)) throw new ValidationError('Invalid last_name');
+        if (!validateEmail(this.email)) throw new ValidationError('Invalid email');
+        if (!validateEnrollmentDate(this.enrollment_date)) throw new ValidationError('Invalid enrollment_date');
+        if (!validateStatus(this.status)) throw new ValidationError('Invalid status');
     }
 }
 
