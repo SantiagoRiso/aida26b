@@ -3,6 +3,7 @@ import cors from 'cors';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
+import { Student } from './Student/Student';
 
 // Load environment variables
 dotenv.config();
@@ -50,12 +51,12 @@ app.get('/api/students/:numero_libreta', async (req, res) => {
 
 app.post('/api/students', async (req, res) => {
   try {
-    const { numero_libreta, dni, first_name, last_name, email, enrollment_date, status } = req.body;
-    const result = await pool.query(
-      'INSERT INTO students (numero_libreta, dni, first_name, last_name, email, enrollment_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [numero_libreta, dni, first_name, last_name, email, enrollment_date, status]
-    );
-    res.status(201).json(result.rows[0]);
+    const student = new Student(req.body);
+    if (!student.validateStudent()) {
+      return res.status(400).json({ error: 'Invalid student data' });
+    }
+    const created = await Student.createStudent(pool, student);
+    res.status(201).json(created);
   } catch (error) {
     console.error('Error creating student:', error);
     res.status(500).json({ error: 'Internal server error' });
