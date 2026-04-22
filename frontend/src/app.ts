@@ -7,6 +7,7 @@ type TableStructure = {
   columns: Record<string, {type:string}>
   pk: string
   uiName: string
+  endpoint? : string
 }
 
 const structure = {
@@ -125,26 +126,20 @@ function showSection(section: string) {
   }
 }
 
-// Load data functions
-async function loadStudents() {
+//Load 
+async function loadTableData(tableElement: HTMLTableElement, structureKey: keyof typeof structure.tables) {
+  const tableConfig = structure.tables[structureKey] as any;
+  const endpoint = tableConfig.endpoint || structureKey;
   try {
-    const response = await fetch(`${API_BASE}/students`);
-    const students: Student[] = await response.json();
-    renderStudentsTable(students);
+    const response = await fetch(`${API_BASE}/${endpoint}`);
+    let data = await response.json();
+    renderAnyTable(tableElement, tableConfig, data);
   } catch (error) {
-    console.error('Error loading students:', error);
+    console.error(`Error loading ${endpoint}:`, error);
   }
 }
-
-async function loadSubjects() {
-  try {
-    const response = await fetch(`${API_BASE}/subjects`);
-    const subjects: Subject[] = await response.json();
-    renderSubjectsTable(subjects);
-  } catch (error) {
-    console.error('Error loading subjects:', error);
-  }
-}
+const loadStudents = () => loadTableData(studentsTable, 'students');
+const loadSubjects = () => loadTableData(subjectsTable, 'subject');
 
 async function loadEnrollments() {
   try {
