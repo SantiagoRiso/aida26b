@@ -54,7 +54,7 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
    ```
    psql -U postgres -f database/bootstrap.sql
    ```
-   Esto crea los roles `aida26_owner` / `aida26_user` y la base `faculty_management`.
+   Esto crea los roles `aida26_owner` / `aida26_user` y la base `professional_agenda`.
 
 2. Aplicar migraciones (desde `backend/`):
    ```
@@ -81,7 +81,7 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
    ```
    DB_HOST=localhost
    DB_PORT=5432
-   DB_NAME=faculty_management
+   DB_NAME=professional_agenda
    DB_USER=tu_usuario
    DB_PASSWORD=tu_contraseña
    PORT=3000

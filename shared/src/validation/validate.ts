@@ -2,7 +2,13 @@ import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
 import type { ColumnDef, ColumnValidator, TableKey, TableRecordMap } from '../types/types';
 
-export type ParseResult<T extends TableKey> = { data: TableRecordMap[T] } | { errors: string[] };
+export type FieldErrors = Record<string, string>;
+
+// `errors` is the flattened message list (kept for existing callers); `fields` is the
+// authoritative per-field map.
+export type ParseResult<T extends TableKey> =
+  | { data: TableRecordMap[T] }
+  | { errors: string[]; fields: FieldErrors };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // Argentina (America/Argentina/Buenos_Aires) is UTC-3 all year - no daylight saving.
@@ -120,25 +126,27 @@ function validate<T extends TableKey>(table: T, data: unknown, fields: string[])
   const columns = structure.tables[table].columns as Record<string, ColumnDef>;
   const obj = (data != null && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   const allowed = new Set(fields);
-  const errors: string[] = [];
+  const fieldErrors: FieldErrors = {};
   const out: Record<string, unknown> = {};
 
   for (const key of Object.keys(obj)) {
-    if (!allowed.has(key)) errors.push(`${key} is not an allowed field`);
+    if (!allowed.has(key)) fieldErrors[key] = `${key} is not an allowed field`;
   }
 
   for (const key of fields) {
     const col = columns[key];
-    if (!col) { errors.push(`${key} is not a valid field`); continue; }
-    if (!(key in obj)) { errors.push(`${key} is required`); continue; }
+    if (!col) { fieldErrors[key] = `${key} is not a valid field`; continue; }
+    if (!(key in obj)) { fieldErrors[key] = `${key} is required`; continue; }
 
     const raw = obj[key];
     const error = validateField(table, key, raw);
-    if (error) { errors.push(error); continue; }
+    if (error) { fieldErrors[key] = error; continue; }
     out[key] = isEmpty(col, raw) ? null : normalizeValue(col, raw);
   }
 
-  return errors.length > 0 ? { errors } : { data: out as TableRecordMap[T] };
+  return Object.keys(fieldErrors).length > 0
+    ? { errors: Object.values(fieldErrors), fields: fieldErrors }
+    : { data: out as TableRecordMap[T] };
 }
 
 export const validateFullObject = <T extends TableKey>(table: T, data: unknown): ParseResult<T> =>

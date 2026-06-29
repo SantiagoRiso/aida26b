@@ -16,21 +16,20 @@ type TypeMap = {
 
 type MyTypeNames = keyof TypeMap;
 
-// Rules a column's value must satisfy. Grouped here so they stay separate from display/layout concerns.
 type ColumnValidator = {
   required?: boolean;
-  nullable?: boolean;       // value may be null (reflects a nullable DB column)
-  minLength?: number;       // string: minimum number of characters
-  maxLength?: number;       // string: maximum number of characters
-  minValue?: number;        // number: minimum value
-  maxValue?: number;        // number: maximum value
-  minDayOffset?: number;    // date: earliest allowed day-offset from today (-30 = 30 days ago, 0 = not in the past)
-  maxDayOffset?: number;    // date: latest allowed day-offset from today (0 = not in the future, 7 = up to 7 days ahead)
-  minDate?: string;         // date: earliest allowed calendar date, as ISO 'YYYY-MM-DD'
-  integer?: boolean;        // number must be an integer
-  pattern?: string;         // regex source the value must match
-  patternMessage?: string;  // human-readable message when pattern fails
-  normalize?: { pattern: string; replacement: string }; // regex find/replace applied to canonicalize the stored value
+  nullable?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  minValue?: number;
+  maxValue?: number;
+  minDayOffset?: number;    // day-offset from today: -30 = 30 days ago, 0 = not in the past
+  maxDayOffset?: number;    // day-offset from today: 0 = not in the future, 7 = up to 7 days ahead
+  minDate?: string;         // ISO 'YYYY-MM-DD'
+  integer?: boolean;
+  pattern?: string;
+  patternMessage?: string;
+  normalize?: { pattern: string; replacement: string };
 }
 
 type ForeignKeyDef = {
@@ -56,9 +55,52 @@ type ColumnDef = {
   readonlyOnEdit?: boolean;
   validator?: ColumnValidator;
   nullable?: boolean;
+  filterable?: boolean;
+  sortable?: boolean;
   derivable?: {originTable: string, sqlGenerationStatement: string};
   foreignKey?: ForeignKeyDef;
 }
+
+// Generic-CRUD operations a table exposes. Operations are enabled explicitly so route
+// builders never expose more than was declared.
+type CrudPolicy = {
+  create?: boolean;
+  read?: boolean;
+  update?: boolean;
+  delete?: boolean;
+};
+
+// Presence of this metadata turns the generic delete into an archive (set the deleted-at
+// column) instead of a physical delete.
+type SoftDeletePolicy = {
+  deletedAtColumn: string;
+  deletedByColumn?: string;
+};
+
+type StatusMeta = {
+  column: string;
+  values: Array<{ value: string; label: LocalizedText }>;
+};
+
+// Availability is computed in the domain layer from the weekly pattern minus dated
+// exceptions minus booked appointments — never stored.
+type SchedulableCapability = {
+  calendarLabel: LocalizedText;
+  identityField: string;
+  displayField: string;
+  ownerForeignKey: string;            // FK column naming this owner on schedules/appointments
+  availability: {
+    weeklySource: string;
+    exceptionSource: string;
+  };
+  conflict: {
+    overridable: boolean;
+  };
+  rules?: {
+    availability?: string;
+    conflict?: string;
+  };
+};
 
 type TableStructure = {
   columns: Record<string, ColumnDef>
@@ -67,6 +109,12 @@ type TableStructure = {
   title?: LocalizedText
   addButtonLabel?: LocalizedText
   referencedTables?: string[]
+  businessScoped?: boolean          // carries a direct `business_id` owner column
+  protected?: boolean               // workflow-owned; excluded from generic CRUD
+  crud?: CrudPolicy
+  softDelete?: SoftDeletePolicy
+  status?: StatusMeta
+  schedulable?: SchedulableCapability // set on professionals and resources
 }
 
 type InferType<FieldDefs extends Record<string, ColumnDef>> = {
@@ -89,4 +137,4 @@ type RendererProps<K extends TableKey> = {
 
 type RendererFunc = <K extends TableKey>(props: RendererProps<K>) => HTMLElement;
 
-export type {TypeMap, MyTypeNames, ColumnValidator, ColumnDef, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc};
+export type {TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc};

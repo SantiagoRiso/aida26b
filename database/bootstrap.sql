@@ -17,11 +17,11 @@ END
 $$;
 
 -- CREATE DATABASE cannot run inside a DO block; \gexec runs the guarded statement.
-SELECT 'CREATE DATABASE faculty_management OWNER aida26_owner'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'faculty_management')\gexec
+SELECT 'CREATE DATABASE professional_agenda OWNER aida26_owner'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'professional_agenda')\gexec
 
-\c faculty_management
+\c professional_agenda
 
 -- No broad default privileges; per-table grants are declared in the migrations.
-GRANT CONNECT ON DATABASE faculty_management TO aida26_user;
+GRANT CONNECT ON DATABASE professional_agenda TO aida26_user;
 GRANT USAGE   ON SCHEMA public               TO aida26_user;

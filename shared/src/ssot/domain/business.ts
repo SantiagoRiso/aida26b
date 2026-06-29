@@ -1,0 +1,118 @@
+import type { ColumnDef, TableStructure } from '../../types/types';
+
+export const pkColumn = {
+  type: 'string',
+  label: { es: 'ID', en: 'ID' },
+  editable: false,
+  sortable: true,
+  derivable: { originTable: '', sqlGenerationStatement: 'id' },
+} satisfies ColumnDef;
+
+// business_id only on direct owners; derived elsewhere.
+export const businessIdColumn = {
+  type: 'string',
+  label: { es: 'Negocio', en: 'Business' },
+  input: 'select',
+  validator: { required: true },
+  filterable: true,
+  sortable: false,
+  foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
+} satisfies ColumnDef;
+
+export const businessTables = {
+  // Admin-only configuration; never exposed through generic CRUD.
+  businesses: {
+    columns: {
+      id: pkColumn,
+      name: {
+        type: 'string',
+        label: { es: 'Nombre', en: 'Name' },
+        validator: { required: true },
+        filterable: true,
+        sortable: true,
+      },
+      timezone: {
+        type: 'string',
+        label: { es: 'Zona Horaria', en: 'Timezone' },
+        validator: { required: true },
+        filterable: false,
+        sortable: false,
+      },
+      currency_code: {
+        type: 'string',
+        label: { es: 'Moneda', en: 'Currency' },
+        validator: { required: true, pattern: '^ARS$', patternMessage: 'must be ARS' },
+        filterable: false,
+        sortable: false,
+      },
+    },
+    pk: 'id',
+    uiName: { es: 'Negocio', en: 'Business' },
+    title: { es: 'Negocios', en: 'Businesses' },
+    protected: true,
+  } satisfies TableStructure,
+
+  // Append-only audit log; business_id is the event scope.
+  audit_events: {
+    columns: {
+      id: pkColumn,
+      business_id: businessIdColumn,
+      actor_user_id: {
+        type: 'string',
+        label: { es: 'Usuario', en: 'User' },
+        input: 'select',
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'users', valueField: 'id', labelField: 'username' },
+      },
+      event_type: {
+        type: 'string',
+        label: { es: 'Evento', en: 'Event' },
+        validator: { required: true },
+        filterable: true,
+        sortable: true,
+      },
+      entity_type: {
+        type: 'string',
+        label: { es: 'Entidad', en: 'Entity' },
+        validator: { nullable: true },
+        filterable: true,
+        sortable: true,
+      },
+      entity_id: {
+        type: 'string',
+        label: { es: 'ID Entidad', en: 'Entity ID' },
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+      },
+      outcome: {
+        type: 'string',
+        label: { es: 'Resultado', en: 'Outcome' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: true,
+        options: [
+          { value: 'success', label: { es: 'Éxito', en: 'Success' } },
+          { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
+          { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
+        ],
+      },
+    },
+    pk: 'id',
+    uiName: { es: 'Evento de Auditoría', en: 'Audit Event' },
+    title: { es: 'Auditoría', en: 'Audit Log' },
+    businessScoped: true,
+    protected: true,
+    status: {
+      column: 'outcome',
+      values: [
+        { value: 'success', label: { es: 'Éxito', en: 'Success' } },
+        { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
+        { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
+      ],
+    },
+  } satisfies TableStructure,
+};

@@ -13,12 +13,14 @@ async function main() {
     throw new Error('ADMIN_USERNAME and ADMIN_PASSWORD with at least 8 characters are required');
   }
 
+  // Prefer owner credentials: the app role can't write config tables like businesses.
+  // Fall back to the app role for single-role dev databases.
   const pool = new Pool({
     host: process.env.DB_HOST,
     port: parseInt(process.env.DB_PORT || '5432', 10),
     database: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    user: process.env.DB_OWNER_USER || process.env.DB_USER,
+    password: process.env.DB_OWNER_PASSWORD || process.env.DB_PASSWORD,
   });
 
   const { passwordHash, passwordSalt } = await hashPassword(password);

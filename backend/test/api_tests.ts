@@ -1,11 +1,11 @@
 import * as asserts from './test_assertions';
 import * as fixtures from './test_objects';
-import { createAppGivenPool } from '../src/app';
+import { createApp } from '../src/app';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { Pool } from 'pg';
-import { afterAll, afterEach, beforeAll, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, test, expect } from 'vitest';
 
 const TESTS_PORT = 4137;
 export const API_BASE = `http://localhost:${TESTS_PORT}/api`;
@@ -32,7 +32,7 @@ beforeAll(async () => {
   );
   userId = user.rows[0].id;
 
-  const app = createAppGivenPool(testsPool);
+  const app = createApp(testsPool);
   server = app.listen(TESTS_PORT);
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
@@ -120,4 +120,28 @@ test('duplicate client_professional_services assignment returns conflict', async
 
   await asserts.insertedCorrectly('client_professional_services', assignment);
   await asserts.duplicateRejected('client_professional_services', assignment);
+});
+
+test('DELETE on a soft-deletable entity archives the row instead of removing it', async () => {
+  const created = await asserts.insertedCorrectly('clients', fixtures.clientFor(businessId, userId));
+
+  await asserts.deletedCorrectly('clients', created.id);
+
+  await asserts.toGetAnEmptyTable('clients');
+
+  const stored = await testsPool.query(
+    `SELECT deleted_at FROM clients WHERE id = $1`,
+    [created.id]
+  );
+  expect(stored.rows.length).toBe(1);
+  expect(stored.rows[0].deleted_at).not.toBeNull();
+});
+
+test('list responses carry pagination meta', async () => {
+  await asserts.insertedCorrectly('services', fixtures.serviceFor(businessId));
+
+  const response = await fetch(`${API_BASE}/services`);
+  const body = await response.json();
+  expect(body.success).toBe(true);
+  expect(body.meta).toMatchObject({ page: 1, limit: 20, total: 1 });
 });

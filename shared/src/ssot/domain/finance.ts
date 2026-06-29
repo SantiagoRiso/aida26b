@@ -1,0 +1,81 @@
+import type { TableStructure } from '../../types/types';
+import { pkColumn } from './business';
+
+const LEDGER_ENTRY_TYPES = [
+  { value: 'charge', label: { es: 'Cargo', en: 'Charge' } },
+  { value: 'payment', label: { es: 'Pago', en: 'Payment' } },
+  { value: 'adjustment', label: { es: 'Ajuste', en: 'Adjustment' } },
+] as const;
+
+export const financeTables = {
+  // Immutable: balance is SUM over entries; corrections are new adjustment rows.
+  // business_id is derived via the client.
+  ledger_entries: {
+    columns: {
+      id: pkColumn,
+      client_id: {
+        type: 'string',
+        label: { es: 'Cliente', en: 'Client' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
+      },
+      appointment_id: {
+        type: 'string',
+        label: { es: 'Turno', en: 'Appointment' },
+        input: 'select',
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'appointments', valueField: 'id', labelField: 'name' },
+      },
+      entry_type: {
+        type: 'string',
+        label: { es: 'Tipo', en: 'Type' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: true,
+        options: LEDGER_ENTRY_TYPES.map((t) => ({ value: t.value, label: t.label })),
+      },
+      amount_ars: {
+        type: 'string',
+        label: { es: 'Monto (ARS)', en: 'Amount (ARS)' },
+        validator: {
+          required: true,
+          pattern: '^\\d+(\\.\\d{1,2})?$',
+          patternMessage: 'must be a non-negative amount',
+        },
+        filterable: false,
+        sortable: true,
+      },
+      description: {
+        type: 'string',
+        label: { es: 'Descripción', en: 'Description' },
+        input: 'textarea',
+        validator: { nullable: true },
+        filterable: false,
+        sortable: false,
+      },
+      actor_user_id: {
+        type: 'string',
+        label: { es: 'Registrado por', en: 'Recorded By' },
+        input: 'select',
+        validator: { nullable: true },
+        filterable: false,
+        sortable: false,
+        foreignKey: { table: 'users', valueField: 'id', labelField: 'username' },
+      },
+    },
+    pk: 'id',
+    uiName: { es: 'Movimiento', en: 'Ledger Entry' },
+    title: { es: 'Cuenta Corriente', en: 'Ledger' },
+    protected: true,
+    status: {
+      column: 'entry_type',
+      values: LEDGER_ENTRY_TYPES.map((t) => ({ value: t.value, label: t.label })),
+    },
+  } satisfies TableStructure,
+};

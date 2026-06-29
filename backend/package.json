@@ -9,14 +9,15 @@
     "dev": "tsx watch src/server.ts",
     "migrate": "tsx src/migrate.ts",
     "seed-admin": "tsx src/seed-admin.ts",
+    "seed:foundation": "tsx src/seed-foundation.ts",
     "test": "vitest run --config vitest.config.mts",
     "test:db": "vitest run --config vitest.db.config.mts"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "pg": "^8.11.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "pg": "^8.11.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.13",
@@ -25,6 +26,6 @@
     "@types/pg": "^8.10.2",
     "tsx": "^4.22.3",
     "typescript": "^5.1.6",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.9"
   }
 }

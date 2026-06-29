@@ -1,21 +1,17 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import { structure } from '../../../shared/src/ssot/structure';
-import type { TableKey, Response } from '../../../shared/src/types/types';
-import { getPkFields } from '../../../shared/src/utils/utils';
-
-import {
-  sendSuccessOperationMessage,
-  sendNotFoundMessage,
-  sendErrorMessage,
-} from '../status_messages';
+import type { Response } from '../../../shared/src/types/types';
+import { getPkFields, getSoftDeletePolicy } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
   tryQuery,
   columnNamesEqualsNumber,
 } from '../helpers';
+
+import { sendData, sendError } from '../status_messages';
+import { assertCrudAllowed } from './crud-policy';
 
 import {
   validateOnlyPk,
@@ -27,13 +23,13 @@ export async function deleteHandler(
   res: express.Response,
   pool: Pool
 ) {
-  const tableNameParam = req.params.tableName;
+  const allowed = assertCrudAllowed(req.params.tableName, 'delete');
 
-  if (!isKnownTable(tableNameParam)) {
-    return sendNotFoundMessage(res, tableNameParam);
+  if (!allowed.ok) {
+    return sendError(res, allowed.status, allowed.code, allowed.message);
   }
 
-  const tableName = tableNameParam as TableKey;
+  const tableName = allowed.table;
   const entityName = getEntityName(tableName);
 
   const pk = validateOnlyPk(tableName, req.query);
@@ -43,42 +39,55 @@ export async function deleteHandler(
   }
 
   const pkFields = getPkFields(tableName);
-
   const pkValues = pkFields.map(
     (pkField) => (pk.data as Record<string, unknown>)[pkField]
   );
 
-  const whereArgumentsString = columnNamesEqualsNumber(
-    pkFields,
-    1,
-    ' AND '
-  );
+  const softDelete = getSoftDeletePolicy(tableName);
 
-  const query = `
-    DELETE FROM ${tableName}
-    WHERE ${whereArgumentsString}
-    RETURNING *
-  `;
+  let query: string;
+  let params: unknown[];
 
-  const queryResponse: Response = await tryQuery(pool, query, pkValues);
+  if (softDelete) {
+    // Referenced core records are archived, never physically removed.
+    const actorId = (req as { user?: { id?: number } }).user?.id ?? null;
+    const sets = [`${softDelete.deletedAtColumn} = now()`, `updated_at = now()`];
+    params = [];
+    let nextParam = 1;
+
+    if (softDelete.deletedByColumn) {
+      sets.push(`${softDelete.deletedByColumn} = $${nextParam++}`);
+      params.push(actorId);
+    }
+
+    const whereArguments = columnNamesEqualsNumber(pkFields, nextParam, ' AND ');
+    params.push(...pkValues);
+
+    query = `
+      UPDATE ${tableName}
+      SET ${sets.join(', ')}
+      WHERE ${whereArguments} AND ${softDelete.deletedAtColumn} IS NULL
+      RETURNING *
+    `;
+  } else {
+    const whereArguments = columnNamesEqualsNumber(pkFields, 1, ' AND ');
+    params = pkValues;
+    query = `
+      DELETE FROM ${tableName}
+      WHERE ${whereArguments}
+      RETURNING *
+    `;
+  }
+
+  const queryResponse: Response = await tryQuery(pool, query, params);
 
   if (!queryResponse.success) {
-    return sendErrorMessage(res, queryResponse.message);
+    return sendError(res, 500, 'internal_error', queryResponse.message);
   }
 
   if (queryResponse.data?.rowCount === 0) {
-    return sendNotFoundMessage(res, entityName);
+    return sendError(res, 404, 'not_found', `${entityName} not found`);
   }
 
-  return sendSuccessOperationMessage(
-    res,
-    entityName,
-    queryResponse.data?.rows?.[0],
-    'deleted',
-    200
-  );
-}
-
-function isKnownTable(tableName: string): tableName is TableKey {
-  return Object.prototype.hasOwnProperty.call(structure.tables, tableName);
+  return sendData(res, queryResponse.data?.rows?.[0], 200);
 }

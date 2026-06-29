@@ -1,8 +1,7 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import { structure } from '../../../shared/src/ssot/structure';
-import type { TableKey, Response } from '../../../shared/src/types/types';
+import type { Response } from '../../../shared/src/types/types';
 import { getPkFields } from '../../../shared/src/utils/utils';
 
 import {
@@ -12,11 +11,8 @@ import {
   columnNamesEqualsNumber,
 } from '../helpers';
 
-import {
-  sendSuccessOperationMessage,
-  sendNotFoundMessage,
-  sendErrorMessage,
-} from '../status_messages';
+import { sendData, sendError } from '../status_messages';
+import { assertCrudAllowed } from './crud-policy';
 
 import {
   validateFullObject,
@@ -29,13 +25,13 @@ export async function putHandler(
   res: express.Response,
   pool: Pool
 ) {
-  const tableNameParam = req.params.tableName;
+  const allowed = assertCrudAllowed(req.params.tableName, 'update');
 
-  if (!isKnownTable(tableNameParam)) {
-    return sendNotFoundMessage(res, tableNameParam);
+  if (!allowed.ok) {
+    return sendError(res, allowed.status, allowed.code, allowed.message);
   }
 
-  const tableName = tableNameParam as TableKey;
+  const tableName = allowed.table;
   const entityName = getEntityName(tableName);
 
   const validatedBody = validateFullObject(tableName, req.body);
@@ -61,10 +57,12 @@ export async function putHandler(
   );
 
   if (fieldsToUpdate.length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: `No editable fields found for ${entityName}`,
-    });
+    return sendError(
+      res,
+      400,
+      'no_editable_fields',
+      `No editable fields found for ${entityName}`
+    );
   }
 
   const newValues = fieldsToUpdate.map(
@@ -97,29 +95,15 @@ export async function putHandler(
 
   if (!result.success) {
     if (result.code === '23505') {
-      return res.status(409).json({
-        success: false,
-        data: undefined,
-        message: `${entityName} already exists`,
-      });
+      return sendError(res, 409, 'conflict', `${entityName} already exists`);
     }
 
-    return sendErrorMessage(res, result.message);
+    return sendError(res, 500, 'internal_error', result.message);
   }
 
   if (result.data?.rowCount === 0) {
-    return sendNotFoundMessage(res, entityName);
+    return sendError(res, 404, 'not_found', `${entityName} not found`);
   }
 
-  return sendSuccessOperationMessage(
-    res,
-    entityName,
-    result.data.rows[0],
-    'updated',
-    202
-  );
-}
-
-function isKnownTable(tableName: string): tableName is TableKey {
-  return Object.prototype.hasOwnProperty.call(structure.tables, tableName);
+  return sendData(res, result.data.rows[0], 202);
 }

@@ -1,4 +1,3 @@
-import { structure } from "../../../shared/src/ssot/structure";
 import express from "express";
 import { Pool } from "pg";
 
@@ -6,6 +5,9 @@ import {
   getEntityName,
   getDerivableFields,
   getReferencedRelations,
+  getFilterableColumns,
+  getSortableColumns,
+  softDeleteClause,
   tryQuery,
   columnNamesEqualsNumber,
 } from "../helpers";
@@ -16,7 +18,11 @@ import {
   sendSuccessOperationMessage,
   sendNotFoundMessage,
   sendErrorMessage,
+  sendList,
+  sendError,
 } from "../status_messages";
+
+import { assertCrudAllowed } from "./crud-policy";
 
 import type {
   TableKey,
@@ -34,13 +40,13 @@ export async function getHandler(
   res: express.Response,
   pool: Pool
 ) {
-  const tableNameParam = req.params.tableName;
+  const allowed = assertCrudAllowed(req.params.tableName, "read");
 
-  if (!isKnownTable(tableNameParam)) {
-    return sendNotFoundMessage(res, tableNameParam);
+  if (!allowed.ok) {
+    return sendError(res, allowed.status, allowed.code, allowed.message);
   }
 
-  const tableName = tableNameParam as TableKey;
+  const tableName = allowed.table;
   const entityName = getEntityName(tableName);
 
   if (isListRequest(req.query)) {
@@ -50,17 +56,16 @@ export async function getHandler(
   return getRowOfTable(pool, res, tableName, req.query, entityName);
 }
 
-/** Query builder used by list/table views. */
 export function buildListQuery(
   tableNameOrCTE: string,
   query: express.Request["query"],
   filterConfig: Record<string, ColumnDef>,
-  defaultSort: string | string[]
+  defaultSort: string | string[],
+  sortableColumns: string[]
 ) {
   const conditions: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 1;
-  const allowedColumns = Object.keys(filterConfig);
 
   for (const [key, rawValue] of Object.entries(query)) {
     if (!key.startsWith("filter_") || rawValue == null || rawValue === "") {
@@ -187,14 +192,14 @@ export function buildListQuery(
   const sortDir = requestedDir === "desc" ? "DESC" : "ASC";
 
   const sortCol =
-    typeof requestedSort === "string" && allowedColumns.includes(requestedSort)
+    typeof requestedSort === "string" && sortableColumns.includes(requestedSort)
       ? requestedSort
       : undefined;
 
   const orderColumns = sortCol
     ? [`"${sortCol}" ${sortDir}`]
     : defaultSortColumns
-        .filter((column) => allowedColumns.includes(column))
+        .filter((column) => sortableColumns.includes(column))
         .map((column) => `"${column}" ${sortDir}`);
 
   const orderClause =
@@ -238,12 +243,9 @@ export function buildListQuery(
     dataValues,
     countQuery,
     countValues: [...values],
+    page,
+    limit,
   };
-}
-
-/** Helpers */
-function isKnownTable(tableName: string): tableName is TableKey {
-  return Object.prototype.hasOwnProperty.call(structure.tables, tableName);
 }
 
 function isListRequest(query: express.Request["query"]): boolean {
@@ -310,30 +312,26 @@ function getSelectStatement(tableName: TableKey): string {
 
 function getBaseSelectQuery(tableName: TableKey): string {
   const referencedRelations = getReferencedRelations(tableName);
+  const softDelete = softDeleteClause(tableName);
 
   if (referencedRelations.length > 0) {
+    const alias = getEntityName(tableName);
+    const where = softDelete ? `WHERE ${alias}.${softDelete}` : "";
     return `
       ${getSelectStatement(tableName)}
-      FROM ${tableName} ${getEntityName(tableName)}
+      FROM ${tableName} ${alias}
       ${getJoinsStatements(tableName, referencedRelations)}
+      ${where}
     `;
   }
 
-  return `SELECT * FROM ${tableName}`;
+  return softDelete
+    ? `SELECT * FROM ${tableName} WHERE ${softDelete}`
+    : `SELECT * FROM ${tableName}`;
 }
 
 function getListFilterConfig(tableName: TableKey): Record<string, ColumnDef> {
-  const baseColumns = structure.tables[tableName].columns as Record<
-    string,
-    ColumnDef
-  >;
-
-  const derivedColumns = Object.fromEntries(getDerivableFields(tableName));
-
-  return {
-    ...baseColumns,
-    ...derivedColumns,
-  };
+  return getFilterableColumns(tableName);
 }
 
 async function getListOfTable(
@@ -345,25 +343,26 @@ async function getListOfTable(
   try {
     const defaultSort = getPkFields(tableName);
 
-    const { dataQuery, dataValues, countQuery, countValues } = buildListQuery(
-      getBaseSelectQuery(tableName),
-      query,
-      getListFilterConfig(tableName),
-      defaultSort
-    );
+    const { dataQuery, dataValues, countQuery, countValues, page, limit } =
+      buildListQuery(
+        getBaseSelectQuery(tableName),
+        query,
+        getListFilterConfig(tableName),
+        defaultSort,
+        getSortableColumns(tableName)
+      );
 
     const [dataResult, countResult] = await Promise.all([
       pool.query(dataQuery, dataValues),
       pool.query(countQuery, countValues),
     ]);
 
-    return res.json({
-      data: dataResult.rows,
-      total: parseInt(countResult.rows[0].count, 10),
-    });
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    return sendList(res, dataResult.rows, { page, limit, total });
   } catch (error) {
     console.error(`Error fetching ${tableName}:`, error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, 500, "internal_error", "Internal server error");
   }
 }
 
@@ -378,10 +377,12 @@ async function getRowByPKs(
     " AND "
   );
 
+  const softDelete = softDeleteClause(tableName);
+
   const queryStatement = `
     SELECT *
     FROM ${tableName}
-    WHERE ${whereArguments}
+    WHERE ${whereArguments}${softDelete ? ` AND ${softDelete}` : ""}
   `;
 
   return tryQuery(pool, queryStatement, pkValues);

@@ -8,18 +8,13 @@ import fs from 'fs';
 
 import * as auth from './auth';
 
-import { getHandler } from './routes/get';
-import { putHandler } from './routes/put';
-import { postHandler } from './routes/post';
-import { deleteHandler } from './routes/delete';
+import { mountGenericRoutes, mountObservability } from './app';
 
-// Load environment variables before reading process.env
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Database connection
 const pool = new Pool({
   host: process.env.DB_HOST,
   port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -28,9 +23,11 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
 });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
+
+// /health stays unauthenticated so container healthchecks can reach it.
+mountObservability(app, pool);
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
 
@@ -51,10 +48,8 @@ function isUniqueViolation(error: unknown) {
   );
 }
 
-// audit_events.business_id is NOT NULL, so we derive it from the actor's business.
-// When no actor business can be resolved (e.g. failed login), the write is skipped.
-// Best-effort: an audit failure never breaks the request. Business-scoping of
-// unauthenticated events is finalized once an active business context exists.
+// audit_events.business_id is NOT NULL, so derive it from the actor's business; skip the
+// write when none resolves (e.g. failed login). Best-effort: a failure never breaks the request.
 async function audit(
   req: Request,
   eventType: string,
@@ -161,8 +156,7 @@ const requireAdmin: RequestHandler = async (req, res, next) => {
   return res.status(403).json({ error: 'Forbidden' });
 };
 
-// Minimal write guard: any authenticated Admin may write; all authenticated
-// users may read. Full per-entity role/grant authorization is a later phase.
+// Any authenticated Admin may write; all authenticated users may read.
 const requireWrite: RequestHandler = async (req, res, next) => {
   if ((req as AuthedRequest).user?.role === 'Admin') {
     return next();
@@ -176,7 +170,6 @@ const requireWrite: RequestHandler = async (req, res, next) => {
   return res.status(403).json({ error: 'Forbidden' });
 };
 
-// Auth routes
 app.post('/api/auth/login', async (req, res) => {
   try {
     const username =
@@ -332,7 +325,6 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   }
 });
 
-// Admin routes
 app.post(
   '/api/admin/users',
   requireAuth,
@@ -430,42 +422,12 @@ app.post(
   }
 );
 
-// Generic entity API routes
-app.get('/api/:tableName', requireAuth, requirePasswordReady, async (req, res) => {
-  return getHandler(req, res, pool);
+// Same route stack as the test app factory, with the runtime auth guards layered on.
+mountGenericRoutes(app, pool, {
+  read: [requireAuth, requirePasswordReady],
+  write: [requireAuth, requirePasswordReady, requireWrite],
 });
 
-app.post(
-  '/api/:tableName',
-  requireAuth,
-  requirePasswordReady,
-  requireWrite,
-  async (req, res) => {
-    return postHandler(req, res, pool);
-  }
-);
-
-app.put(
-  '/api/:tableName',
-  requireAuth,
-  requirePasswordReady,
-  requireWrite,
-  async (req, res) => {
-    return putHandler(req, res, pool);
-  }
-);
-
-app.delete(
-  '/api/:tableName',
-  requireAuth,
-  requirePasswordReady,
-  requireWrite,
-  async (req, res) => {
-    return deleteHandler(req, res, pool);
-  }
-);
-
-// Resolve frontend static files directory
 let frontendDistPath = path.join(__dirname, '../../frontend/dist');
 
 if (!fs.existsSync(path.join(frontendDistPath, 'index.html'))) {
@@ -476,10 +438,8 @@ if (!fs.existsSync(path.join(frontendDistPath, 'index.html'))) {
   }
 }
 
-// Serve static files from frontend dist
 app.use(express.static(frontendDistPath));
 
-// Catch-all handler for frontend routes
 app.get('*', (_req, res) => {
   return res.sendFile(path.join(frontendDistPath, 'index.html'));
 });

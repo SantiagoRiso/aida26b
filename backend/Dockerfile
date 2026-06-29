@@ -5,10 +5,8 @@ WORKDIR /app/backend
 # Copy package files first for better layer caching
 COPY backend/package.json backend/package-lock.json* ./
 
-# Install dependencies from the lockfile
 RUN npm ci
 
-# Copy runtime inputs
 COPY backend/src ./src
 COPY backend/tsconfig.json ./
 COPY tsconfig.base.json /app/tsconfig.base.json
@@ -17,5 +15,8 @@ COPY database/migrations /app/database/migrations
 
 EXPOSE 3000
 
-# Run migrations and ensure the first admin exists before starting the API
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# Migrations and admin seed run before the API starts
 CMD ["sh", "-c", "npm run migrate && npm run seed-admin && npm run dev"]

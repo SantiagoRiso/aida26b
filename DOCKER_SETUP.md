@@ -99,8 +99,8 @@ docker-compose -f docker-compose.combined.yml up -d --build app  # Combined
 
 Access the database directly:
 ```bash
-docker-compose exec database psql -U postgres -d faculty_management
-docker-compose -f docker-compose.combined.yml exec database psql -U postgres -d faculty_management
+docker-compose exec database psql -U postgres -d professional_agenda
+docker-compose -f docker-compose.combined.yml exec database psql -U postgres -d professional_agenda
 ```
 
 ## Services Architecture
@@ -154,7 +154,7 @@ NODE_ENV: development
 PORT: 3000
 DB_HOST: database (Docker service name)
 DB_PORT: 5432
-DB_NAME: faculty_management
+DB_NAME: professional_agenda
 DB_USER: aida26_user
 DB_PASSWORD: CambiaEsta!
 API_URL: http://backend:3000  # Used by frontend
@@ -166,7 +166,7 @@ NODE_ENV: development
 PORT: 3000
 DB_HOST: database (Docker service name)
 DB_PORT: 5432
-DB_NAME: faculty_management
+DB_NAME: professional_agenda
 DB_USER: aida26_user
 DB_PASSWORD: CambiaEsta!
 ```

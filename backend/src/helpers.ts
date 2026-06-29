@@ -1,9 +1,33 @@
 import type { TableKey, Response, ColumnDef, TableStructure }  from '../../shared/src/types/types';
 import      { structure } from '../../shared/src/ssot/structure';
+import      { getPkFields, getSoftDeletePolicy } from '../../shared/src/utils/utils';
 import type { Pool }      from 'pg';
 
 function getEntityName(table: TableKey): string {
   return String(structure.tables[table].uiName.en);
+}
+
+// SQL predicate that hides soft-deleted rows, or '' for tables without soft-delete.
+function softDeleteClause(table: TableKey): string {
+  const policy = getSoftDeletePolicy(table);
+  return policy ? `"${policy.deletedAtColumn}" IS NULL` : '';
+}
+
+// Only SSOT-declared `filterable` columns may be used to build WHERE identifiers.
+function getFilterableColumns(table: TableKey): Record<string, ColumnDef> {
+  const columns = structure.tables[table].columns as Record<string, ColumnDef>;
+  return Object.fromEntries(
+    Object.entries(columns).filter(([, col]) => col.filterable === true),
+  );
+}
+
+// Only SSOT-declared `sortable` columns (plus the PK, always orderable) may build ORDER BY.
+function getSortableColumns(table: TableKey): string[] {
+  const columns = structure.tables[table].columns as Record<string, ColumnDef>;
+  const sortable = Object.entries(columns)
+    .filter(([, col]) => col.sortable === true)
+    .map(([name]) => name);
+  return Array.from(new Set([...getPkFields(table), ...sortable]));
 }
 
 async function tryQuery(pool: Pool, queryStatement: string, queryArguments?: any): Promise<Response>{
@@ -57,4 +81,4 @@ function formatTableColumnsForQuery(fieldsNames: string[], from: number = 1): st
   return [tupleContent, tupleWithReplaceParameters];
 }
 
-export { getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields };
+export { getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause };
