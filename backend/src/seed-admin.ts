@@ -22,18 +22,33 @@ async function main() {
   });
 
   const { passwordHash, passwordSalt } = await hashPassword(password);
+
+  // Schema is business-scoped: ensure a business exists and link the admin to it.
+  const business = await pool.query<{ id: number }>(
+    `WITH existing AS (SELECT id FROM businesses ORDER BY id LIMIT 1),
+          created AS (
+            INSERT INTO businesses (name)
+            SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM existing)
+            RETURNING id
+          )
+     SELECT id FROM existing UNION ALL SELECT id FROM created`,
+    [process.env.BUSINESS_NAME?.trim() || 'Default Business'],
+  );
+  const businessId = business.rows[0].id;
+
   await pool.query(
-    `INSERT INTO auth.users (username, email, password_hash, password_salt, role, is_active, must_change_password)
-     VALUES ($1, $2, $3, $4, 'admin', true, false)
+    `INSERT INTO auth.users (username, email, password_hash, password_salt, role, business_id, is_active, must_change_password)
+     VALUES ($1, $2, $3, $4, 'Admin', $5, true, false)
      ON CONFLICT (username) DO UPDATE
        SET email = EXCLUDED.email,
            password_hash = EXCLUDED.password_hash,
            password_salt = EXCLUDED.password_salt,
-           role = 'admin',
+           role = 'Admin',
+           business_id = EXCLUDED.business_id,
            is_active = true,
            must_change_password = false,
            updated_at = now()`,
-    [username, email, passwordHash, passwordSalt],
+    [username, email, passwordHash, passwordSalt, businessId],
   );
 
   await pool.end();

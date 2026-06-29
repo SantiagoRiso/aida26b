@@ -1,173 +1,123 @@
-import * as asserts from './test_assertions.ts';
-import * as test_objects from './test_objects';
-import { updateDBWithEnrollment, updateDBWithStudent, updateDBWithSubject, fetchFullTable } from './test_helpers.ts';
+import * as asserts from './test_assertions';
+import * as fixtures from './test_objects';
 import { createAppGivenPool } from '../src/app';
+import { runMigrations } from '../src/migrate';
+import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
+import { resetTestDb, makeTestPool } from './helpers';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, test } from 'vitest';
-import assert from 'node:assert';
-import dotenv from 'dotenv';
 
-const TESTS_PORT = 4000;
+const TESTS_PORT = 4137;
 export const API_BASE = `http://localhost:${TESTS_PORT}/api`;
 
-dotenv.config({path: '.env.tests'});
 let server: any;
+let testsPool: Pool;
+let businessId: string;
+let userId: string;
 
-const testsPool = new Pool({
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD
-})
+beforeAll(async () => {
+  await resetTestDb();
+  testsPool = makeTestPool();
+  await runMigrations(testsPool, DEFAULT_MIGRATIONS_DIR);
 
-beforeAll(async () => {    
-    const app = createAppGivenPool(testsPool);
-    server = app.listen(TESTS_PORT);
+  const business = await testsPool.query<{ id: string }>(
+    `INSERT INTO businesses (name) VALUES ('Test Business') RETURNING id`
+  );
+  businessId = business.rows[0].id;
+
+  const user = await testsPool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, password_hash, password_salt, role, business_id)
+     VALUES ('seed_client', 'seed@test.com', 'h', 's', 'Client', $1) RETURNING id`,
+    [businessId]
+  );
+  userId = user.rows[0].id;
+
+  const app = createAppGivenPool(testsPool);
+  server = app.listen(TESTS_PORT);
+  await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
 });
 
-afterEach(async () => await clearDatabase());
+afterEach(async () => {
+  await testsPool.query(
+    `TRUNCATE TABLE client_professional_services, schedule_exceptions, schedules,
+       appointments, ledger_entries, clients, professionals, resources, services
+     RESTART IDENTITY CASCADE`
+  );
+});
 
 afterAll(async () => {
-  testsPool.end();
+  await testsPool.end();
   server.close();
 });
 
-test('GET /students of empty db returns Response object with success and correct message', async () => {
-  try {
-    await await asserts.toGetAnEmptyTable('students')
-  } catch (error) {
-        handleError(error);
-  }
+test('GET /clients on empty db returns an empty list', async () => {
+  await asserts.toGetAnEmptyTable('clients');
 });
 
-test('GET /subjects of empty db returns Response object with success and correct message', async () => {
-  try {
-    await asserts.toGetAnEmptyTable('subjects');
-  } catch (error) {
-        handleError(error);
-  }
+test('GET /professionals on empty db returns an empty list', async () => {
+  await asserts.toGetAnEmptyTable('professionals');
 });
 
-test('GET /enrollments of empty db returns Response object with success and correct message', async () => {
-  try {
-    await asserts.toGetAnEmptyTable('enrollments');
-  } catch (error) {
-        handleError(error);
-  }
+test('GET /services on empty db returns an empty list', async () => {
+  await asserts.toGetAnEmptyTable('services');
 });
 
-test('POST & GET /student to an empty db inserts student to db', async () => {
-  try {
-    await asserts.studentInsertedToEmptyTableCorrectly(test_objects.homeroSimpson);
-    } 
-    catch (error) {
-        handleError(error);
-  }
+test('POST & GET /clients inserts a client into an empty db', async () => {
+  await asserts.toGetAnEmptyTable('clients');
+  const created = await asserts.insertedCorrectly('clients', fixtures.clientFor(businessId, userId));
+  await asserts.fetchedByIdMatches('clients', created.id, fixtures.clientFor(businessId, userId));
+  await asserts.tableContainsCount('clients', 1);
 });
 
-test('POST & GET /subject to an empty db inserts subject to db', async () => {
-  try {
-    await asserts.subjectInsertedToEmptyTableCorrectly(test_objects.ari);
-  } catch (error) {
-        handleError(error);
-  }
+test('POST & GET /professionals inserts a professional into an empty db', async () => {
+  await asserts.toGetAnEmptyTable('professionals');
+  const created = await asserts.insertedCorrectly('professionals', fixtures.professionalFor(businessId));
+  await asserts.fetchedByIdMatches('professionals', created.id, fixtures.professionalFor(businessId));
 });
 
-test('POST & GET /enrollment to an empty db inserts enrollment to db', async () => {
-  try {
-    await asserts.studentInsertedToEmptyTableCorrectly(test_objects.homeroSimpson);
-    await asserts.subjectInsertedToEmptyTableCorrectly(test_objects.ari);
-    await asserts.enrollmentInsertedToEmptyTableCorrectly(test_objects.enrollmentHomeroAri, test_objects.enrollmentHomeroAriExpectedResponse);
-  } catch (error) {
-        handleError(error);
-  }
+test('POST & GET /services inserts a service into an empty db', async () => {
+  await asserts.toGetAnEmptyTable('services');
+  const created = await asserts.insertedCorrectly('services', fixtures.serviceFor(businessId));
+  await asserts.fetchedByIdMatches('services', created.id, fixtures.serviceFor(businessId));
 });
 
-test('DELETE /student', async () => {
-  try {
-    await asserts.studentInsertedToEmptyTableCorrectly(test_objects.homeroSimpson);
-    await asserts.studentUniqueInTableDeletedCorrectly(test_objects.homeroSimpson);
-  } catch (error) {
-        handleError(error);
-  }
+test('DELETE /clients removes the row', async () => {
+  const created = await asserts.insertedCorrectly('clients', fixtures.clientFor(businessId, userId));
+  await asserts.deletedCorrectly('clients', created.id);
+  await asserts.toGetAnEmptyTable('clients');
 });
 
-test('DELETE /subject', async () => {
-  try {
-    await asserts.subjectInsertedToEmptyTableCorrectly(test_objects.ari);
-    await asserts.subjectUniqueInTableDeletedCorrectly(test_objects.ari);
-  } catch (error) {
-        handleError(error);
-  }
+test('DELETE /services removes the row', async () => {
+  const created = await asserts.insertedCorrectly('services', fixtures.serviceFor(businessId));
+  await asserts.deletedCorrectly('services', created.id);
+  await asserts.toGetAnEmptyTable('services');
 });
 
-test('DELETE /enrollment', async () => {
-  try {
-    await asserts.studentInsertedToEmptyTableCorrectly(test_objects.homeroSimpson);
-    await asserts.subjectInsertedToEmptyTableCorrectly(test_objects.ari);
-    await asserts.enrollmentInsertedToEmptyTableCorrectly(test_objects.enrollmentHomeroAri, test_objects.enrollmentHomeroAriExpectedResponse);
-    await asserts.enrollmentUniqueInTableDeletedCorrectly(test_objects.enrollmentHomeroAri);
-  } catch (error) {
-        handleError(error);
-  }
+test('PUT /clients updates the row', async () => {
+  const created = await asserts.insertedCorrectly('clients', fixtures.clientFor(businessId, userId));
+  await asserts.updatedCorrectly('clients', created.id, fixtures.clientModifiedFor(businessId, userId));
+  await asserts.fetchedByIdMatches('clients', created.id, fixtures.clientModifiedFor(businessId, userId));
 });
 
-test('PUT /student', async () => {
-    try {
-    await asserts.studentInsertedToEmptyTableCorrectly(test_objects.homeroSimpson);
-    let response = await updateDBWithStudent(test_objects.homeroModified.numero_libreta, test_objects.homeroModified.dni, test_objects.homeroModified.first_name, test_objects.homeroModified.last_name, test_objects.homeroModified.email, test_objects.homeroModified.enrollment_date, test_objects.homeroModified.status, true);
-    assert.strictEqual(response.status, 202);
-    let body = await response.json();
-    asserts.operationPerformedSuccesfully(body, 'students', test_objects.homeroModified, 'updated');
-    response = await fetchFullTable('students');
-    body = await response.json()
-    asserts.tableOnlyContains(body, 'students', test_objects.homeroModified);
-    } 
-    catch (error) {
-        handleError(error);
-  }
+test('PUT /professionals updates the row', async () => {
+  const created = await asserts.insertedCorrectly('professionals', fixtures.professionalFor(businessId));
+  await asserts.updatedCorrectly('professionals', created.id, fixtures.professionalModifiedFor(businessId));
 });
 
-test('PUT /subject', async () => {
-  try {
-    await asserts.subjectInsertedToEmptyTableCorrectly(test_objects.ari);
-    let response = await updateDBWithSubject(test_objects.ariModified.cod_mat, test_objects.ariModified.name, test_objects.ariModified.description, test_objects.ariModified.credits, test_objects.ariModified.department, true);
-    assert.strictEqual(response.status, 202);
-    let body = await response.json();
-    asserts.operationPerformedSuccesfully(body, 'subjects', test_objects.ariModified, 'updated');
-    response = await fetchFullTable('subjects');
-    body = await response.json();
-    asserts.tableOnlyContains(body, 'subjects', test_objects.ariModified);
-    } 
-    catch (error) {
-        handleError(error);
-   }
+test('PUT /services updates the row', async () => {
+  const created = await asserts.insertedCorrectly('services', fixtures.serviceFor(businessId));
+  await asserts.updatedCorrectly('services', created.id, fixtures.serviceModifiedFor(businessId));
 });
 
-test('PUT /enrollment', async () => {
-  try {
-    await test_objects.DBWithStudentAndSubject();
-    await asserts.enrollmentInsertedToEmptyTableCorrectly(test_objects.enrollmentHomeroAri, test_objects.enrollmentHomeroAriExpectedResponse);
-    let response = await updateDBWithEnrollment(test_objects.enrollmentHomeroAriModified.numero_libreta, test_objects.enrollmentHomeroAriModified.cod_mat, test_objects.enrollmentHomeroAriModified.enrollment_date,test_objects.enrollmentHomeroAriModified.grade, test_objects.enrollmentHomeroAriModified.status, true);
-    assert.strictEqual(response.status, 202);
-    let body = await response.json();
-    asserts.operationPerformedSuccesfully(body, 'enrollments', test_objects.enrollmentHomeroAriModified, 'updated');
-    response = await fetchFullTable('enrollments'); 
-    body = await response.json();
-    asserts.tableOnlyContains(body, 'enrollments', test_objects.enrollmentHomeroAriModifiedExpectedResponse);
-    } 
-    catch (error) {
-        handleError(error);
-  }
+test('duplicate client_professional_services assignment returns conflict', async () => {
+  const client = await asserts.insertedCorrectly('clients', fixtures.clientFor(businessId, userId));
+  const professional = await asserts.insertedCorrectly('professionals', fixtures.professionalFor(businessId));
+  const service = await asserts.insertedCorrectly('services', fixtures.serviceFor(businessId));
+  const assignment = fixtures.clientPriceFor(client.id, professional.id, service.id);
+
+  await asserts.insertedCorrectly('client_professional_services', assignment);
+  await asserts.duplicateRejected('client_professional_services', assignment);
 });
-
-function handleError(error: unknown) {
-    clearDatabase();
-    console.log(error);
-    throw error;
-}
-
-async function clearDatabase(){
-    await testsPool.query(`TRUNCATE TABLE students, subjects, enrollments CASCADE`);
-}

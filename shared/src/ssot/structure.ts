@@ -13,54 +13,38 @@ function localizeText(text: LocalizedText): string {
   return text[getCurrentLanguage()] ?? text.es;
 }
 
+const pkColumn = {
+  type: 'string',
+  label: { es: 'ID', en: 'ID' },
+  editable: false,
+  derivable: { originTable: '', sqlGenerationStatement: 'id' },
+} as const;
+
 export const structure = {
   tables: {
-    students: {
+    clients: {
       columns: {
-        numero_libreta: {
+        id: pkColumn,
+        business_id: {
           type: 'string',
-          label: { es: 'Número de Libreta', en: 'Student ID' },
-          readonlyOnEdit: true,
-          validator: {
-            required: true,
-            pattern: '^\\d{1,4}/\\d{2}$',
-            patternMessage:
-              'must match pattern NNNN/YY (1-4 digit number, slash, 2-digit year; leading zeros optional on the number)',
-            normalize: {
-              pattern: '^0+(?=\\d)',
-              replacement: '',
-            },
-          },
+          label: { es: 'Negocio', en: 'Business' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
         },
 
-        dni: {
+        user_id: {
           type: 'string',
-          label: { es: 'DNI', en: 'ID Number' },
-          validator: {
-            required: true,
-            pattern: '^\\d{7,8}$',
-            patternMessage: 'must be 7 or 8 digits',
-          },
+          label: { es: 'Usuario', en: 'User' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'users', valueField: 'id', labelField: 'username' },
         },
 
-        first_name: {
+        display_name: {
           type: 'string',
-          label: { es: 'Nombre', en: 'First Name' },
-          validator: {
-            required: true,
-            pattern: '^\\D+$',
-            patternMessage: 'must not contain numbers',
-          },
-        },
-
-        last_name: {
-          type: 'string',
-          label: { es: 'Apellido', en: 'Last Name' },
-          validator: {
-            required: true,
-            pattern: '^\\D+$',
-            patternMessage: 'must not contain numbers',
-          },
+          label: { es: 'Nombre', en: 'Name' },
+          validator: { required: true },
         },
 
         email: {
@@ -74,196 +58,276 @@ export const structure = {
           },
         },
 
-        enrollment_date: {
+        phone: {
           type: 'string',
-          label: { es: 'Fecha de Inscripción', en: 'Enrollment Date' },
-          input: 'date',
-          validator: {
-            nullable: true,
-            minDate: '1821-08-09',
-            maxDayOffset: 0,
-          },
+          label: { es: 'Teléfono', en: 'Phone' },
+          validator: { nullable: true },
         },
 
-        status: {
+        notes: {
           type: 'string',
-          label: { es: 'Estado', en: 'Status' },
-          input: 'select',
-          validator: {
-            nullable: true,
-          },
-          options: [
-            { value: 'active', label: { es: 'Activo', en: 'Active' } },
-            { value: 'graduated', label: { es: 'Graduado', en: 'Graduated' } },
-            {
-              value: 'interrupted',
-              label: { es: 'Interrumpido', en: 'Interrupted' },
-            },
-          ],
+          label: { es: 'Notas', en: 'Notes' },
+          input: 'textarea',
+          validator: { nullable: true },
         },
       },
-      pk: 'numero_libreta',
-      uiName: { es: 'Alumno', en: 'Student' },
-      title: { es: 'Alumnos', en: 'Students' },
-      addButtonLabel: { es: 'Agregar Alumno', en: 'Add Student' },
+      pk: 'id',
+      uiName: { es: 'Cliente', en: 'Client' },
+      title: { es: 'Clientes', en: 'Clients' },
+      addButtonLabel: { es: 'Agregar Cliente', en: 'Add Client' },
     } satisfies TableStructure,
 
-    subjects: {
+    professionals: {
       columns: {
-        cod_mat: {
+        id: pkColumn,
+
+        business_id: {
           type: 'string',
-          label: { es: 'Código', en: 'Code' },
-          readonlyOnEdit: true,
-          validator: {
-            required: true,
-          },
+          label: { es: 'Negocio', en: 'Business' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
+        },
+
+        user_id: {
+          type: 'string',
+          label: { es: 'Usuario', en: 'User' },
+          input: 'select',
+          validator: { nullable: true },
+          foreignKey: { table: 'users', valueField: 'id', labelField: 'username' },
+        },
+
+        display_name: {
+          type: 'string',
+          label: { es: 'Nombre', en: 'Name' },
+          validator: { required: true },
+        },
+
+        bio: {
+          type: 'string',
+          label: { es: 'Biografía', en: 'Bio' },
+          input: 'textarea',
+          validator: { nullable: true },
+        },
+      },
+      pk: 'id',
+      uiName: { es: 'Profesional', en: 'Professional' },
+      title: { es: 'Profesionales', en: 'Professionals' },
+      addButtonLabel: { es: 'Agregar Profesional', en: 'Add Professional' },
+    } satisfies TableStructure,
+
+    resources: {
+      columns: {
+        id: pkColumn,
+
+        business_id: {
+          type: 'string',
+          label: { es: 'Negocio', en: 'Business' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
         },
 
         name: {
           type: 'string',
           label: { es: 'Nombre', en: 'Name' },
-          validator: {
-            required: true,
-          },
+          validator: { required: true },
         },
 
         description: {
           type: 'string',
           label: { es: 'Descripción', en: 'Description' },
           input: 'textarea',
-          validator: {
-            nullable: true,
-          },
-        },
-
-        credits: {
-          type: 'number',
-          label: { es: 'Créditos', en: 'Credits' },
-          input: 'number',
-          validator: {
-            nullable: true,
-            integer: true,
-            minValue: 1,
-          },
-        },
-
-        department: {
-          type: 'string',
-          label: { es: 'Departamento', en: 'Department' },
-          validator: {
-            nullable: true,
-          },
+          validator: { nullable: true },
         },
       },
-      pk: 'cod_mat',
-      uiName: { es: 'Materia', en: 'Subject' },
-      title: { es: 'Materias', en: 'Subjects' },
-      addButtonLabel: { es: 'Agregar Materia', en: 'Add Subject' },
+      pk: 'id',
+      uiName: { es: 'Recurso', en: 'Resource' },
+      title: { es: 'Recursos', en: 'Resources' },
+      addButtonLabel: { es: 'Agregar Recurso', en: 'Add Resource' },
     } satisfies TableStructure,
 
-    enrollments: {
-      pk: ['numero_libreta', 'cod_mat'],
-      uiName: { es: 'Inscripción', en: 'Enrollment' },
+    services: {
       columns: {
-        numero_libreta: {
+        id: pkColumn,
+
+        business_id: {
           type: 'string',
-          label: { es: 'Número de Libreta', en: 'Student ID' },
-          readonlyOnEdit: true,
-          validator: {
-            required: true,
-            pattern: '^\\d{1,4}/\\d{2}$',
-            patternMessage:
-              'must match pattern NNNN/YY (1-4 digit number, slash, 2-digit year; leading zeros optional on the number)',
-            normalize: {
-              pattern: '^0+(?=\\d)',
-              replacement: '',
-            },
-          },
+          label: { es: 'Negocio', en: 'Business' },
           input: 'select',
-          foreignKey: {
-            table: 'students',
-            valueField: 'numero_libreta',
-            labelField: `first_name || ' ' || last_name`,
-          },
+          validator: { required: true },
+          foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
         },
 
-        student_name: {
+        name: {
           type: 'string',
-          label: { es: 'Nombre del Alumno', en: 'Student Name' },
-          editable: false,
-          derivable: {
-            originTable: 'students',
-            sqlGenerationStatement:
-              `entityName.first_name || ' ' || entityName.last_name`,
-          },
+          label: { es: 'Nombre', en: 'Name' },
+          validator: { required: true },
         },
 
-        cod_mat: {
+        description: {
           type: 'string',
-          label: { es: 'Código de Materia', en: 'Subject Code' },
-          readonlyOnEdit: true,
-          validator: {
-            required: true,
-          },
-          input: 'select',
-          foreignKey: {
-            table: 'subjects',
-            valueField: 'cod_mat',
-            labelField: 'name',
-          },
+          label: { es: 'Descripción', en: 'Description' },
+          input: 'textarea',
+          validator: { nullable: true },
         },
 
-        subject_name: {
-          type: 'string',
-          label: { es: 'Nombre de Materia', en: 'Subject Name' },
-          editable: false,
-          derivable: {
-            originTable: 'subjects',
-            sqlGenerationStatement: `entityName.name`,
-          },
-        },
-
-        enrollment_date: {
-          type: 'string',
-          label: { es: 'Fecha de Inscripción', en: 'Enrollment Date' },
-          input: 'date',
-          validator: {
-            required: true,
-            minDate: '1821-08-09',
-          },
-        },
-
-        grade: {
+        default_duration_minutes: {
           type: 'number',
-          label: { es: 'Nota', en: 'Grade' },
+          label: { es: 'Duración (min)', en: 'Duration (min)' },
           input: 'number',
-          validator: {
-            nullable: true,
-            minValue: 0,
-            maxValue: 10,
-          },
+          validator: { required: true, integer: true, minValue: 1 },
         },
 
-        status: {
+        default_price_ars: {
           type: 'string',
-          label: { es: 'Estado', en: 'Status' },
-          input: 'select',
+          label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
           validator: {
-            nullable: true,
+            required: true,
+            pattern: '^\\d+(\\.\\d{1,2})?$',
+            patternMessage: 'must be a non-negative amount',
           },
-          options: [
-            { value: 'enrolled', label: { es: 'Inscrito', en: 'Enrolled' } },
-            {
-              value: 'completed',
-              label: { es: 'Completado', en: 'Completed' },
-            },
-            { value: 'failed', label: { es: 'Fallido', en: 'Failed' } },
-          ],
         },
       },
-      title: { es: 'Inscripciones', en: 'Enrollments' },
-      addButtonLabel: { es: 'Agregar Inscripción', en: 'Add Enrollment' },
-      referencedTables: ['students', 'subjects'],
+      pk: 'id',
+      uiName: { es: 'Servicio', en: 'Service' },
+      title: { es: 'Servicios', en: 'Services' },
+      addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    } satisfies TableStructure,
+
+    client_professional_services: {
+      columns: {
+        id: pkColumn,
+
+        client_id: {
+          type: 'string',
+          label: { es: 'Cliente', en: 'Client' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
+        },
+
+        professional_id: {
+          type: 'string',
+          label: { es: 'Profesional', en: 'Professional' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        },
+
+        service_id: {
+          type: 'string',
+          label: { es: 'Servicio', en: 'Service' },
+          input: 'select',
+          validator: { required: true },
+          foreignKey: { table: 'services', valueField: 'id', labelField: 'name' },
+        },
+
+        price_ars: {
+          type: 'string',
+          label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
+          validator: {
+            required: true,
+            pattern: '^\\d+(\\.\\d{1,2})?$',
+            patternMessage: 'must be a non-negative amount',
+          },
+        },
+      },
+      pk: 'id',
+      uiName: { es: 'Precio por Cliente', en: 'Client Price' },
+      title: { es: 'Precios por Cliente', en: 'Client Prices' },
+      addButtonLabel: { es: 'Agregar Precio', en: 'Add Price' },
+    } satisfies TableStructure,
+
+    schedules: {
+      columns: {
+        id: pkColumn,
+
+        professional_id: {
+          type: 'string',
+          label: { es: 'Profesional', en: 'Professional' },
+          input: 'select',
+          validator: { nullable: true },
+          foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        },
+
+        resource_id: {
+          type: 'string',
+          label: { es: 'Recurso', en: 'Resource' },
+          input: 'select',
+          validator: { nullable: true },
+          foreignKey: { table: 'resources', valueField: 'id', labelField: 'name' },
+        },
+
+        weekly: {
+          type: 'string',
+          label: { es: 'Horario Semanal', en: 'Weekly Hours' },
+          input: 'textarea',
+          validator: { nullable: true },
+        },
+      },
+      pk: 'id',
+      uiName: { es: 'Horario', en: 'Schedule' },
+      title: { es: 'Horarios', en: 'Schedules' },
+      addButtonLabel: { es: 'Agregar Horario', en: 'Add Schedule' },
+    } satisfies TableStructure,
+
+    schedule_exceptions: {
+      columns: {
+        id: pkColumn,
+
+        professional_id: {
+          type: 'string',
+          label: { es: 'Profesional', en: 'Professional' },
+          input: 'select',
+          validator: { nullable: true },
+          foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        },
+
+        resource_id: {
+          type: 'string',
+          label: { es: 'Recurso', en: 'Resource' },
+          input: 'select',
+          validator: { nullable: true },
+          foreignKey: { table: 'resources', valueField: 'id', labelField: 'name' },
+        },
+
+        exception_date: {
+          type: 'string',
+          label: { es: 'Fecha', en: 'Date' },
+          input: 'date',
+          validator: { required: true },
+        },
+
+        is_unavailable: {
+          type: 'boolean',
+          label: { es: 'No Disponible', en: 'Unavailable' },
+          validator: { nullable: true },
+        },
+
+        start_time: {
+          type: 'string',
+          label: { es: 'Hora Inicio', en: 'Start Time' },
+          validator: { nullable: true },
+        },
+
+        end_time: {
+          type: 'string',
+          label: { es: 'Hora Fin', en: 'End Time' },
+          validator: { nullable: true },
+        },
+
+        reason: {
+          type: 'string',
+          label: { es: 'Motivo', en: 'Reason' },
+          input: 'textarea',
+          validator: { nullable: true },
+        },
+      },
+      pk: 'id',
+      uiName: { es: 'Excepción de Horario', en: 'Schedule Exception' },
+      title: { es: 'Excepciones de Horario', en: 'Schedule Exceptions' },
+      addButtonLabel: { es: 'Agregar Excepción', en: 'Add Exception' },
     } satisfies TableStructure,
   },
 
@@ -322,8 +386,8 @@ export const structure = {
     actions: { es: 'Acciones', en: 'Actions' },
     add: { es: 'Agregar', en: 'Add' },
     appTitle: {
-      es: 'Sistema de Gestión Académica',
-      en: 'Academic Management System',
+      es: 'Agenda Profesional',
+      en: 'Professional Scheduler',
     },
     cancel: { es: 'Cancelar', en: 'Cancel' },
     delete: { es: 'Eliminar', en: 'Delete' },
@@ -335,7 +399,7 @@ export const structure = {
     currentPassword: { es: 'Contraseña actual', en: 'Current Password' },
     newPassword: { es: 'Nueva contraseña', en: 'New Password' },
     logout: { es: 'Salir', en: 'Logout' },
-    addProfessor: { es: 'Agregar Profesor', en: 'Add Professor' },
+    addProfessional: { es: 'Agregar Profesional', en: 'Add Professional' },
     addAdmin: { es: 'Agregar Admin', en: 'Add Admin' },
     added: { es: 'agregado', en: 'added' },
 
@@ -360,14 +424,15 @@ export const structure = {
     onlyAdminCanCreateUsers: { es: 'Solo admin puede crear usuarios', en: 'Only admin can create users' },
     errorCreatingUser: { es: 'Error creando usuario', en: 'Error creating user' },
     noEditPermission: { es: 'No tenés permiso para editar', en: 'You do not have edit permission' },
-    studentAndUserCreated: { es: 'Alumno y usuario creados', en: 'Student and user created' },
     userAdded: { es: 'Usuario agregado', en: 'User added' },
 
     // Form labels
     initialPassword: { es: 'Contraseña inicial', en: 'Initial Password' },
     usernameLabel: { es: 'Usuario', en: 'Username' },
     emailLabel: { es: 'Email', en: 'Email' },
-    professorRole: { es: 'Profesor', en: 'Professor' },
+    professionalRole: { es: 'Profesional', en: 'Professional' },
+    receptionistRole: { es: 'Recepcionista', en: 'Receptionist' },
+    clientRole: { es: 'Cliente', en: 'Client' },
     adminRole: { es: 'Admin', en: 'Admin' },
     addUser: { es: 'Agregar usuario', en: 'Add user' },
 

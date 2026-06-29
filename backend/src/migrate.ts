@@ -63,8 +63,25 @@ export async function runMigrations(pool: Pool, dir: string): Promise<number> {
   }
 }
 
+/**
+ * Pool for running migrations as the schema owner.
+ */
+function buildOwnerPool(): Pool {
+  const hasOwnerCreds =
+    process.env.DB_OWNER_USER !== undefined &&
+    process.env.DB_OWNER_USER !== '';
+
+  return new Pool({
+    host:     process.env.DB_HOST,
+    port:     parseInt(process.env.DB_PORT || '5432', 10),
+    database: process.env.DB_NAME,
+    user:     hasOwnerCreds ? process.env.DB_OWNER_USER     : process.env.DB_USER,
+    password: hasOwnerCreds ? process.env.DB_OWNER_PASSWORD : process.env.DB_PASSWORD,
+  });
+}
+
 async function cli(): Promise<void> {
-  const { pool } = await import('./db');
+  const pool = buildOwnerPool();
   try {
     const applied = await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
     console.log(DEFAULT_MIGRATIONS_DIR);

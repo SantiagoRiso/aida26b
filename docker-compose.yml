@@ -4,17 +4,19 @@ services:
     image: postgres:18-alpine
     container_name: aida26_database
     environment:
-      POSTGRES_USER: ${POSTGRES_SUPERUSER:-aida26_user}
-      POSTGRES_PASSWORD: ${POSTGRES_SUPERPASS:-CambiaEsta!}
-      POSTGRES_DB: ${POSTGRES_DB_NAME:-faculty_management}
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERPASS:-CambiaEsta_Super!}
+      # No POSTGRES_DB: the app database is created by bootstrap.sql owned by
+      # DB_owner, so the image must not create it owned by the superuser.
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./database/bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
     networks:
       - aida26_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-aida26_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,6 +35,8 @@ services:
       DB_NAME: ${DB_NAME:-faculty_management}
       DB_USER: ${DB_USER:-aida26_user}
       DB_PASSWORD: ${DB_PASSWORD:-CambiaEsta!}
+      DB_OWNER_USER: ${DB_OWNER_USER:-aida26_owner}
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-CambiaEsta_Owner!}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-yourpassword}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}

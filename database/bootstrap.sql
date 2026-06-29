@@ -1,25 +1,27 @@
--- One-time bootstrap: creates roles, the database, and base grants.
--- Run as a Postgres superuser, once per environment:
---   psql -U postgres -f database/bootstrap.sql
+-- Creates the two DB roles and the owner-owned application database.
+-- Run as a superuser:  psql -U postgres -f database/bootstrap.sql
+-- Or mount at /docker-entrypoint-initdb.d/ so the postgres image runs it on first init.
 --
--- After this, run migrations from the backend:
---   cd backend && npm run migrate
+-- aida26_owner owns the database and all schema objects; migrations run as it.
+-- aida26_user is the runtime app role and gets only explicit per-table grants from migrations.
 
-CREATE ROLE aida26_owner WITH LOGIN;
-CREATE ROLE aida26_user  WITH LOGIN PASSWORD 'CambiaEsta!';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aida26_owner') THEN
+    CREATE ROLE aida26_owner WITH LOGIN PASSWORD 'CambiaEsta_Owner!';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aida26_user') THEN
+    CREATE ROLE aida26_user WITH LOGIN PASSWORD 'CambiaEsta!';
+  END IF;
+END
+$$;
 
-CREATE DATABASE faculty_management OWNER aida26_owner;
+-- CREATE DATABASE cannot run inside a DO block; \gexec runs the guarded statement.
+SELECT 'CREATE DATABASE faculty_management OWNER aida26_owner'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'faculty_management')\gexec
 
 \c faculty_management
-SET ROLE aida26_owner;
 
+-- No broad default privileges; per-table grants are declared in the migrations.
 GRANT CONNECT ON DATABASE faculty_management TO aida26_user;
-GRANT USAGE   ON SCHEMA public                TO aida26_user;
-
--- Default privileges so future tables (created by migrations as aida26_owner)
--- are automatically readable/writable by aida26_user without re-granting each time.
-ALTER DEFAULT PRIVILEGES FOR ROLE aida26_owner IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO aida26_user;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE aida26_owner IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO aida26_user;
+GRANT USAGE   ON SCHEMA public               TO aida26_user;

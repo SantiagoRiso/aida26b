@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const TEST_DB_NAME = 'faculty_management_test';
+const TEST_DB_NAME = 'professional_agenda_test';
 
 function envBase() {
   return {

@@ -51,6 +51,10 @@ function isUniqueViolation(error: unknown) {
   );
 }
 
+// audit_events.business_id is NOT NULL, so we derive it from the actor's business.
+// When no actor business can be resolved (e.g. failed login), the write is skipped.
+// Best-effort: an audit failure never breaks the request. Business-scoping of
+// unauthenticated events is finalized once an active business context exists.
 async function audit(
   req: Request,
   eventType: string,
@@ -58,21 +62,39 @@ async function audit(
   details: Record<string, unknown> = {}
 ) {
   try {
+    const actorId = (req as AuthedRequest).user?.id ?? null;
+
+    if (actorId === null) {
+      return;
+    }
+
+    const business = await pool.query<{ business_id: number | null }>(
+      'SELECT business_id FROM auth.users WHERE id = $1',
+      [actorId]
+    );
+    const businessId = business.rows[0]?.business_id ?? null;
+
+    if (businessId === null) {
+      return;
+    }
+
     await pool.query(
-      `INSERT INTO auth.audit_log
-       (actor_user_id, event_type, outcome, ip, user_agent, details)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO audit_events
+       (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, ip, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
-        (req as AuthedRequest).user?.id ?? null,
+        businessId,
+        actorId,
         eventType,
+        (details.entity_type as string) ?? null,
+        (details.entity_id as number) ?? null,
         outcome,
         req.ip,
-        req.get('user-agent') ?? null,
         JSON.stringify(details),
       ]
     );
   } catch (error) {
-    console.error('Error writing audit log:', error);
+    console.error('Error writing audit event:', error);
   }
 }
 
@@ -127,7 +149,7 @@ const requirePasswordReady: RequestHandler = (req, res, next) => {
 };
 
 const requireAdmin: RequestHandler = async (req, res, next) => {
-  if ((req as AuthedRequest).user?.role === 'admin') {
+  if ((req as AuthedRequest).user?.role === 'Admin') {
     return next();
   }
 
@@ -139,10 +161,10 @@ const requireAdmin: RequestHandler = async (req, res, next) => {
   return res.status(403).json({ error: 'Forbidden' });
 };
 
-const requireAcademicWrite: RequestHandler = async (req, res, next) => {
-  const role = (req as AuthedRequest).user?.role;
-
-  if (role === 'admin' || role === 'editor') {
+// Minimal write guard: any authenticated Admin may write; all authenticated
+// users may read. Full per-entity role/grant authorization is a later phase.
+const requireWrite: RequestHandler = async (req, res, next) => {
+  if ((req as AuthedRequest).user?.role === 'Admin') {
     return next();
   }
 
@@ -408,99 +430,7 @@ app.post(
   }
 );
 
-/**
- * Optional special case:
- * If a student is created with `password` in the body, also create its auth user.
- * Without `password`, the request falls back to the generic postHandler below.
- */
-async function createStudentWithUser(req: Request, res: express.Response) {
-  const password = readPassword(req.body.password);
-
-  if (!password) {
-    return postHandler(req, res, pool);
-  }
-
-  const {
-    numero_libreta,
-    dni,
-    first_name,
-    last_name,
-    email,
-    enrollment_date,
-    status,
-  } = req.body;
-
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN');
-
-    const { passwordHash, passwordSalt } = await auth.hashPassword(password);
-
-    const userResult = await client.query<{ id: number }>(
-      `INSERT INTO auth.users
-       (username, email, password_hash, password_salt, role, must_change_password)
-       VALUES ($1, $2, $3, $4, 'reader', true)
-       RETURNING id`,
-      [
-        numero_libreta,
-        email || null,
-        passwordHash,
-        passwordSalt,
-      ]
-    );
-
-    const studentResult = await client.query(
-      `INSERT INTO students
-       (numero_libreta, dni, first_name, last_name, email, enrollment_date, status, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [
-        numero_libreta,
-        dni,
-        first_name,
-        last_name,
-        email,
-        enrollment_date,
-        status,
-        userResult.rows[0].id,
-      ]
-    );
-
-    await client.query('COMMIT');
-
-    await audit(req, 'student_user_created', 'success', {
-      username: numero_libreta,
-      user_id: userResult.rows[0].id,
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: 'Student created successfully',
-      data: studentResult.rows[0],
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-
-    if (isUniqueViolation(error)) {
-      return res.status(409).json({
-        success: false,
-        error: 'Student or username already exists',
-      });
-    }
-
-    console.error('Error creating student:', error);
-
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-    });
-  } finally {
-    client.release();
-  }
-}
-
-// Generic academic API routes
+// Generic entity API routes
 app.get('/api/:tableName', requireAuth, requirePasswordReady, async (req, res) => {
   return getHandler(req, res, pool);
 });
@@ -509,12 +439,8 @@ app.post(
   '/api/:tableName',
   requireAuth,
   requirePasswordReady,
-  requireAcademicWrite,
+  requireWrite,
   async (req, res) => {
-    if (req.params.tableName === 'students') {
-      return createStudentWithUser(req, res);
-    }
-
     return postHandler(req, res, pool);
   }
 );
@@ -523,7 +449,7 @@ app.put(
   '/api/:tableName',
   requireAuth,
   requirePasswordReady,
-  requireAcademicWrite,
+  requireWrite,
   async (req, res) => {
     return putHandler(req, res, pool);
   }
@@ -533,7 +459,7 @@ app.delete(
   '/api/:tableName',
   requireAuth,
   requirePasswordReady,
-  requireAcademicWrite,
+  requireWrite,
   async (req, res) => {
     return deleteHandler(req, res, pool);
   }
