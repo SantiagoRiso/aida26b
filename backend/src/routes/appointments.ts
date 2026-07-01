@@ -20,12 +20,10 @@ type AuditFn = (
   details?: Record<string, unknown>,
 ) => Promise<void>;
 
-// Argentina timezone — same constant as scheduling.ts.
 const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-// Accepts YYYY-MM-DD or ISO 8601 timestamp (date + T + time + optional Z/offset).
 const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
 function addMinutes(hhmm: string, minutes: number): string {
@@ -34,7 +32,6 @@ function addMinutes(hhmm: string, minutes: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
-// Fields stripped before returning data to a Client (D-08, D-31).
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
 function stripStaffFields(row: Record<string, unknown>): Record<string, unknown> {
@@ -43,9 +40,6 @@ function stripStaffFields(row: Record<string, unknown>): Record<string, unknown>
   return r;
 }
 
-// Validates the fields shared by both create endpoints, loads the service for
-// resolveBooking, and returns the resolved price + duration.
-// Returns { error } when validation fails; caller sends the error response.
 async function resolveAndLoadService(
   pool: Pool | PoolClient,
   businessId: number,
@@ -102,7 +96,6 @@ async function resolveAndLoadService(
     return { ok: false, status: 422, code: 'invalid_request', message: 'Invalid appointment input', fields };
   }
 
-  // Service must belong to the session's business.
   const svc = await pool.query<{ default_price_ars: string }>(
     `SELECT default_price_ars FROM services
      WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
@@ -161,7 +154,6 @@ async function resolveAndLoadService(
     slotGranularityMinutes: durationMinutes,
   });
 
-  // Build a TIMESTAMPTZ literal from date + start in the business timezone.
   const startsAt = `${date} ${start}:00 ${BUSINESS_TZ}`;
 
   return {
@@ -205,8 +197,6 @@ export function mountAppointmentRoutes(
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
 ) {
-  // ── Client request path (D-02/D-08/D-09) ──────────────────────────────────────
-  // Creates a requested appointment; conflict check is dry-run only — clients can never override.
   app.post('/api/appointments/request', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
@@ -258,11 +248,10 @@ export function mountAppointmentRoutes(
     });
 
     if (verdict.requires_override) {
-      // Clients can never override (can_override=false for callerIsStaff=false).
+      // Clients can never override.
       return sendData(res, verdict);
     }
 
-    // No conflict — write the appointment.
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -299,8 +288,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Staff schedule path (D-02/D-07/D-09) ──────────────────────────────────────
-  // Creates a scheduled appointment; runs the transactional recheck; warn-first on clash (D-03).
   app.post('/api/appointments/schedule', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
@@ -311,8 +298,6 @@ export function mountAppointmentRoutes(
     const body = req.body ?? {};
     const professionalUserId = Number(body.professional_user_id);
 
-    // Authorization check: Clients are blocked; Professionals may only act on own calendar;
-    // Receptionists need a grant.
     const authz = await assertAppointmentActionAllowed(pool, user, professionalUserId);
     if (!authz.ok) {
       await guards.audit(req, 'appointment_action_denied', 'denied', {
@@ -357,7 +342,7 @@ export function mountAppointmentRoutes(
       });
 
       if (verdict.requires_override && !override) {
-        // Warn first; do NOT commit (D-03).
+        // Warn first; do NOT commit.
         await client.query('ROLLBACK');
         return sendData(res, verdict);
       }
@@ -402,7 +387,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Approve (requested → scheduled with recheck, D-03) ────────────────────────
   app.post('/api/appointments/:id/approve', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -490,7 +474,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Reschedule (any conflict-affecting field change, D-05/D-06) ───────────────
   app.post('/api/appointments/:id/reschedule', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -513,13 +496,11 @@ export function mountAppointmentRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    // Rescheduling a terminal appointment is an illegal transition.
     if (TERMINAL_STATES.has(String(row.state))) {
       return sendError(res, 422, 'invalid_transition', `Cannot reschedule a terminal appointment (state: ${String(row.state)})`);
     }
 
     const body = req.body ?? {};
-    // Use incoming values or fall back to the existing row values.
     const professionalUserId = body.professional_user_id != null
       ? Number(body.professional_user_id)
       : Number(row.professional_user_id);
@@ -561,7 +542,6 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
     }
 
-    // Re-resolve price + duration via resolveBooking (D-06).
     const svc = await pool.query<{ default_price_ars: string }>(
       `SELECT default_price_ars FROM services
        WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
@@ -662,7 +642,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Shared light-flip state endpoint (D-04): reject/cancel/complete/no_show ───
   app.post('/api/appointments/:id/transition', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -684,13 +663,12 @@ export function mountAppointmentRoutes(
 
     const currentState = String(row.state);
 
-    // App-layer transition check (D-10); DB trigger is the backstop.
+    // DB trigger is the backstop.
     const check = assertValidTransition(currentState, to);
     if (!check.ok) {
       return sendError(res, 422, 'invalid_transition', check.message);
     }
 
-    // Client-only path: restricted to own appointment + cancel only.
     if (user.role === 'Client') {
       if (Number(row.client_user_id) !== user.id) {
         return sendError(res, 403, 'forbidden', 'Clients may only act on their own appointments');
@@ -698,7 +676,7 @@ export function mountAppointmentRoutes(
       if (to !== 'canceled') {
         return sendError(res, 403, 'forbidden', 'Clients may only cancel appointments');
       }
-      // Cutoff applies to scheduled; requested can be withdrawn anytime (D-16/D-17).
+      // Cutoff applies to scheduled; requested can be withdrawn anytime.
       if (currentState === 'scheduled') {
         const cutoffRow = await pool.query<{ cancellation_cutoff_hours: number }>(
           `SELECT b.cancellation_cutoff_hours
@@ -718,7 +696,6 @@ export function mountAppointmentRoutes(
         }
       }
     } else {
-      // Staff must hold the appropriate grant.
       const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
       if (!authz.ok) {
         await guards.audit(req, 'appointment_action_denied', 'denied', { reason: authz.code, entity_id: id });
@@ -726,7 +703,6 @@ export function mountAppointmentRoutes(
       }
     }
 
-    // Completion/no_show timing guard (D-13): allowed only once now >= starts_at.
     if (to === 'completed' || to === 'no_show') {
       const startsAt = new Date(String(row.starts_at)).getTime();
       if (Date.now() < startsAt) {
@@ -763,8 +739,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Cosmetic PATCH (D-05/D-12/D-31) ─────────────────────────────────────────
-  // Edits name/description (non-terminal only) and staff_note (any state).
   app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -779,7 +753,6 @@ export function mountAppointmentRoutes(
     const row = await loadAppointment(pool, id, user.business_id);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
-    // Clients never reach the PATCH endpoint.
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Clients may not edit appointments');
     }
@@ -793,7 +766,6 @@ export function mountAppointmentRoutes(
     const body = req.body ?? {};
     const isTerminal = TERMINAL_STATES.has(String(row.state));
 
-    // Terminal freeze: name/description are locked; only staff_note is writable (D-12).
     if (isTerminal && (body.name !== undefined || body.description !== undefined)) {
       return sendError(
         res, 422, 'terminal_freeze',
@@ -801,7 +773,7 @@ export function mountAppointmentRoutes(
       );
     }
 
-    // staff_note is staff-only (D-31); clients are already blocked above.
+    // staff_note is staff-only; clients are already blocked above.
     const staffNote =
       body.staff_note !== undefined ? String(body.staff_note) : undefined;
     const name =
@@ -809,7 +781,6 @@ export function mountAppointmentRoutes(
     const description =
       !isTerminal && body.description !== undefined ? String(body.description) : undefined;
 
-    // Build a minimal UPDATE (only provided fields).
     const setClauses: string[] = [];
     const params: unknown[] = [];
     let p = 1;
@@ -850,8 +821,6 @@ export function mountAppointmentRoutes(
     }
   });
 
-  // ── Staff detail read (D-07/D-08) ────────────────────────────────────────────
-  // Clients are always 403 regardless of ownership; grant-gated for staff.
   app.get('/api/appointments/:id', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -876,13 +845,9 @@ export function mountAppointmentRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    // Full staff payload — includes staff_note/override_actor_id.
     return sendData(res, row);
   });
 
-  // ── Paginated list (D-07 + Phase 5 calendar contract) ────────────────────────
-  // Role-scoped: Client→own only (staff fields stripped); Professional→own calendar;
-  // Receptionist→granted calendars; Admin→any in-business.
   app.get('/api/appointments', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -898,7 +863,6 @@ export function mountAppointmentRoutes(
     const params: unknown[] = [user.business_id];
     let p = 2;
 
-    // Role scope.
     if (user.role === 'Client') {
       conditions.push(`a.client_user_id = $${p++}`);
       params.push(user.id);
@@ -906,7 +870,6 @@ export function mountAppointmentRoutes(
       conditions.push(`a.professional_user_id = $${p++}`);
       params.push(user.id);
     } else if (user.role === 'Receptionist') {
-      // Receptionist sees appointments for professionals they hold a grant for.
       conditions.push(
         `a.professional_user_id IN (
            SELECT professional_user_id FROM calendar_grants WHERE grantee_user_id = $${p++}
@@ -914,9 +877,7 @@ export function mountAppointmentRoutes(
       );
       params.push(user.id);
     }
-    // Admin: no additional scope restriction.
 
-    // Optional filters for Phase 5 calendar.
     if (req.query.date_from) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
         return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');

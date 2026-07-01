@@ -36,18 +36,15 @@ ALTER TABLE ledger_entries
 CREATE FUNCTION enforce_appointment_state_transition() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    -- Non-state UPDATEs (staff_note, name, etc.) pass through unchanged.
     IF OLD.state = NEW.state THEN
         RETURN NEW;
     END IF;
 
-    -- Terminal states never return to active.
     IF OLD.state IN ('completed', 'canceled', 'no_show', 'rejected') THEN
         RAISE EXCEPTION 'appointment state % is terminal; cannot transition to %',
             OLD.state, NEW.state USING ERRCODE = 'check_violation';
     END IF;
 
-    -- Enforce the legal edge set.
     IF NOT (
         (OLD.state = 'requested' AND NEW.state IN ('scheduled', 'rejected', 'canceled')) OR
         (OLD.state = 'scheduled' AND NEW.state IN ('completed', 'canceled', 'no_show'))
@@ -92,8 +89,7 @@ CREATE TRIGGER audit_events_immutable
     BEFORE UPDATE OR DELETE ON audit_events
     FOR EACH ROW EXECUTE FUNCTION forbid_audit_mutation();
 
--- Lift the SELECT-only restriction for the app role. UPDATE/DELETE on ledger and audit
--- remain withheld; the triggers above provide immutability in all environments.
+-- UPDATE/DELETE on ledger and audit remain withheld; the triggers provide immutability in all environments.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aida26_user') THEN

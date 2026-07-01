@@ -22,7 +22,7 @@ type AuditFn = (
 // Amount must be non-negative with at most two decimal places (mirrors amount_ars CHECK in DB).
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
-// Use a plain string set for runtime validation (avoids type narrowing issues on user input).
+// Plain string set avoids type narrowing issues on user input.
 const VALID_ENTRY_TYPES: Set<string> = new Set(LEDGER_ENTRY_TYPES.map((t) => t.value));
 
 export function mountLedgerRoutes(
@@ -30,9 +30,7 @@ export function mountLedgerRoutes(
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
 ) {
-  // Create a ledger entry.
-  // The authz check (assertLedgerWriteAllowed) runs inside the transaction on the
-  // bound PoolClient so the grant check and INSERT are atomic (T-04-21).
+  // The authz check runs inside the transaction so the grant check and INSERT are atomic.
   app.post('/api/ledger', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
@@ -40,7 +38,6 @@ export function mountLedgerRoutes(
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
 
-    // Validate incoming fields.
     const fields: Record<string, string> = {};
 
     const clientUserId = Number(req.body.client_user_id);
@@ -53,8 +50,6 @@ export function mountLedgerRoutes(
       fields.entry_type = `must be one of: ${[...VALID_ENTRY_TYPES].join(', ')}`;
     }
 
-    // amount_ars is required unless it will be prefilled from the appointment (D-22).
-    // We check the pattern if a value was explicitly supplied; prefill is handled below.
     const rawAmount: string | undefined = req.body.amount_ars;
     if (rawAmount !== undefined && rawAmount !== null && !AMOUNT_RE.test(String(rawAmount))) {
       fields.amount_ars = 'must be a non-negative amount (e.g. 1500 or 1500.00)';
@@ -68,7 +63,6 @@ export function mountLedgerRoutes(
       req.body.appointment_id != null ? Number(req.body.appointment_id) : null;
     const description: string | null = req.body.description ?? null;
 
-    // Verify the client exists and belongs to this business (cross-tenant → 404).
     const clientCheck = await pool.query<{ id: string }>(
       `SELECT id FROM auth.users
        WHERE id = $1 AND role = 'Client' AND business_id = $2 AND is_active = true`,
@@ -78,7 +72,6 @@ export function mountLedgerRoutes(
       return sendError(res, 404, 'not_found', 'Client not found in this business');
     }
 
-    // Open a transaction — authz check and INSERT share one connection (T-04-21).
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -91,7 +84,7 @@ export function mountLedgerRoutes(
 
       if (!authz.ok) {
         await client.query('ROLLBACK');
-        // Denial audit is acceptable post-rollback (best-effort; guards.audit uses pool).
+        // Denial audit is best-effort; guards.audit uses pool, not the rolled-back client.
         await guards.audit(req, 'ledger_write_denied', 'denied', {
           reason: authz.code,
           entry_type: entryType,
@@ -100,15 +93,14 @@ export function mountLedgerRoutes(
         return sendError(res, authz.status, authz.code, authz.message);
       }
 
-      // D-22: prefill amount from the appointment's booked price for charges
-      // when the caller omitted amount_ars. An explicitly supplied amount takes precedence.
+      // Prefill amount from the appointment's booked price for charges when the caller
+      // omitted amount_ars. An explicitly supplied amount takes precedence.
       let amountArs: string;
       if (rawAmount !== undefined && rawAmount !== null) {
         amountArs = String(rawAmount);
       } else if (appointmentId != null && entryType === 'charge') {
-        // Constrain the prefill to the appointment that belongs to the charged
-        // client and the caller's business — prevents an Admin from sourcing an
-        // amount from an unrelated or cross-tenant appointment.
+        // Constrain to the appointment owned by the charged client and the caller's
+        // business — prevents sourcing an amount from a cross-tenant appointment.
         const appt = await client.query<{ price: string }>(
           `SELECT a.price
            FROM appointments a
@@ -138,7 +130,6 @@ export function mountLedgerRoutes(
 
       const row = result.rows[0];
 
-      // Audit event name per D-30 convention (e.g. ledger_charge_created).
       const eventType = `ledger_${entryType}_created`;
       await auditInTx(client, user, eventType, 'success', Number(row.id), 'ledger_entries');
 
@@ -153,7 +144,6 @@ export function mountLedgerRoutes(
     }
   });
 
-  // Server-computed signed balance for a client (D-19, D-26).
   // Read authz runs on the pool — no write follows, so TOCTOU is not a concern here.
   app.get('/api/clients/:id/balance', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
@@ -185,7 +175,6 @@ export function mountLedgerRoutes(
     });
   });
 
-  // Paginated immutable ledger history for a client (D-26).
   app.get('/api/clients/:id/ledger', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 

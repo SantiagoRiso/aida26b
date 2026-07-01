@@ -17,22 +17,18 @@ type AuditFn = (
   details?: Record<string, unknown>,
 ) => Promise<void>;
 
-// businesses is deliberately excluded from generic CRUD (Phase 1 D-14 / RESEARCH open
-// question 3). This module owns the only writable surface for business config: a single
-// cutoff-only PATCH endpoint that no other route module needs to duplicate.
+// businesses is deliberately excluded from generic CRUD. This module owns the only
+// writable surface for business config: a single cutoff-only PATCH endpoint.
 export function mountAuditRoutes(
   app: express.Application,
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
 ) {
-  // Admin-only paginated, filterable audit event log (D-27, D-28, D-29).
-  // Scoped to the session business; cross-tenant visibility impossible because
-  // business_id is seeded from the session, never the request body (T-04-16).
+  // Scoped to the session business; business_id is seeded from the session, never the request body.
   app.get('/api/audit', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role !== 'Admin') {
-      // Audit the denial before returning (D-28).
       await guards.audit(req, 'permission_denied', 'denied', {
         path: req.path,
         method: req.method,
@@ -44,20 +40,18 @@ export function mountAuditRoutes(
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
 
-    // Parameterized WHERE accumulator — only code-controlled column names are
-    // interpolated; all user-supplied filter values are bound as $N params (T-04-17).
+    // Only code-controlled column names are interpolated; all user-supplied filter
+    // values are bound as $N params — no SQL injection risk from column names.
     const conditions: string[] = ['a.business_id = $1'];
     const params: unknown[] = [user.business_id];
     let paramIdx = 2;
 
-    // Optional filter: entity_type (e.g. 'appointments', 'ledger_entries').
     if (req.query.entity_type) {
       conditions.push(`a.entity_type = $${paramIdx}`);
       params.push(req.query.entity_type);
       paramIdx++;
     }
 
-    // Optional filter: actor_user_id (the user who triggered the event).
     if (req.query.actor_user_id) {
       const actorId = Number(req.query.actor_user_id);
       if (Number.isInteger(actorId) && actorId > 0) {
@@ -67,14 +61,12 @@ export function mountAuditRoutes(
       }
     }
 
-    // Optional filter: event_type (e.g. 'appointment_canceled').
     if (req.query.event_type) {
       conditions.push(`a.event_type = $${paramIdx}`);
       params.push(req.query.event_type);
       paramIdx++;
     }
 
-    // Optional date range filters on created_at (inclusive).
     if (req.query.date_from) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
         return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
@@ -98,8 +90,6 @@ export function mountAuditRoutes(
     const page = Math.max(Number(req.query.page) || 1, 1);
     const offset = (page - 1) * limit;
 
-    // The view surfaces the minimal fields already on the row (D-29); no old→new
-    // reconstruction. outcome includes 'denied' and 'failure' alongside 'success' (D-28).
     const [rows, count] = await Promise.all([
       pool.query(
         `SELECT a.id, a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
@@ -119,10 +109,8 @@ export function mountAuditRoutes(
     return sendList(res, rows.rows, { page, limit, total: Number(count.rows[0].n) });
   });
 
-  // Admin-only business settings: update only cancellation_cutoff_hours.
-  // The UPDATE is scoped to WHERE id = user.business_id (session scope); a mismatched
-  // :id parameter in the URL is silently treated as cross-tenant — returns 404 to hide
-  // existence (T-04-19). Only cancellation_cutoff_hours is writable here (T-04-20).
+  // A mismatched :id is cross-tenant — returns 404 to hide existence.
+  // Only cancellation_cutoff_hours is writable here.
   app.patch('/api/businesses/:id/settings', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
@@ -138,15 +126,11 @@ export function mountAuditRoutes(
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
 
-    // Cross-tenant :id → 404 to hide existence (T-04-19).
-    // The session's business_id is the authoritative scope; a caller who supplies a
-    // different :id is either probing or confused — treat it as not found.
     const urlId = Number(req.params.id);
     if (urlId !== user.business_id) {
       return sendError(res, 404, 'not_found', 'Business not found');
     }
 
-    // Validate cancellation_cutoff_hours: required, non-negative integer.
     const rawCutoff = req.body.cancellation_cutoff_hours;
     const cutoffHours = Number(rawCutoff);
     if (
@@ -160,7 +144,6 @@ export function mountAuditRoutes(
       });
     }
 
-    // Scope to the admin's own business — cross-tenant :id → 404 (hides existence).
     const result = await pool.query<{ id: string; cancellation_cutoff_hours: number }>(
       `UPDATE businesses
        SET cancellation_cutoff_hours = $1
@@ -173,8 +156,7 @@ export function mountAuditRoutes(
       return sendError(res, 404, 'not_found', 'Business not found');
     }
 
-    // Audit the successful settings update in-transaction is unnecessary for a single
-    // UPDATE (no data-integrity dependency on the audit row), so guards.audit is fine.
+    // No data-integrity dependency on the audit row, so guards.audit (pool) is fine here.
     await guards.audit(req, 'business_settings_updated', 'success', {
       business_id: user.business_id,
       cancellation_cutoff_hours: cutoffHours,

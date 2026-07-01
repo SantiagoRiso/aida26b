@@ -5,9 +5,8 @@ export type AuthzResult =
   | { ok: true }
   | { ok: false; status: number; code: string; message: string };
 
-// Inserts an audit row on the caller's open transaction connection (D-14).
-// Does NOT catch errors — the caller's ROLLBACK handles failure, which is correct:
-// a lifecycle transition without an audit row must not commit.
+// Inserts an audit row on the caller's open transaction connection.
+// Does NOT catch errors — a lifecycle transition without an audit row must not commit.
 export async function auditInTx(
   client: PoolClient,
   user: AuthUser,
@@ -34,8 +33,6 @@ export async function auditInTx(
   );
 }
 
-// Checks whether the caller may act on an appointment owned by a given professional.
-// Mirrors assertOwnScheduleAllowed in crud-policy.ts for the appointment domain.
 // `db` accepts both Pool and PoolClient so a caller can pass a transaction-bound client
 // when the authorization check must be atomic with the write.
 export async function assertAppointmentActionAllowed(
@@ -55,7 +52,7 @@ export async function assertAppointmentActionAllowed(
       ? { ok: true }
       : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only act on own appointments' };
   }
-  // Receptionist: explicit calendar grant required for this professional.
+  // Receptionist: explicit calendar grant required.
   const grant = await db.query(
     `SELECT 1 FROM calendar_grants WHERE professional_user_id = $1 AND grantee_user_id = $2`,
     [professionalUserId, user.id],
@@ -65,9 +62,8 @@ export async function assertAppointmentActionAllowed(
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required for this professional' };
 }
 
-// Checks whether the caller may write a ledger entry for a given client.
-// `db` must accept a bound PoolClient so the grant/scope check and the ledger INSERT
-// are atomic — no revoke-between-check-and-write window on a financial route.
+// `db` must be a bound PoolClient so the grant check and the ledger INSERT are atomic —
+// no revoke-between-check-and-write window on a financial route.
 export async function assertLedgerWriteAllowed(
   db: Pool | PoolClient,
   user: AuthUser,
@@ -75,7 +71,6 @@ export async function assertLedgerWriteAllowed(
 ): Promise<AuthzResult> {
   const { clientUserId, appointmentId, entryType } = opts;
 
-  // Clients never write ledger entries.
   if (user.role === 'Client') {
     return { ok: false, status: 403, code: 'forbidden', message: 'Clients cannot create ledger entries' };
   }
@@ -86,8 +81,7 @@ export async function assertLedgerWriteAllowed(
   if (user.role === 'Admin') return { ok: true };
 
   if (user.role === 'Professional') {
-    // Professionals may only bill their own clients; cross-business access is blocked by
-    // joining through auth.users to verify business_id (closes cross-business leak).
+    // Join through auth.users to verify business_id — closes cross-business leak.
     const r = await db.query<{ allowed: boolean }>(
       `SELECT EXISTS (
          SELECT 1
@@ -105,8 +99,8 @@ export async function assertLedgerWriteAllowed(
     return { ok: true };
   }
 
-  // Receptionist: only appointment-linked charges on a granted calendar are permitted.
-  // No payments, no adjustments, and no standalone charges.
+  // Receptionist: only appointment-linked charges on a granted calendar — no payments,
+  // adjustments, or standalone charges.
   if (entryType !== 'charge') {
     return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists may only create charges' };
   }
@@ -129,13 +123,11 @@ export async function assertLedgerWriteAllowed(
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to create a charge for this appointment' };
 }
 
-// Checks whether the caller may read the ledger for a given client (D-25).
 export async function assertLedgerReadAllowed(
   db: Pool | PoolClient,
   user: AuthUser,
   clientUserId: number,
 ): Promise<AuthzResult> {
-  // Client may only read their own ledger.
   if (user.role === 'Client') {
     return clientUserId === user.id
       ? { ok: true }
@@ -170,7 +162,7 @@ export async function assertLedgerReadAllowed(
   }
 
   // Receptionist: may read for clients who share a granted professional.
-  // Only consider active/historical real appointments (exclude canceled/rejected noise).
+  // Canceled/rejected appointments are excluded — only real service history qualifies.
   const r = await db.query<{ allowed: boolean }>(
     `SELECT EXISTS (
        SELECT 1
