@@ -515,6 +515,58 @@ describe('GET /api/clients/:id/ledger — paginated list (D-25/D-26)', () => {
   });
 });
 
+// ── Cross-business tenant isolation on reads (CR-01/CR-02) ────────────────────
+
+describe('ledger reads are business-scoped for Admin', () => {
+  let biz2Id: number;
+  let biz2AdminId: number;
+
+  beforeAll(async () => {
+    const biz2 = await pool.query<{ id: string }>(
+      `INSERT INTO businesses (name, cancellation_cutoff_hours) VALUES ('Other Ledger Biz', 0) RETURNING id`,
+    );
+    biz2Id = Number(biz2.rows[0].id);
+    const admin2 = await pool.query<{ id: string }>(
+      `INSERT INTO auth.users
+         (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+       VALUES ('ledger_admin_biz2', 'admin_biz2@ledger.local', 'admin_biz2', 'h', 's', 'Admin', $1, false)
+       RETURNING id`,
+      [biz2Id],
+    );
+    biz2AdminId = Number(admin2.rows[0].id);
+  });
+
+  function biz2Admin(): AuthUser {
+    return {
+      id: biz2AdminId,
+      username: 'ledger_admin_biz2',
+      email: null,
+      role: 'Admin',
+      business_id: biz2Id,
+      is_active: true,
+      must_change_password: false,
+    };
+  }
+
+  test('admin from another business cannot read a foreign client balance → 404', async () => {
+    currentUser = biz2Admin();
+    const res = await req('GET', `/api/clients/${clientId}/balance`);
+    expect(res.status).toBe(404);
+  });
+
+  test('admin from another business cannot read a foreign client ledger → 404', async () => {
+    currentUser = biz2Admin();
+    const res = await req('GET', `/api/clients/${clientId}/ledger`);
+    expect(res.status).toBe(404);
+  });
+
+  test('same-business admin still reads the client balance → 200 (no regression)', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await req('GET', `/api/clients/${clientId}/balance`);
+    expect(res.status).toBe(200);
+  });
+});
+
 // ── Immutability (D-11, T-04-14) ─────────────────────────────────────────────
 
 describe('ledger_entries immutability trigger (D-11)', () => {
@@ -555,5 +607,34 @@ describe('ledger_entries immutability trigger (D-11)', () => {
     } finally {
       c.release();
     }
+  });
+});
+
+// ── WR-01 regression: charge prefill from another client's appointment → 404 ──
+
+describe("POST /api/ledger — prefill rejects an appointment not belonging to the charged client (WR-01)", () => {
+  let otherClientApptId: number;
+
+  beforeAll(async () => {
+    // An appointment on client2's account (not client1's).
+    const appt = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '9999.00', false)
+       RETURNING id`,
+      [client2Id, proId, svcId, mondayAt('11:30')],
+    );
+    otherClientApptId = Number(appt.rows[0].id);
+  });
+
+  test('Admin charge on client1 using an appointment that belongs to client2 → 404', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await req('POST', '/api/ledger', {
+      client_user_id: clientId,       // billing client1
+      appointment_id: otherClientApptId, // but the appointment belongs to client2
+      entry_type: 'charge',
+      // no amount_ars — would trigger prefill
+    });
+    expect(res.status).toBe(404);
   });
 });

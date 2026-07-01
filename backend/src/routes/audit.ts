@@ -5,6 +5,9 @@ import { sendData, sendError, sendList } from '../status_messages';
 import type { AuthUser } from '../auth';
 import { auditInTx } from './appointment-authz';
 
+// Accepts YYYY-MM-DD or ISO 8601 timestamp (date + T + time + optional Z/offset).
+const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
+
 type AuthedRequest = Request & { user?: AuthUser };
 
 type AuditFn = (
@@ -73,12 +76,18 @@ export function mountAuditRoutes(
 
     // Optional date range filters on created_at (inclusive).
     if (req.query.date_from) {
+      if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
+        return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
+      }
       conditions.push(`a.created_at >= $${paramIdx}`);
       params.push(req.query.date_from);
       paramIdx++;
     }
 
     if (req.query.date_to) {
+      if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
+        return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
+      }
       conditions.push(`a.created_at <= $${paramIdx}`);
       params.push(req.query.date_to);
       paramIdx++;

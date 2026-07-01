@@ -25,6 +25,8 @@ const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Accepts YYYY-MM-DD or ISO 8601 timestamp (date + T + time + optional Z/offset).
+const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
 function addMinutes(hhmm: string, minutes: number): string {
   const [h, m] = hhmm.split(':').map(Number);
@@ -108,6 +110,32 @@ async function resolveAndLoadService(
   );
   if (svc.rows.length === 0) {
     return { ok: false, status: 404, code: 'not_found', message: 'Service not found in this business' };
+  }
+
+  // Resource (when supplied) must belong to the session's business — an explicit
+  // check independent of the conflict loader so a future override bypass cannot
+  // write a foreign resource_id.
+  if (resourceId !== undefined && Number.isInteger(resourceId)) {
+    const resourceCheck = await pool.query<{ id: string }>(
+      `SELECT id FROM resources WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
+      [resourceId, businessId],
+    );
+    if (resourceCheck.rows.length === 0) {
+      return { ok: false, status: 404, code: 'not_found', message: 'Resource not found in this business' };
+    }
+  }
+
+  // Client (when supplied) must belong to the session's business — a body-supplied
+  // client_user_id from another tenant is rejected before it reaches the INSERT.
+  if (clientUserId != null && Number.isInteger(clientUserId)) {
+    const clientCheck = await pool.query<{ id: string }>(
+      `SELECT id FROM auth.users
+       WHERE id = $1 AND role = 'Client' AND business_id = $2`,
+      [clientUserId, businessId],
+    );
+    if (clientCheck.rows.length === 0) {
+      return { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
+    }
   }
 
   // Per-client override price, business-scoped to prevent cross-tenant price reads.
@@ -403,17 +431,17 @@ export function mountAppointmentRoutes(
     const resourceId =
       row.resource_id == null ? undefined : Number(row.resource_id);
 
-    // Need to reconstruct date + start from starts_at.
-    const startsAtDate = new Date(String(row.starts_at));
-    const dateStr = startsAtDate
-      .toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ })
-      .slice(0, 10); // YYYY-MM-DD
-    const startStr = startsAtDate.toLocaleTimeString('en-GB', {
-      timeZone: BUSINESS_TZ,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
+    // Derive wall-clock date + start in SQL (mirrors how scheduling.ts reads
+    // booked slot times) — avoids locale-string round-trips that can drift at
+    // DST-style timezone boundaries.
+    const wallClock = await pool.query<{ date_str: string; start_str: string }>(
+      `SELECT to_char(starts_at AT TIME ZONE $1, 'YYYY-MM-DD') AS date_str,
+              to_char(starts_at AT TIME ZONE $1, 'HH24:MI')   AS start_str
+       FROM appointments WHERE id = $2`,
+      [BUSINESS_TZ, id],
+    );
+    const dateStr = wallClock.rows[0].date_str;
+    const startStr = wallClock.rows[0].start_str;
 
     const client = await pool.connect();
     try {
@@ -477,15 +505,17 @@ export function mountAppointmentRoutes(
     const row = await loadAppointment(pool, id, user.business_id);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
-    // Rescheduling a terminal appointment is an illegal transition.
-    if (TERMINAL_STATES.has(String(row.state))) {
-      return sendError(res, 422, 'invalid_transition', `Cannot reschedule a terminal appointment (state: ${String(row.state)})`);
-    }
-
+    // Authz before state check: unauthorized callers get 403 regardless of the
+    // appointment's state — prevents probing terminal vs. actionable via 422 vs. 403.
     const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
     if (!authz.ok) {
       await guards.audit(req, 'appointment_action_denied', 'denied', { reason: authz.code, entity_id: id });
       return sendError(res, authz.status, authz.code, authz.message);
+    }
+
+    // Rescheduling a terminal appointment is an illegal transition.
+    if (TERMINAL_STATES.has(String(row.state))) {
+      return sendError(res, 422, 'invalid_transition', `Cannot reschedule a terminal appointment (state: ${String(row.state)})`);
     }
 
     const body = req.body ?? {};
@@ -500,16 +530,22 @@ export function mountAppointmentRoutes(
       ? Number(body.resource_id)
       : (row.resource_id != null ? Number(row.resource_id) : undefined);
 
-    // Parse date + start from starts_at if not overridden.
+    // Parse date + start from the request body, or fall back to the stored
+    // starts_at derived in SQL (mirrors scheduling.ts — no locale-string round-trip).
     let date: string;
     let start: string;
     if (body.date && body.start) {
       date = String(body.date);
       start = String(body.start);
     } else {
-      const existing = new Date(String(row.starts_at));
-      date = existing.toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ }).slice(0, 10);
-      start = existing.toLocaleTimeString('en-GB', { timeZone: BUSINESS_TZ, hour: '2-digit', minute: '2-digit', hour12: false });
+      const wc = await pool.query<{ date_str: string; start_str: string }>(
+        `SELECT to_char(starts_at AT TIME ZONE $1, 'YYYY-MM-DD') AS date_str,
+                to_char(starts_at AT TIME ZONE $1, 'HH24:MI')   AS start_str
+         FROM appointments WHERE id = $2`,
+        [BUSINESS_TZ, id],
+      );
+      date = wc.rows[0].date_str;
+      start = wc.rows[0].start_str;
     }
 
     const durationMinutes = body.duration_minutes != null
@@ -787,17 +823,31 @@ export function mountAppointmentRoutes(
     }
 
     params.push(id);
-    const updated = await pool.query<Record<string, unknown>>(
-      `UPDATE appointments SET ${setClauses.join(', ')} WHERE id = $${p} RETURNING *`,
-      params,
-    );
 
-    await guards.audit(req, 'appointment_patched', 'success', {
-      entity_id: id,
-      fields: Object.keys(body).filter((k) => ['name', 'description', 'staff_note'].includes(k)),
-    });
+    // Wrap UPDATE + audit in a transaction so a failed audit never leaves a
+    // committed edit with no audit trail — matches the durability invariant of
+    // every other appointment mutation in this module.
+    const pgClient = await pool.connect();
+    try {
+      await pgClient.query('BEGIN');
 
-    return sendData(res, updated.rows[0]);
+      const updated = await pgClient.query<Record<string, unknown>>(
+        `UPDATE appointments SET ${setClauses.join(', ')} WHERE id = $${p} RETURNING *`,
+        params,
+      );
+
+      await auditInTx(pgClient, user, 'appointment_patched', 'success', id, 'appointments', {
+        fields: Object.keys(body).filter((k) => ['name', 'description', 'staff_note'].includes(k)),
+      });
+
+      await pgClient.query('COMMIT');
+      return sendData(res, updated.rows[0]);
+    } catch (err) {
+      await pgClient.query('ROLLBACK');
+      throw err;
+    } finally {
+      pgClient.release();
+    }
   });
 
   // ── Staff detail read (D-07/D-08) ────────────────────────────────────────────
@@ -868,10 +918,16 @@ export function mountAppointmentRoutes(
 
     // Optional filters for Phase 5 calendar.
     if (req.query.date_from) {
+      if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
+        return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
+      }
       conditions.push(`a.starts_at >= $${p++}`);
       params.push(req.query.date_from);
     }
     if (req.query.date_to) {
+      if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
+        return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
+      }
       conditions.push(`a.starts_at <= $${p++}`);
       params.push(req.query.date_to);
     }

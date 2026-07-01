@@ -144,7 +144,16 @@ export async function assertLedgerReadAllowed(
   if (user.business_id == null) {
     return { ok: false, status: 400, code: 'no_business', message: 'Business context required' };
   }
-  if (user.role === 'Admin') return { ok: true };
+  if (user.role === 'Admin') {
+    // Admin scope is business-bounded — a client in another tenant is not readable.
+    const r = await db.query(
+      `SELECT 1 FROM auth.users WHERE id = $1 AND business_id = $2`,
+      [clientUserId, user.business_id],
+    );
+    return r.rows.length > 0
+      ? { ok: true }
+      : { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
+  }
 
   if (user.role === 'Professional') {
     const r = await db.query<{ allowed: boolean }>(

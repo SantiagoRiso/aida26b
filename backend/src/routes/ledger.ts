@@ -106,9 +106,15 @@ export function mountLedgerRoutes(
       if (rawAmount !== undefined && rawAmount !== null) {
         amountArs = String(rawAmount);
       } else if (appointmentId != null && entryType === 'charge') {
+        // Constrain the prefill to the appointment that belongs to the charged
+        // client and the caller's business — prevents an Admin from sourcing an
+        // amount from an unrelated or cross-tenant appointment.
         const appt = await client.query<{ price: string }>(
-          `SELECT price FROM appointments WHERE id = $1`,
-          [appointmentId],
+          `SELECT a.price
+           FROM appointments a
+           JOIN auth.users c ON c.id = a.client_user_id
+           WHERE a.id = $1 AND a.client_user_id = $2 AND c.business_id = $3`,
+          [appointmentId, clientUserId, user.business_id],
         );
         if (appt.rows.length === 0) {
           await client.query('ROLLBACK');

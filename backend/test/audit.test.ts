@@ -395,3 +395,28 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-1
     expect(dbCheck.rows[0].name).toBe('Audit Biz');
   });
 });
+
+// ── WR-04 regression: malformed date_from/date_to in /api/audit → 422 ─────────
+
+describe('GET /api/audit — malformed date filters (WR-04)', () => {
+  test('malformed date_from returns 422 invalid_request', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', '/api/audit?date_from=notadate');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  test('malformed date_to returns 422 invalid_request', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', '/api/audit?date_to=01/01/2024');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  test('valid ISO timestamp date_from still returns 200', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const iso = new Date(Date.now() - 60 * 1000).toISOString();
+    const res = await auditReq('GET', `/api/audit?date_from=${encodeURIComponent(iso)}`);
+    expect(res.status).toBe(200);
+  });
+});

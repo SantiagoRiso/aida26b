@@ -293,6 +293,34 @@ describe('POST /api/appointments/schedule', () => {
   });
 });
 
+describe('cross-business tenant isolation on /schedule (CR-03)', () => {
+  let foreignClientId: number;
+
+  beforeAll(async () => {
+    const biz2 = await pool.query<{ id: string }>(
+      `INSERT INTO businesses (name, cancellation_cutoff_hours) VALUES ('Other Appt Biz', 0) RETURNING id`,
+    );
+    const biz2Id = Number(biz2.rows[0].id);
+    const fc = await pool.query<{ id: string }>(
+      `INSERT INTO auth.users
+         (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+       VALUES ('appt_foreign_client', 'appt_foreign@test.local', 'foreign', 'h', 's', 'Client', $1, false)
+       RETURNING id`,
+      [biz2Id],
+    );
+    foreignClientId = Number(fc.rows[0].id);
+  });
+
+  test('staff cannot schedule for a client in another business → 404', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '11:30',
+      client_user_id: foreignClientId,
+    }));
+    expect(res.status).toBe(404);
+  });
+});
+
 // ── Task 2: Transitions ───────────────────────────────────────────────────────
 
 describe('POST /api/appointments/:id/approve', () => {
@@ -701,5 +729,85 @@ describe('GET /api/appointments — paginated list', () => {
     expect(audit.rows.some((r) => r.event_type === 'appointment_scheduled')).toBe(true);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [apptId]);
+  });
+});
+
+// ── WR-04 regression: malformed date_from/date_to → 422 ──────────────────────
+
+describe('GET /api/appointments — malformed date filters (WR-04)', () => {
+  test('malformed date_from returns 422 invalid_request', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments?date_from=notadate');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  test('malformed date_to returns 422 invalid_request', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments?date_to=2024/01/01');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  test('valid ISO timestamp date_from still returns 200', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const iso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const res = await apptReq('GET', `/api/appointments?date_from=${encodeURIComponent(iso)}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ── WR-06 regression: unauthorized caller on terminal appointment → 403 ───────
+
+describe('POST /api/appointments/:id/reschedule — authz before state check (WR-06)', () => {
+  test('unauthorized caller on a terminal appointment gets 403, not 422', async () => {
+    // Insert a canceled (terminal) appointment on pro1's calendar.
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'canceled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId, FAR_FUTURE_TS],
+    );
+    const id = Number(r.rows[0].id);
+
+    // recepNoGrantId has no grant for pro1 — should get 403, not 422.
+    currentUser = asUser(recepNoGrantId, 'Receptionist');
+    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+      date: MONDAY,
+      start: '09:00',
+      duration_minutes: 30,
+    });
+    expect(res.status).toBe(403);
+
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
+  });
+});
+
+// ── WR-02 regression: foreign resource_id → 404 ──────────────────────────────
+
+describe('POST /api/appointments/schedule — foreign resource_id (WR-02)', () => {
+  let foreignResourceId: number;
+
+  beforeAll(async () => {
+    // Create a resource belonging to a different business.
+    const biz3 = await pool.query<{ id: string }>(
+      `INSERT INTO businesses (name, cancellation_cutoff_hours) VALUES ('Resource Biz', 0) RETURNING id`,
+    );
+    const biz3Id = Number(biz3.rows[0].id);
+    const res = await pool.query<{ id: string }>(
+      `INSERT INTO resources (business_id, name) VALUES ($1, 'Foreign Room') RETURNING id`,
+      [biz3Id],
+    );
+    foreignResourceId = Number(res.rows[0].id);
+  });
+
+  test('foreign resource_id → 404', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '09:00',
+      resource_id: foreignResourceId,
+    }));
+    expect(res.status).toBe(404);
   });
 });
