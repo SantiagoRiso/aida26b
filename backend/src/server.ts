@@ -12,6 +12,9 @@ import { mountGenericRoutes, mountObservability } from './app';
 import { mountGrantRoutes } from './routes/grants';
 import { mountSchedulingRoutes } from './routes/scheduling';
 import { mountSetScheduleRoutes } from './routes/set-schedule';
+import { mountAppointmentRoutes } from './routes/appointments';
+import { mountLedgerRoutes } from './routes/ledger';
+import { mountAuditRoutes } from './routes/audit';
 
 dotenv.config();
 
@@ -546,6 +549,27 @@ mountSchedulingRoutes(app, pool, {
 
 // Set-weekly-schedule: per-block-granularity validation + one-owner rule + own-schedule authz.
 mountSetScheduleRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Full appointment lifecycle: request/schedule/approve/reschedule/transition/PATCH + reads.
+mountAppointmentRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Immutable ARS ledger: entry create + balance + paginated history.
+mountLedgerRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Admin audit view (filtered, paginated) + admin business settings endpoint.
+mountAuditRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
   audit,

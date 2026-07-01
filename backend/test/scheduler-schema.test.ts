@@ -456,29 +456,53 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
       return;
     }
 
-    const protectedTables = [
-      'calendar_grants',
-      'appointments',
-      'ledger_entries',
-      'audit_events',
-    ];
+    // calendar_grants stays SELECT-only — grant management goes through explicit endpoints.
+    const calGrantPerms = await pool.query<{ privilege_type: string }>(
+      `SELECT privilege_type
+       FROM   information_schema.role_table_grants
+       WHERE  grantee = 'aida26_user'
+         AND  table_schema = 'public'
+         AND  table_name = 'calendar_grants'
+         AND  privilege_type IN ('INSERT','UPDATE','DELETE')`,
+    );
+    assert.equal(
+      calGrantPerms.rows.length,
+      0,
+      `calendar_grants must not grant INSERT/UPDATE/DELETE to aida26_user; found: ${calGrantPerms.rows.map((x) => x.privilege_type).join(',')}`
+    );
 
-    for (const t of protectedTables) {
+    // Immutable tables: UPDATE and DELETE must never be granted.
+    for (const t of ['ledger_entries', 'audit_events']) {
       const r = await pool.query<{ privilege_type: string }>(
         `SELECT privilege_type
          FROM   information_schema.role_table_grants
          WHERE  grantee = 'aida26_user'
            AND  table_schema = 'public'
            AND  table_name = $1
-           AND  privilege_type IN ('INSERT','UPDATE','DELETE')`,
+           AND  privilege_type IN ('UPDATE','DELETE')`,
         [t]
       );
       assert.equal(
         r.rows.length,
         0,
-        `Protected table '${t}' must not grant INSERT/UPDATE/DELETE to aida26_user; found: ${r.rows.map((x) => x.privilege_type).join(',')}`
+        `Immutable table '${t}' must not grant UPDATE/DELETE to aida26_user; found: ${r.rows.map((x) => x.privilege_type).join(',')}`
       );
     }
+
+    // appointments gets DELETE withheld (state changes go through UPDATE; hard-delete not permitted).
+    const apptDelete = await pool.query<{ privilege_type: string }>(
+      `SELECT privilege_type
+       FROM   information_schema.role_table_grants
+       WHERE  grantee = 'aida26_user'
+         AND  table_schema = 'public'
+         AND  table_name = 'appointments'
+         AND  privilege_type = 'DELETE'`,
+    );
+    assert.equal(
+      apptDelete.rows.length,
+      0,
+      `appointments must not grant DELETE to aida26_user`
+    );
   } finally {
     await pool.end();
   }
@@ -880,6 +904,326 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
         [proId, granteeId]
       );
       assert.equal(ok.rows.length, 1, 'Professional must be accepted in calendar_grants.professional_user_id');
+    } finally {
+      await teardown();
+    }
+  });
+});
+
+// Phase 4 schema surface
+describe('scheduler-schema: Phase 4 columns, entry_type CHECK replacement, and triggers', () => {
+  let pool: Pool;
+
+  async function setup() {
+    await resetTestDb();
+    pool = makeTestPool();
+    await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
+  }
+
+  async function teardown() {
+    await pool.end();
+  }
+
+  test('appointments.staff_note column exists and is nullable', async () => {
+    await setup();
+    try {
+      assert.equal(
+        await columnExists(pool, 'public', 'appointments', 'staff_note'),
+        true,
+        'appointments must have staff_note column after Phase 4 migration'
+      );
+      const r = await pool.query<{ is_nullable: string }>(
+        `SELECT is_nullable FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'appointments' AND column_name = 'staff_note'`
+      );
+      assert.equal(r.rows[0]?.is_nullable, 'YES', 'staff_note must be nullable');
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('businesses.cancellation_cutoff_hours column exists, defaults to 24, and rejects negative values', async () => {
+    await setup();
+    try {
+      assert.equal(
+        await columnExists(pool, 'public', 'businesses', 'cancellation_cutoff_hours'),
+        true,
+        'businesses must have cancellation_cutoff_hours column after Phase 4 migration'
+      );
+
+      const r = await pool.query<{ cancellation_cutoff_hours: number }>(
+        `INSERT INTO businesses (name) VALUES ('CutoffBiz') RETURNING cancellation_cutoff_hours`
+      );
+      assert.equal(r.rows[0].cancellation_cutoff_hours, 24, 'cancellation_cutoff_hours must default to 24');
+
+      await expect(
+        pool.query(`UPDATE businesses SET cancellation_cutoff_hours = -1 WHERE name = 'CutoffBiz'`)
+      ).rejects.toThrow();
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('entry_type CHECK accepts the four new values and rejects the old adjustment', async () => {
+    await setup();
+    try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('LedgerBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
+      const client = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('ledger_client', 'lc@test.local', 'Ledger Client', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
+      );
+      const clientId = client.rows[0].id;
+
+      const validTypes = ['charge', 'payment', 'adjustment_debit', 'adjustment_credit'];
+      for (const et of validTypes) {
+        const r = await pool.query(
+          `INSERT INTO ledger_entries (client_user_id, entry_type, amount_ars) VALUES ($1, $2, 100) RETURNING id`,
+          [clientId, et]
+        );
+        assert.equal(r.rows.length, 1, `entry_type '${et}' must be accepted`);
+      }
+
+      await expect(
+        pool.query(
+          `INSERT INTO ledger_entries (client_user_id, entry_type, amount_ars) VALUES ($1, 'adjustment', 100)`,
+          [clientId]
+        )
+      ).rejects.toThrow();
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('ledger_entries immutability trigger rejects UPDATE and DELETE', async () => {
+    await setup();
+    try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('ImmutableBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
+      const client = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('immut_client', 'immut@test.local', 'Immutable Client', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
+      );
+      const clientId = client.rows[0].id;
+      const entry = await pool.query<{ id: string }>(
+        `INSERT INTO ledger_entries (client_user_id, entry_type, amount_ars) VALUES ($1, 'charge', 50) RETURNING id`,
+        [clientId]
+      );
+      const entryId = entry.rows[0].id;
+
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await expect(
+          c.query(`UPDATE ledger_entries SET amount_ars = 999 WHERE id = $1`, [entryId])
+        ).rejects.toThrow();
+        await c.query('ROLLBACK');
+      } finally {
+        c.release();
+      }
+
+      const c2 = await pool.connect();
+      try {
+        await c2.query('BEGIN');
+        await expect(
+          c2.query(`DELETE FROM ledger_entries WHERE id = $1`, [entryId])
+        ).rejects.toThrow();
+        await c2.query('ROLLBACK');
+      } finally {
+        c2.release();
+      }
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('audit_events immutability trigger rejects UPDATE and DELETE', async () => {
+    await setup();
+    try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('AuditBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
+      const event = await pool.query<{ id: string }>(
+        `INSERT INTO audit_events (business_id, event_type, outcome)
+         VALUES ($1, 'test_event', 'success') RETURNING id`,
+        [bizId]
+      );
+      const eventId = event.rows[0].id;
+
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await expect(
+          c.query(`UPDATE audit_events SET event_type = 'tampered' WHERE id = $1`, [eventId])
+        ).rejects.toThrow();
+        await c.query('ROLLBACK');
+      } finally {
+        c.release();
+      }
+
+      const c2 = await pool.connect();
+      try {
+        await c2.query('BEGIN');
+        await expect(
+          c2.query(`DELETE FROM audit_events WHERE id = $1`, [eventId])
+        ).rejects.toThrow();
+        await c2.query('ROLLBACK');
+      } finally {
+        c2.release();
+      }
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('state-transition trigger rejects terminal-to-active and illegal edge transitions', async () => {
+    await setup();
+    try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('TransBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
+      const client = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trans_client', 'tc@test.local', 'Trans Client', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
+      );
+      const pro = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trans_pro', 'tp@test.local', 'Trans Pro', 'h', 's', 'Professional', $1) RETURNING id`,
+        [bizId]
+      );
+      const svc = await pool.query<{ id: string }>(
+        `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+         VALUES ($1, 'TransSvc', 30, 0) RETURNING id`,
+        [bizId]
+      );
+      const clientId = client.rows[0].id;
+      const proId = pro.rows[0].id;
+      const svcId = svc.rows[0].id;
+
+      // Insert a scheduled appointment.
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, ends_at, state, price)
+         VALUES ($1, $2, $3, now() + interval '1 day', 30, now() + interval '1 day' + interval '30 min', 'scheduled', 0)
+         RETURNING id`,
+        [clientId, proId, svcId]
+      );
+      const apptId = appt.rows[0].id;
+
+      // Move to terminal.
+      await pool.query(`UPDATE appointments SET state = 'completed' WHERE id = $1`, [apptId]);
+
+      // Terminal → active must be rejected.
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await expect(
+          c.query(`UPDATE appointments SET state = 'scheduled' WHERE id = $1`, [apptId])
+        ).rejects.toThrow();
+        await c.query('ROLLBACK');
+      } finally {
+        c.release();
+      }
+
+      // Illegal edge: requested → completed (not in transition map).
+      const appt2 = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, ends_at, state, price)
+         VALUES ($1, $2, $3, now() + interval '2 days', 30, now() + interval '2 days' + interval '30 min', 'requested', 0)
+         RETURNING id`,
+        [clientId, proId, svcId]
+      );
+      const appt2Id = appt2.rows[0].id;
+
+      const c2 = await pool.connect();
+      try {
+        await c2.query('BEGIN');
+        await expect(
+          c2.query(`UPDATE appointments SET state = 'completed' WHERE id = $1`, [appt2Id])
+        ).rejects.toThrow();
+        await c2.query('ROLLBACK');
+      } finally {
+        c2.release();
+      }
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('state-transition trigger allows non-state UPDATEs on terminal appointments (staff_note pass-through)', async () => {
+    await setup();
+    try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('NoteBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
+      const client = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('note_client', 'nc@test.local', 'Note Client', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
+      );
+      const pro = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('note_pro', 'np@test.local', 'Note Pro', 'h', 's', 'Professional', $1) RETURNING id`,
+        [bizId]
+      );
+      const svc = await pool.query<{ id: string }>(
+        `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+         VALUES ($1, 'NoteSvc', 30, 0) RETURNING id`,
+        [bizId]
+      );
+      const clientId = client.rows[0].id;
+      const proId = pro.rows[0].id;
+      const svcId = svc.rows[0].id;
+
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, ends_at, state, price)
+         VALUES ($1, $2, $3, now() + interval '1 day', 30, now() + interval '1 day' + interval '30 min', 'scheduled', 0)
+         RETURNING id`,
+        [clientId, proId, svcId]
+      );
+      const apptId = appt.rows[0].id;
+
+      await pool.query(`UPDATE appointments SET state = 'canceled' WHERE id = $1`, [apptId]);
+
+      // staff_note UPDATE on a terminal appointment must be allowed.
+      const r = await pool.query<{ staff_note: string }>(
+        `UPDATE appointments SET staff_note = 'client did not show' WHERE id = $1 RETURNING staff_note`,
+        [apptId]
+      );
+      assert.equal(r.rows[0].staff_note, 'client did not show', 'staff_note UPDATE must succeed on a terminal appointment');
+    } finally {
+      await teardown();
+    }
+  });
+
+  test('three new triggers exist on the correct tables', async () => {
+    await setup();
+    try {
+      const triggers = await pool.query<{ trigger_name: string; event_object_table: string }>(
+        `SELECT trigger_name, event_object_table
+         FROM information_schema.triggers
+         WHERE trigger_schema = 'public'
+           AND trigger_name IN (
+             'appointments_state_transition',
+             'ledger_entries_immutable',
+             'audit_events_immutable'
+           )`
+      );
+      const found = new Map(triggers.rows.map((r) => [r.trigger_name, r.event_object_table]));
+      assert.equal(found.get('appointments_state_transition'), 'appointments', 'appointments_state_transition trigger must exist on appointments');
+      assert.equal(found.get('ledger_entries_immutable'),      'ledger_entries',  'ledger_entries_immutable trigger must exist on ledger_entries');
+      assert.equal(found.get('audit_events_immutable'),        'audit_events',    'audit_events_immutable trigger must exist on audit_events');
     } finally {
       await teardown();
     }

@@ -16,8 +16,12 @@ import {
   resolveBooking,
   evaluateConflicts,
   detectOverlap,
+  TERMINAL_STATES,
+  TRANSITION_MAP,
+  assertValidTransition,
+  LEDGER_ENTRY_TYPES,
 } from '../../shared/src/ssot/domain';
-import type { BookedAppointment } from '../../shared/src/ssot/domain';
+import type { BookedAppointment, LedgerEntryType } from '../../shared/src/ssot/domain';
 import type {
   TableStructure,
   SchedulableCapability,
@@ -615,5 +619,131 @@ describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08
     });
     expect(v.conflicts.some((c) => c.type === 'resource_overlap' && c.entity.kind === 'resource')).toBe(true);
     expect(v.conflicts.some((c) => c.type === 'professional_overlap')).toBe(false);
+  });
+});
+
+describe('appointment state transition map (Phase 4)', () => {
+  it('assertValidTransition allows requested → scheduled', () => {
+    expect(assertValidTransition('requested', 'scheduled')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition allows requested → rejected', () => {
+    expect(assertValidTransition('requested', 'rejected')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition allows requested → canceled', () => {
+    expect(assertValidTransition('requested', 'canceled')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition allows scheduled → completed', () => {
+    expect(assertValidTransition('scheduled', 'completed')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition allows scheduled → canceled', () => {
+    expect(assertValidTransition('scheduled', 'canceled')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition allows scheduled → no_show', () => {
+    expect(assertValidTransition('scheduled', 'no_show')).toEqual({ ok: true });
+  });
+
+  it('assertValidTransition rejects requested → completed (illegal edge)', () => {
+    const r = assertValidTransition('requested', 'completed');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toBeTruthy();
+  });
+
+  it('assertValidTransition rejects completed → scheduled (terminal source)', () => {
+    const r = assertValidTransition('completed', 'scheduled');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/terminal/i);
+  });
+
+  it('assertValidTransition rejects canceled → requested (terminal source)', () => {
+    const r = assertValidTransition('canceled', 'requested');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/terminal/i);
+  });
+
+  it('assertValidTransition rejects no_show → scheduled (terminal source)', () => {
+    const r = assertValidTransition('no_show', 'scheduled');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/terminal/i);
+  });
+
+  it('assertValidTransition rejects rejected → scheduled (terminal source)', () => {
+    const r = assertValidTransition('rejected', 'scheduled');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/terminal/i);
+  });
+
+  it('TERMINAL_STATES contains completed, canceled, no_show, rejected', () => {
+    expect(TERMINAL_STATES.has('completed')).toBe(true);
+    expect(TERMINAL_STATES.has('canceled')).toBe(true);
+    expect(TERMINAL_STATES.has('no_show')).toBe(true);
+    expect(TERMINAL_STATES.has('rejected')).toBe(true);
+  });
+
+  it('TERMINAL_STATES does not contain requested or scheduled', () => {
+    expect(TERMINAL_STATES.has('requested')).toBe(false);
+    expect(TERMINAL_STATES.has('scheduled')).toBe(false);
+  });
+
+  it('TRANSITION_MAP has entries only for requested and scheduled', () => {
+    expect(Object.keys(TRANSITION_MAP)).toEqual(expect.arrayContaining(['requested', 'scheduled']));
+    expect(Object.keys(TRANSITION_MAP)).not.toContain('completed');
+    expect(Object.keys(TRANSITION_MAP)).not.toContain('canceled');
+  });
+});
+
+describe('ledger entry types (Phase 4 — four values)', () => {
+  it('LEDGER_ENTRY_TYPES contains exactly four entries', () => {
+    expect(LEDGER_ENTRY_TYPES).toHaveLength(4);
+  });
+
+  it('LEDGER_ENTRY_TYPES value set equals {charge, payment, adjustment_debit, adjustment_credit}', () => {
+    const values = LEDGER_ENTRY_TYPES.map((t) => t.value);
+    expect(values).toContain('charge');
+    expect(values).toContain('payment');
+    expect(values).toContain('adjustment_debit');
+    expect(values).toContain('adjustment_credit');
+  });
+
+  it('LEDGER_ENTRY_TYPES does not contain the old adjustment type', () => {
+    const values = LEDGER_ENTRY_TYPES.map((t) => t.value);
+    expect(values).not.toContain('adjustment');
+  });
+
+  it('all LEDGER_ENTRY_TYPES entries have {es, en} labels', () => {
+    for (const t of LEDGER_ENTRY_TYPES) {
+      expect(typeof t.label.es).toBe('string');
+      expect(typeof t.label.en).toBe('string');
+      expect(t.label.es.length).toBeGreaterThan(0);
+      expect(t.label.en.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('LedgerEntryType type-checks against the four values', () => {
+    // Compile-time check: confirm the type accepts the four values.
+    const types: LedgerEntryType[] = ['charge', 'payment', 'adjustment_debit', 'adjustment_credit'];
+    expect(types).toHaveLength(4);
+  });
+});
+
+describe('appointments SSOT: staff_note column metadata (Phase 4)', () => {
+  it('appointments table has a staff_note column in the SSOT', () => {
+    const cols = structure.tables.appointments.columns as Record<string, any>;
+    expect(cols.staff_note).toBeDefined();
+  });
+
+  it('staff_note is nullable', () => {
+    const cols = structure.tables.appointments.columns as Record<string, any>;
+    expect(cols.staff_note.validator?.nullable).toBe(true);
+  });
+
+  it('staff_note has {es, en} labels', () => {
+    const cols = structure.tables.appointments.columns as Record<string, any>;
+    expect(typeof cols.staff_note.label?.es).toBe('string');
+    expect(typeof cols.staff_note.label?.en).toBe('string');
   });
 });

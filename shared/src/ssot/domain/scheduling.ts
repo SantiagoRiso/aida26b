@@ -1,6 +1,31 @@
 import type { TableStructure } from '../../types/types';
 import { pkColumn } from './business';
 
+// States from which no further transition is permitted; price captured at booking is frozen here.
+export const TERMINAL_STATES = new Set(['completed', 'canceled', 'no_show', 'rejected']);
+
+// Legal outgoing transitions per source state. Terminal states have no entry.
+export const TRANSITION_MAP: Record<string, readonly string[]> = {
+  requested: ['scheduled', 'rejected', 'canceled'],
+  scheduled: ['completed', 'canceled', 'no_show'],
+};
+
+// Returns { ok: true } on a valid edge, or { ok: false, message } otherwise.
+// Used by route handlers (422) and the frontend (hide illegal actions).
+export function assertValidTransition(
+  from: string,
+  to: string,
+): { ok: true } | { ok: false; message: string } {
+  const allowed = TRANSITION_MAP[from];
+  if (!allowed) {
+    return { ok: false, message: `State '${from}' is terminal; no transitions allowed` };
+  }
+  if (!allowed.includes(to)) {
+    return { ok: false, message: `Transition '${from}' → '${to}' is not allowed` };
+  }
+  return { ok: true };
+}
+
 const APPOINTMENT_STATES = [
   { value: 'requested', label: { es: 'Solicitado', en: 'Requested' } },
   { value: 'scheduled', label: { es: 'Agendado', en: 'Scheduled' } },
@@ -266,6 +291,15 @@ export const schedulingTables = {
         filterable: false,
         sortable: false,
         foreignKey: { table: 'users', valueField: 'id', labelField: 'username' },
+      },
+      // Staff-only memo field. Writable in any state; once terminal it is the only editable field.
+      staff_note: {
+        type: 'string',
+        label: { es: 'Nota de Staff', en: 'Staff Note' },
+        input: 'textarea',
+        validator: { nullable: true },
+        filterable: false,
+        sortable: false,
       },
     },
     pk: 'id',

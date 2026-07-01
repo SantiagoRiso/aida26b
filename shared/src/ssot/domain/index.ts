@@ -19,6 +19,9 @@ export {
   computeDailyAvailability,
   computeDailySlots,
   detectOverlap,
+  TERMINAL_STATES,
+  TRANSITION_MAP,
+  assertValidTransition,
 } from './scheduling';
 export type { Weekday, TimeInterval, WeeklySchedule, ScheduleExceptionInput } from './scheduling';
 export { resolveBooking } from './catalog';
@@ -30,3 +33,5 @@ export type {
   ConflictOwner,
   BookedAppointment,
 } from './conflict';
+export { LEDGER_ENTRY_TYPES } from './finance';
+export type { LedgerEntryType } from './finance';

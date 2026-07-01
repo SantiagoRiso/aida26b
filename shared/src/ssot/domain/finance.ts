@@ -1,11 +1,16 @@
 import type { TableStructure } from '../../types/types';
 import { pkColumn } from './business';
 
-const LEDGER_ENTRY_TYPES = [
-  { value: 'charge', label: { es: 'Cargo', en: 'Charge' } },
-  { value: 'payment', label: { es: 'Pago', en: 'Payment' } },
-  { value: 'adjustment', label: { es: 'Ajuste', en: 'Adjustment' } },
+// Two adjustment subtypes replace the single 'adjustment': debit increases debt,
+// credit decreases it. Balance = SUM(charge + adjustment_debit) - SUM(payment + adjustment_credit).
+export const LEDGER_ENTRY_TYPES = [
+  { value: 'charge',             label: { es: 'Cargo',              en: 'Charge' } },
+  { value: 'payment',            label: { es: 'Pago',               en: 'Payment' } },
+  { value: 'adjustment_debit',   label: { es: 'Ajuste (débito)',    en: 'Adjustment (debit)' } },
+  { value: 'adjustment_credit',  label: { es: 'Ajuste (crédito)',   en: 'Adjustment (credit)' } },
 ] as const;
+
+export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number]['value'];
 
 export const financeTables = {
   // Immutable: balance is SUM over entries; corrections are new adjustment rows.
