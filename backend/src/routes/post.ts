@@ -10,7 +10,7 @@ import {
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed } from './crud-policy';
 import type { AuthUser } from '../auth';
 import { isBusinessScoped } from '../../../shared/src/utils/utils';
 
@@ -67,28 +67,48 @@ export async function postHandler(
     return;
   }
 
-  // Verify that FK columns with a declared referencesUserRole point to a user with the correct role.
+  // Verify FK columns with a declared referencesUserRole point to an active user of the
+  // right role, and derive the row's tenant from that user rather than the caller. Every
+  // role-checked reference must share one business, so no row can mix tenants — enforced
+  // even for super-admins, who would otherwise bypass the business restriction entirely.
   // This replaces the removed composite-FK DB constraint.
   const roleChecks = getRoleCheckedColumns(tableName);
+  let referencedBusiness: number | undefined;
   for (const { column, role } of roleChecks) {
     const refId = (validated.data as Record<string, unknown>)[column];
     if (refId == null) continue;
-    // Scope the FK target to the caller's business so a row cannot reference a user
-    // in another tenant (a null business_id is a super-admin and skips the restriction).
-    const check = await pool.query<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM auth.users
-         WHERE id = $1 AND role = $2 AND deleted_at IS NULL
-           AND ($3::bigint IS NULL OR business_id = $3::bigint)
-       ) AS exists`,
-      [refId, role, user.business_id]
+    const check = await pool.query<{ business_id: string | null }>(
+      `SELECT business_id FROM auth.users
+       WHERE id = $1 AND role = $2 AND deleted_at IS NULL`,
+      [refId, role]
     );
-    if (!check.rows[0].exists) {
+    const refBusiness = check.rows[0]?.business_id;
+    const invalidRef =
+      check.rows.length === 0 ||
+      refBusiness == null ||
+      (user.business_id != null && Number(refBusiness) !== user.business_id) ||
+      (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);
+    if (invalidRef) {
       return sendError(
         res, 422, 'invalid_reference_role',
         `${column} must reference an active ${role} user`,
         { [column]: `must be an active ${role}` }
       );
+    }
+    referencedBusiness = Number(refBusiness);
+  }
+
+  // D-16: own+Admin+granted enforcement for schedule tables — the owner comes from the body on
+  // create. Runs AFTER the generic role/reference checks so it refines (not preempts) their
+  // 422 invalid_reference_role semantics; adds the own/grant 403/404 on top.
+  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+    const owner = req.body as Record<string, unknown>;
+    const guard = await assertOwnScheduleAllowed(pool, user, {
+      professional_user_id: owner?.professional_user_id as number | string | null,
+      resource_id: owner?.resource_id as number | string | null,
+    });
+    if (!guard.ok) {
+      return sendError(res, guard.status, guard.code, guard.message);
     }
   }
 

@@ -55,7 +55,8 @@ export function mountGrantRoutes(
       [professionalUserId]
     );
 
-    if (proCheck.rows.length === 0 || String(proCheck.rows[0].business_id) !== String(user.business_id)) {
+    const proBusiness = proCheck.rows[0]?.business_id;
+    if (proCheck.rows.length === 0 || proBusiness == null || Number(proBusiness) !== user.business_id) {
       return sendError(res, 404, 'not_found', 'Professional not found in this business');
     }
 
@@ -65,7 +66,8 @@ export function mountGrantRoutes(
       [granteeUserId]
     );
 
-    if (granteeCheck.rows.length === 0 || String(granteeCheck.rows[0].business_id) !== String(user.business_id)) {
+    const granteeBusiness = granteeCheck.rows[0]?.business_id;
+    if (granteeCheck.rows.length === 0 || granteeBusiness == null || Number(granteeBusiness) !== user.business_id) {
       return sendError(res, 422, 'invalid_request', 'Grantee not found in this business');
     }
 

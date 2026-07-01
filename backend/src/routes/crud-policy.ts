@@ -1,3 +1,4 @@
+import { Pool, PoolClient } from 'pg';
 import { structure } from '../../../shared/src/ssot/structure';
 import { isProtected, getCrudPolicy as getSsotCrudPolicy, tableOf } from '../../../shared/src/utils/utils';
 import type {
@@ -68,8 +69,13 @@ export function buildBusinessScope(
   tableKey: TableKey,
   user: AuthUser,
 ): { businessWhere: string; businessParams: unknown[] } {
-  // Admins without a business (e.g. super-admins) see all rows.
+  // Only a super-admin (Admin with no business) sees every tenant's rows. The DB
+  // enforces business_id IS NULL ⟹ role = 'Admin', but gate on role here too so an
+  // app-layer bug can never widen scope to a non-admin who somehow lacks a business.
   if (user.business_id == null) {
+    if (user.role !== 'Admin') {
+      return { businessWhere: '1 = 0', businessParams: [] };
+    }
     return { businessWhere: '', businessParams: [] };
   }
 
@@ -167,4 +173,83 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
     discriminatorWhere,
     discriminatorParams,
   };
+}
+
+export type OwnScheduleTarget = {
+  professional_user_id?: number | string | null;
+  resource_id?: number | string | null;
+};
+
+export type OwnScheduleResult =
+  | { ok: true }
+  | { ok: false; status: number; code: string; message: string };
+
+// D-16 enforcement for schedule/exception/resource editing — the finer-grained gate the
+// synchronous assertCrudAllowed cannot express (a granted-staff check needs a DB lookup).
+// Own + Admin + granted: a Professional edits only their own; an Admin any owner in their
+// business; a Receptionist/other staff only with a calendar_grant for that professional;
+// resources are Admin-only for non-granted staff (no resource-grant column exists in D1);
+// a Client is always denied. Cross-business owners return 404 to hide existence.
+export async function assertOwnScheduleAllowed(
+  db: Pool | PoolClient,
+  user: AuthUser,
+  target: OwnScheduleTarget,
+): Promise<OwnScheduleResult> {
+  if (user.role === 'Client') {
+    return { ok: false, status: 403, code: 'forbidden', message: 'Clients cannot edit schedules' };
+  }
+
+  // A super-admin (Admin with no business) manages across tenants and skips the business match,
+  // mirroring the generic write path. A non-admin without a business is anomalous → no_business.
+  const isSuperAdmin = user.role === 'Admin' && user.business_id == null;
+  if (user.business_id == null && !isSuperAdmin) {
+    return { ok: false, status: 400, code: 'no_business', message: 'A business context is required to edit schedules' };
+  }
+
+  const professionalUserId = target.professional_user_id != null ? Number(target.professional_user_id) : null;
+  const resourceId = target.resource_id != null ? Number(target.resource_id) : null;
+
+  if (professionalUserId != null) {
+    const r = await db.query<{ business_id: string | null }>(
+      `SELECT business_id FROM auth.users WHERE id = $1 AND role = 'Professional' AND is_active = true`,
+      [professionalUserId],
+    );
+    const biz = r.rows[0]?.business_id;
+    if (r.rows.length === 0 || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
+      return { ok: false, status: 404, code: 'not_found', message: 'Professional not found in this business' };
+    }
+  } else if (resourceId != null) {
+    const r = await db.query<{ business_id: string | null }>(
+      `SELECT business_id FROM resources WHERE id = $1 AND deleted_at IS NULL`,
+      [resourceId],
+    );
+    const biz = r.rows[0]?.business_id;
+    if (r.rows.length === 0 || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
+      return { ok: false, status: 404, code: 'not_found', message: 'Resource not found in this business' };
+    }
+  } else {
+    return { ok: false, status: 422, code: 'invalid_request', message: 'A professional_user_id or resource_id is required' };
+  }
+
+  if (user.role === 'Admin') return { ok: true };
+
+  if (professionalUserId != null) {
+    if (user.role === 'Professional') {
+      return professionalUserId === user.id
+        ? { ok: true }
+        : { ok: false, status: 403, code: 'forbidden', message: 'A Professional may edit only their own schedule' };
+    }
+    // Receptionist / other staff need an explicit calendar grant for this professional.
+    const grant = await db.query(
+      `SELECT 1 FROM calendar_grants WHERE professional_user_id = $1 AND grantee_user_id = $2`,
+      [professionalUserId, user.id],
+    );
+    return grant.rows.length > 0
+      ? { ok: true }
+      : { ok: false, status: 403, code: 'forbidden', message: 'A calendar grant for this professional is required' };
+  }
+
+  // Resource target: managed by Admin (handled above) + granted staff. The grant model is
+  // per-professional only, so non-admin staff cannot manage resources in D1 (Phase 4/D2 extension).
+  return { ok: false, status: 403, code: 'forbidden', message: 'Only an Admin may manage resource schedules' };
 }

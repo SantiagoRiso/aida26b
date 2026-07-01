@@ -146,6 +146,7 @@ describe('delete semantics', () => {
         is_unavailable: true,
         start_time: null,
         end_time: null,
+        granularity_minutes: null,
         reason: null,
       }),
     });
@@ -202,6 +203,7 @@ describe('app-layer role check on generic write path', () => {
         is_unavailable: true,
         start_time: null,
         end_time: null,
+        granularity_minutes: null,
         reason: null,
       }),
     });
@@ -220,6 +222,7 @@ describe('app-layer role check on generic write path', () => {
         is_unavailable: true,
         start_time: null,
         end_time: null,
+        granularity_minutes: null,
         reason: null,
       }),
     });

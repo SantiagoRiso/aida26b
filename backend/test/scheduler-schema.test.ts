@@ -389,12 +389,17 @@ test('scheduler-schema: D1-compatible auth.users has business_id and D1 role che
     assert.equal(await columnExists(pool, 'auth', 'users', 'business_id'), true, 'auth.users must have business_id');
     assert.equal(await columnExists(pool, 'auth', 'users', 'role'),        true, 'auth.users must have role column');
 
+    const biz = await pool.query<{ id: string }>(
+      `INSERT INTO businesses (name) VALUES ('RoleBiz') RETURNING id`
+    );
+    const bizId = biz.rows[0].id;
+
     const validRoles = ['Admin', 'Professional', 'Receptionist', 'Client'];
     for (const role of validRoles) {
       const r = await pool.query(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ($1, $2, $3, 'hash', 'salt', $4) RETURNING id`,
-        [`testuser_${role}`, `${role}@test.com`, `Test ${role}`, role]
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ($1, $2, $3, 'hash', 'salt', $4, $5) RETURNING id`,
+        [`testuser_${role}`, `${role}@test.com`, `Test ${role}`, role, bizId]
       );
       assert.equal(r.rows.length, 1, `D1 role '${role}' should be accepted`);
     }
@@ -534,6 +539,21 @@ test('scheduler-schema: appointments has valid status check constraint', async (
   }
 });
 
+test('scheduler-schema: schedule_exceptions has the granularity_minutes column (Phase 3 migration)', async () => {
+  await resetTestDb();
+  const pool = makeTestPool();
+  try {
+    await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
+    assert.equal(
+      await columnExists(pool, 'public', 'schedule_exceptions', 'granularity_minutes'),
+      true,
+      'schedule_exceptions must have granularity_minutes after the Phase 3 migration'
+    );
+  } finally {
+    await pool.end();
+  }
+});
+
 test('scheduler-schema: second migration run is idempotent (no re-application)', async () => {
   await resetTestDb();
   const pool = makeTestPool();
@@ -651,10 +671,14 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
   test('DB rejects wrong-role user in professional_user_id via trigger (defense in depth)', async () => {
     await setup();
     try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('PkBiz') RETURNING id`
+      );
       const clientUser = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('pk_client', 'pkclient@test.com', 'PK Client', 'hash', 'salt', 'Client')
-         RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('pk_client', 'pkclient@test.com', 'PK Client', 'hash', 'salt', 'Client', $1)
+         RETURNING id`,
+        [biz.rows[0].id]
       );
       const clientId = clientUser.rows[0].id;
 
@@ -732,10 +756,15 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
   test('DB trigger: schedules.professional_user_id rejects a non-Professional', async () => {
     await setup();
     try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('TrgBiz1') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
       const r = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_client1', 'trgcli1@test.com', 'Trigger Client 1', 'h', 's', 'Client')
-         RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_client1', 'trgcli1@test.com', 'Trigger Client 1', 'h', 's', 'Client', $1)
+         RETURNING id`,
+        [bizId]
       );
       const clientId = r.rows[0].id;
 
@@ -744,9 +773,10 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
       ).rejects.toThrow();
 
       const p = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_pro1', 'trgpro1@test.com', 'Trigger Pro 1', 'h', 's', 'Professional')
-         RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_pro1', 'trgpro1@test.com', 'Trigger Pro 1', 'h', 's', 'Professional', $1)
+         RETURNING id`,
+        [bizId]
       );
       const proId = p.rows[0].id;
       const ok = await pool.query(
@@ -762,21 +792,25 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
   test('DB trigger: client_professional_services rejects wrong roles on both FK columns', async () => {
     await setup();
     try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('TriggerBiz') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
       const c = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_client2', 'trgcli2@test.com', 'Trigger Client 2', 'h', 's', 'Client') RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_client2', 'trgcli2@test.com', 'Trigger Client 2', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
       );
       const p = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_pro2', 'trgpro2@test.com', 'Trigger Pro 2', 'h', 's', 'Professional') RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_pro2', 'trgpro2@test.com', 'Trigger Pro 2', 'h', 's', 'Professional', $1) RETURNING id`,
+        [bizId]
       );
       const svc = await pool.query<{ id: string }>(
-        `INSERT INTO businesses (name) VALUES ('TriggerBiz') RETURNING id`
-      ).then(async (biz) => pool.query<{ id: string }>(
         `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
          VALUES ($1, 'TriggerSvc', 30, 0) RETURNING id`,
-        [biz.rows[0].id]
-      ));
+        [bizId]
+      );
       const clientId = c.rows[0].id;
       const proId = p.rows[0].id;
       const svcId = svc.rows[0].id;
@@ -811,17 +845,24 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
   test('DB trigger: calendar_grants.professional_user_id rejects a non-Professional', async () => {
     await setup();
     try {
+      const biz = await pool.query<{ id: string }>(
+        `INSERT INTO businesses (name) VALUES ('TrgBiz3') RETURNING id`
+      );
+      const bizId = biz.rows[0].id;
       const c = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_client3', 'trgcli3@test.com', 'Trigger Client 3', 'h', 's', 'Client') RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_client3', 'trgcli3@test.com', 'Trigger Client 3', 'h', 's', 'Client', $1) RETURNING id`,
+        [bizId]
       );
       const p = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_pro3', 'trgpro3@test.com', 'Trigger Pro 3', 'h', 's', 'Professional') RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_pro3', 'trgpro3@test.com', 'Trigger Pro 3', 'h', 's', 'Professional', $1) RETURNING id`,
+        [bizId]
       );
       const grantee = await pool.query<{ id: string }>(
-        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role)
-         VALUES ('trg_recep3', 'trgrecep3@test.com', 'Trigger Recep 3', 'h', 's', 'Receptionist') RETURNING id`
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('trg_recep3', 'trgrecep3@test.com', 'Trigger Recep 3', 'h', 's', 'Receptionist', $1) RETURNING id`,
+        [bizId]
       );
       const clientId = c.rows[0].id;
       const proId = p.rows[0].id;

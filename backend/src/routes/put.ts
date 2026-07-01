@@ -13,7 +13,7 @@ import {
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, reNumberFragment } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed, reNumberFragment } from './crud-policy';
 import type { AuthUser } from '../auth';
 import { tableOf } from '../../../shared/src/utils/utils';
 import type { ColumnDef } from '../../../shared/src/types/types';
@@ -99,29 +99,64 @@ export async function putHandler(
     (pkField) => (validatedPk.data as Record<string, unknown>)[pkField]
   );
 
-  // Verify that FK columns with a declared referencesUserRole point to a user with the correct role.
+  // D-16: own+Admin+granted enforcement for schedule tables — owner is read from the existing
+  // row (authoritative), so a caller cannot edit a peer's row by omitting the owner in the body.
+  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+    const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(
+      `SELECT professional_user_id, resource_id FROM ${physicalTable} WHERE id = $1`,
+      [pkValues[0]]
+    );
+    if (existing.rows.length === 0) {
+      return sendError(res, 404, 'not_found', `${entityName} not found`);
+    }
+
+    // The owner is identity, not a mutable attribute: forbid reassigning a schedule row to another
+    // owner through generic update. Without this, a caller authorized for the existing owner could
+    // hand the row to a peer (the guard below only validates the existing owner).
+    const body = validatedBody.data as Record<string, unknown>;
+    const bodyProf = body.professional_user_id != null ? Number(body.professional_user_id) : null;
+    const bodyRes = body.resource_id != null ? Number(body.resource_id) : null;
+    const rowProf = existing.rows[0].professional_user_id != null ? Number(existing.rows[0].professional_user_id) : null;
+    const rowRes = existing.rows[0].resource_id != null ? Number(existing.rows[0].resource_id) : null;
+    if ((bodyProf != null && bodyProf !== rowProf) || (bodyRes != null && bodyRes !== rowRes)) {
+      return sendError(res, 403, 'forbidden', 'The owner of a schedule row cannot be changed');
+    }
+
+    const guard = await assertOwnScheduleAllowed(pool, user, existing.rows[0]);
+    if (!guard.ok) {
+      return sendError(res, guard.status, guard.code, guard.message);
+    }
+  }
+
+  // Verify FK columns with a declared referencesUserRole point to an active user of the
+  // right role, and derive the row's tenant from that user rather than the caller. Every
+  // role-checked reference must share one business, so no row can mix tenants — enforced
+  // even for super-admins, who would otherwise bypass the business restriction entirely.
   // This replaces the removed composite-FK DB constraint.
   const roleChecks = getRoleCheckedColumns(tableName);
+  let referencedBusiness: number | undefined;
   for (const { column, role } of roleChecks) {
     const refId = (validatedBody.data as Record<string, unknown>)[column];
     if (refId == null) continue;
-    // Scope the FK target to the caller's business so a row cannot reference a user
-    // in another tenant (a null business_id is a super-admin and skips the restriction).
-    const check = await pool.query<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM auth.users
-         WHERE id = $1 AND role = $2 AND deleted_at IS NULL
-           AND ($3::bigint IS NULL OR business_id = $3::bigint)
-       ) AS exists`,
-      [refId, role, user.business_id]
+    const check = await pool.query<{ business_id: string | null }>(
+      `SELECT business_id FROM auth.users
+       WHERE id = $1 AND role = $2 AND deleted_at IS NULL`,
+      [refId, role]
     );
-    if (!check.rows[0].exists) {
+    const refBusiness = check.rows[0]?.business_id;
+    const invalidRef =
+      check.rows.length === 0 ||
+      refBusiness == null ||
+      (user.business_id != null && Number(refBusiness) !== user.business_id) ||
+      (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);
+    if (invalidRef) {
       return sendError(
         res, 422, 'invalid_reference_role',
         `${column} must reference an active ${role} user`,
         { [column]: `must be an active ${role}` }
       );
     }
+    referencedBusiness = Number(refBusiness);
   }
 
   const columns = structure.tables[tableName].columns as Record<string, ColumnDef>;

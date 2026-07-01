@@ -12,8 +12,12 @@ import {
   WEEKDAYS,
   validateWeeklySchedule,
   computeDailyAvailability,
+  computeDailySlots,
+  resolveBooking,
+  evaluateConflicts,
   detectOverlap,
 } from '../../shared/src/ssot/domain';
+import type { BookedAppointment } from '../../shared/src/ssot/domain';
 import type {
   TableStructure,
   SchedulableCapability,
@@ -277,12 +281,19 @@ describe('pure scheduling rules (availability is computed, not stored)', () => {
     Object.fromEntries(WEEKDAYS.map((d) => [d, [iv]]));
 
   it('validates the weekly JSON shape', () => {
-    expect(validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00' }] }).ok).toBe(true);
+    expect(
+      validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] }).ok,
+    ).toBe(true);
     expect(validateWeeklySchedule({ funday: [] }).ok).toBe(false);
-    expect(validateWeeklySchedule({ mon: [{ start: '9:00', end: '12:00' }] }).ok).toBe(false);
+    expect(
+      validateWeeklySchedule({ mon: [{ start: '9:00', end: '12:00', granularity_minutes: 15 }] }).ok,
+    ).toBe(false);
     expect(
       validateWeeklySchedule({
-        mon: [{ start: '09:00', end: '12:00' }, { start: '11:00', end: '13:00' }],
+        mon: [
+          { start: '09:00', end: '12:00', granularity_minutes: 15 },
+          { start: '11:00', end: '13:00', granularity_minutes: 15 },
+        ],
       }).ok,
     ).toBe(false);
   });
@@ -333,5 +344,276 @@ describe('pure scheduling rules (availability is computed, not stored)', () => {
   it('detects overlaps end-exclusively', () => {
     expect(detectOverlap({ startsAt: 0, endsAt: 10 }, { startsAt: 10, endsAt: 20 })).toBe(false);
     expect(detectOverlap({ startsAt: 0, endsAt: 10 }, { startsAt: 5, endsAt: 20 })).toBe(true);
+  });
+});
+
+describe('per-block granularity validation (D-06/D-07/D-07c)', () => {
+  it('accepts a block carrying a positive-integer granularity_minutes', () => {
+    expect(
+      validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects a block missing granularity_minutes', () => {
+    expect(validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00' }] }).ok).toBe(false);
+  });
+
+  it('rejects a granularity_minutes that is not a positive integer', () => {
+    for (const bad of [0, -15, 12.5, '15']) {
+      expect(
+        validateWeeklySchedule({
+          mon: [{ start: '09:00', end: '12:00', granularity_minutes: bad as any }],
+        }).ok,
+        `granularity ${bad}`,
+      ).toBe(false);
+    }
+  });
+
+  it('rejects a block whose length is not a whole multiple of its granularity', () => {
+    expect(
+      validateWeeklySchedule({ mon: [{ start: '09:00', end: '10:00', granularity_minutes: 45 }] }).ok,
+    ).toBe(false);
+  });
+
+  it('accepts multiple non-overlapping blocks with different granularities', () => {
+    expect(
+      validateWeeklySchedule({
+        mon: [
+          { start: '09:00', end: '12:00', granularity_minutes: 15 },
+          { start: '14:00', end: '17:00', granularity_minutes: 45 },
+        ],
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+describe('computeDailySlots — discrete fixed slots (D-07/D-08/D-09/D-15)', () => {
+  const MONDAY = '2026-06-29'; // Monday (UTC)
+
+  it('chops a block into back-to-back fixed slots of its granularity', () => {
+    const slots = computeDailySlots({
+      date: MONDAY,
+      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+    });
+    expect(slots.length).toBe(12);
+    expect(slots[0]).toEqual({ start: '09:00', end: '09:15' });
+    expect(slots[slots.length - 1]).toEqual({ start: '11:45', end: '12:00' });
+  });
+
+  it('honors per-block granularity within the same day', () => {
+    const slots = computeDailySlots({
+      date: MONDAY,
+      weekly: {
+        mon: [
+          { start: '09:00', end: '10:00', granularity_minutes: 15 }, // 4 slots
+          { start: '14:00', end: '17:00', granularity_minutes: 45 }, // 4 slots
+        ],
+      },
+    });
+    expect(slots.length).toBe(8);
+    expect(slots.find((s) => s.start === '14:00' && s.end === '14:45')).toBeTruthy();
+  });
+
+  it('omits a slot that overlaps a booked interval (end-exclusive)', () => {
+    const slots = computeDailySlots({
+      date: MONDAY,
+      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+      booked: [{ start: '10:00', end: '10:15' }],
+    });
+    expect(slots.length).toBe(11);
+    expect(slots.find((s) => s.start === '10:00')).toBeUndefined();
+    // end-exclusive: the slots touching the booked boundary survive
+    expect(slots.find((s) => s.start === '09:45' && s.end === '10:00')).toBeTruthy();
+    expect(slots.find((s) => s.start === '10:15' && s.end === '10:30')).toBeTruthy();
+  });
+
+  it('returns no slots when there is no weekly entry for the day (D-09)', () => {
+    expect(computeDailySlots({ date: MONDAY, weekly: {} })).toEqual([]);
+    expect(
+      computeDailySlots({
+        date: MONDAY,
+        weekly: { tue: [{ start: '09:00', end: '10:00', granularity_minutes: 15 }] },
+      }),
+    ).toEqual([]);
+  });
+
+  it('returns no slots on a full-day unavailable exception (D-08)', () => {
+    const slots = computeDailySlots({
+      date: MONDAY,
+      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+      exceptions: [{ is_unavailable: true }],
+    });
+    expect(slots).toEqual([]);
+  });
+
+  it('produces slots from an "available" exception that opens hours outside the weekly pattern (D-07c)', () => {
+    const slots = computeDailySlots({
+      date: MONDAY, // Monday, but weekly has no mon block
+      weekly: {},
+      exceptions: [{ is_unavailable: false, start_time: '10:00', end_time: '11:00', granularity_minutes: 15 }],
+    });
+    expect(slots.length).toBe(4);
+    expect(slots[0]).toEqual({ start: '10:00', end: '10:15' });
+    expect(slots[3]).toEqual({ start: '10:45', end: '11:00' });
+  });
+
+  it('drops slots that fall inside a partial unavailable exception', () => {
+    const slots = computeDailySlots({
+      date: MONDAY,
+      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+      exceptions: [{ is_unavailable: true, start_time: '10:00', end_time: '10:30' }],
+    });
+    expect(slots.length).toBe(10);
+    expect(slots.find((s) => s.start === '10:00')).toBeUndefined();
+    expect(slots.find((s) => s.start === '10:15')).toBeUndefined();
+    expect(slots.find((s) => s.start === '09:45')).toBeTruthy();
+    expect(slots.find((s) => s.start === '10:30')).toBeTruthy();
+  });
+});
+
+describe('resolveBooking — effective price + duration (D-12/D-13)', () => {
+  it('uses the per-client override price when present', () => {
+    const r = resolveBooking({
+      serviceDefaultPriceArs: '1000.00',
+      clientOverridePriceArs: '750.50',
+      slotGranularityMinutes: 15,
+    });
+    expect(r.effective_price).toBe('750.50');
+    expect(r.effective_duration_minutes).toBe(15);
+  });
+
+  it('falls back to the service default price when there is no override', () => {
+    const r = resolveBooking({
+      serviceDefaultPriceArs: '1000.00',
+      clientOverridePriceArs: null,
+      slotGranularityMinutes: 30,
+    });
+    expect(r.effective_price).toBe('1000.00');
+    expect(r.effective_duration_minutes).toBe(30);
+  });
+
+  it('uses the slot granularity as the duration for a normal booking', () => {
+    const r = resolveBooking({ serviceDefaultPriceArs: '500.00', slotGranularityMinutes: 45 });
+    expect(r.effective_duration_minutes).toBe(45);
+  });
+
+  it('lets a staff sobreturno duration win over the slot granularity (D-07b)', () => {
+    const r = resolveBooking({
+      serviceDefaultPriceArs: '500.00',
+      slotGranularityMinutes: 15,
+      sobreturnoDurationMinutes: 20,
+    });
+    expect(r.effective_duration_minutes).toBe(20);
+  });
+});
+
+describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08)', () => {
+  const MONDAY = '2026-06-29';
+  // Grid: 12 back-to-back 15-min slots 09:00–12:00.
+  const grid = computeDailySlots({
+    date: MONDAY,
+    weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+  });
+  const pro = (booked: BookedAppointment[] = []) => ({ id: 7, name: 'Dr. Ana', slots: grid, booked });
+
+  it('returns a clean verdict when there are no clashes', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '11:00', end: '11:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro(),
+    });
+    expect(v).toEqual({ can_save: true, requires_override: false, can_override: true, conflicts: [] });
+  });
+
+  it('flags a scheduled overlap as professional_overlap', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro([{ id: 1, start: '10:00', end: '10:15', state: 'scheduled' }]),
+    });
+    expect(v.can_save).toBe(false);
+    expect(v.requires_override).toBe(true);
+    expect(v.conflicts.some((c) => c.type === 'professional_overlap' && c.entity.kind === 'professional')).toBe(true);
+  });
+
+  it('flags a requested-state overlap as requested_block (D-08)', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro([{ id: 2, start: '10:00', end: '10:15', state: 'requested' }]),
+    });
+    expect(v.conflicts.some((c) => c.type === 'requested_block')).toBe(true);
+  });
+
+  it('flags a time outside the available grid as professional_availability', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '13:00', end: '13:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro(),
+    });
+    expect(v.conflicts.some((c) => c.type === 'professional_availability')).toBe(true);
+  });
+
+  it('flags an off-grid (misaligned) time inside working hours as slot_alignment', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '09:05', end: '09:20', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro(),
+    });
+    expect(v.conflicts.some((c) => c.type === 'slot_alignment')).toBe(true);
+    expect(v.conflicts.some((c) => c.type === 'professional_availability')).toBe(false);
+  });
+
+  it('treats overlap as end-exclusive (touching boundary is not a conflict)', () => {
+    const hourGrid = computeDailySlots({
+      date: MONDAY,
+      weekly: { mon: [{ start: '11:00', end: '12:00', granularity_minutes: 60 }] },
+    });
+    const v = evaluateConflicts({
+      proposed: { start: '11:00', end: '12:00', date: MONDAY },
+      callerIsStaff: false,
+      professional: { id: 7, name: 'Dr. Ana', slots: hourGrid, booked: [{ id: 9, start: '12:00', end: '13:00', state: 'scheduled' }] },
+    });
+    expect(v.conflicts).toEqual([]);
+    expect(v.can_save).toBe(true);
+  });
+
+  it('excludeAppointmentId removes the edited appointment from the clash search (D-04)', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: true,
+      excludeAppointmentId: 5,
+      professional: pro([{ id: 5, start: '10:00', end: '10:15', state: 'scheduled' }]),
+    });
+    expect(v.conflicts).toEqual([]);
+    expect(v.can_save).toBe(true);
+  });
+
+  it('sets can_override from the caller role: false for a Client, true for staff', () => {
+    const asClient = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: false,
+      professional: pro([{ id: 1, start: '10:00', end: '10:15', state: 'scheduled' }]),
+    });
+    expect(asClient.can_override).toBe(false);
+    expect(asClient.requires_override).toBe(true);
+
+    const asStaff = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro([{ id: 1, start: '10:00', end: '10:15', state: 'scheduled' }]),
+    });
+    expect(asStaff.can_override).toBe(true);
+  });
+
+  it('evaluates resource conflicts separately with resource_overlap', () => {
+    const v = evaluateConflicts({
+      proposed: { start: '10:00', end: '10:15', date: MONDAY },
+      callerIsStaff: true,
+      professional: pro(),
+      resource: { id: 3, name: 'Room A', slots: grid, booked: [{ id: 4, start: '10:00', end: '10:15', state: 'scheduled' }] },
+    });
+    expect(v.conflicts.some((c) => c.type === 'resource_overlap' && c.entity.kind === 'resource')).toBe(true);
+    expect(v.conflicts.some((c) => c.type === 'professional_overlap')).toBe(false);
   });
 });

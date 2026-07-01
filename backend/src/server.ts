@@ -10,11 +10,19 @@ import * as auth from './auth';
 
 import { mountGenericRoutes, mountObservability } from './app';
 import { mountGrantRoutes } from './routes/grants';
+import { mountSchedulingRoutes } from './routes/scheduling';
+import { mountSetScheduleRoutes } from './routes/set-schedule';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Fixed dummy salt/hash for the login path: verifying against these when the username
+// is unknown keeps scrypt cost identical to the real-account path (anti-enumeration).
+// 128 hex chars = 64 bytes, matching scrypt's output length so the comparison runs.
+const DUMMY_PASSWORD_SALT = '0'.repeat(32);
+const DUMMY_PASSWORD_HASH = '0'.repeat(128);
 
 // One known reverse-proxy hop (ingress) terminates TLS and sets X-Forwarded-For, so
 // req.ip reflects the real client rather than the proxy. Audited IPs depend on this.
@@ -198,10 +206,13 @@ app.post('/api/auth/login', async (req, res) => {
 
     const row = result.rows[0];
 
-    const ok =
-      row &&
-      row.is_active === true &&
-      (await auth.verifyPassword(password, row.password_salt, row.password_hash));
+    // Always run scrypt — even for an unknown username — against a fixed dummy hash so
+    // login response time can't be used to enumerate which usernames exist.
+    const salt = row?.password_salt ?? DUMMY_PASSWORD_SALT;
+    const hash = row?.password_hash ?? DUMMY_PASSWORD_HASH;
+    const passwordOk = await auth.verifyPassword(password, salt, hash);
+
+    const ok = !!row && row.is_active === true && passwordOk;
 
     if (!ok) {
       // Record failed attempts against a real account (resolved from the row); attempts on an
@@ -521,6 +532,20 @@ app.post(
 
 // Explicit grant-management surface; calendar_grants stays protected in SSOT (no generic CRUD).
 mountGrantRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Advisory conflict-check + availability reads; report-only, no appointment writes.
+mountSchedulingRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Set-weekly-schedule: per-block-granularity validation + one-owner rule + own-schedule authz.
+mountSetScheduleRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
   audit,

@@ -11,7 +11,7 @@ import {
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, reNumberFragment } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed, reNumberFragment } from './crud-policy';
 import type { AuthUser } from '../auth';
 
 import {
@@ -54,6 +54,21 @@ export async function deleteHandler(
   const pkValues = pkFields.map(
     (pkField) => (pk.data as Record<string, unknown>)[pkField]
   );
+
+  // D-16: own+Admin+granted enforcement for schedule tables — owner read from the existing row.
+  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+    const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(
+      `SELECT professional_user_id, resource_id FROM ${physicalTable} WHERE id = $1`,
+      [pkValues[0]]
+    );
+    if (existing.rows.length === 0) {
+      return sendError(res, 404, 'not_found', `${entityName} not found`);
+    }
+    const guard = await assertOwnScheduleAllowed(pool, user, existing.rows[0]);
+    if (!guard.ok) {
+      return sendError(res, guard.status, guard.code, guard.message);
+    }
+  }
 
   const softDelete = getSoftDeletePolicy(tableName);
 

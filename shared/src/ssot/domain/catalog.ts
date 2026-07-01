@@ -116,3 +116,33 @@ export const catalogTables = {
     },
   } satisfies TableStructure,
 };
+
+// Resolves the booking's captured price and duration. Price = per-client override else the
+// service default. Duration = the staff-provided sobreturno duration when set, else the chosen
+// slot's granularity. The dry-run and the Phase 4 save call this so preview never drifts from
+// the saved value. Prices stay decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'.
+export function resolveBooking(input: {
+  serviceDefaultPriceArs: string;
+  clientOverridePriceArs?: string | null;
+  slotGranularityMinutes?: number | null;
+  sobreturnoDurationMinutes?: number | null;
+}): { effective_price: string; effective_duration_minutes: number } {
+  const override = input.clientOverridePriceArs;
+  const effective_price =
+    override !== null && override !== undefined && override !== '' ? override : input.serviceDefaultPriceArs;
+
+  const sobreturno = input.sobreturnoDurationMinutes;
+  const slot = input.slotGranularityMinutes;
+  let effective_duration_minutes: number;
+  if (typeof sobreturno === 'number' && Number.isInteger(sobreturno) && sobreturno > 0) {
+    effective_duration_minutes = sobreturno;
+  } else if (typeof slot === 'number' && Number.isInteger(slot) && slot > 0) {
+    effective_duration_minutes = slot;
+  } else {
+    throw new Error(
+      'resolveBooking requires a duration source: slotGranularityMinutes or sobreturnoDurationMinutes',
+    );
+  }
+
+  return { effective_price, effective_duration_minutes };
+}

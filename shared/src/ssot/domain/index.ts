@@ -17,6 +17,16 @@ export {
   WEEKDAYS,
   validateWeeklySchedule,
   computeDailyAvailability,
+  computeDailySlots,
   detectOverlap,
 } from './scheduling';
 export type { Weekday, TimeInterval, WeeklySchedule, ScheduleExceptionInput } from './scheduling';
+export { resolveBooking } from './catalog';
+export { evaluateConflicts } from './conflict';
+export type {
+  ConflictType,
+  Conflict,
+  ConflictVerdict,
+  ConflictOwner,
+  BookedAppointment,
+} from './conflict';

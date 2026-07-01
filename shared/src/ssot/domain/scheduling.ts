@@ -115,6 +115,15 @@ export const schedulingTables = {
         filterable: false,
         sortable: false,
       },
+      // Required only for a changed-hours "available" exception; null for full-day/blocked (DB CHECK).
+      granularity_minutes: {
+        type: 'number',
+        label: { es: 'Granularidad (min)', en: 'Granularity (min)' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 1 },
+        filterable: false,
+        sortable: false,
+      },
       reason: {
         type: 'string',
         label: { es: 'Motivo', en: 'Reason' },
@@ -307,14 +316,17 @@ export const schedulingTables = {
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
-// 'HH:MM' 24h, end-exclusive.
-export type TimeInterval = { start: string; end: string };
+// 'HH:MM' 24h, end-exclusive. A weekly schedule block also carries its own
+// granularity_minutes (per-block slot size); the free-window callers omit it.
+export type TimeInterval = { start: string; end: string; granularity_minutes?: number };
 export type WeeklySchedule = Partial<Record<Weekday, TimeInterval[]>>;
 
 export type ScheduleExceptionInput = {
   is_unavailable: boolean;
   start_time?: string | null;
   end_time?: string | null;
+  // Slot size for a changed-hours "available" exception; null for full-day/blocked (D-07c).
+  granularity_minutes?: number | null;
 };
 
 type MinuteInterval = { start: number; end: number };
@@ -393,6 +405,16 @@ export function validateWeeklySchedule(
         errors.push(`${day} interval ${start}-${end} must have end after start`);
         continue;
       }
+      const gran = (iv as TimeInterval)?.granularity_minutes;
+      if (gran === undefined || gran === null) {
+        errors.push(`${day} interval ${start}-${end} is missing granularity_minutes`);
+      } else if (typeof gran !== 'number' || !Number.isInteger(gran) || gran <= 0) {
+        errors.push(`${day} interval ${start}-${end} granularity_minutes must be a positive integer`);
+      } else if ((toMinutes(end) - toMinutes(start)) % gran !== 0) {
+        errors.push(
+          `${day} interval ${start}-${end} length must be a whole multiple of its granularity_minutes`,
+        );
+      }
       minutes.push({ start: toMinutes(start), end: toMinutes(end) });
     }
     const sorted = [...minutes].sort((a, b) => a.start - b.start);
@@ -402,31 +424,37 @@ export function validateWeeklySchedule(
         break;
       }
     }
-    out[day as Weekday] = (raw as TimeInterval[]);
+    // Persist a normalized projection (start/end/granularity only), never the raw input — so
+    // unexpected extra keys on an interval object are not written through to the JSONB column.
+    out[day as Weekday] = (raw as unknown[]).map((iv) => {
+      const t = iv as Partial<TimeInterval> | null;
+      return {
+        start: t?.start as string,
+        end: t?.end as string,
+        granularity_minutes: t?.granularity_minutes,
+      };
+    });
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }
 
-// Free intervals for one owner on one date: weekly base, widened by "available" exceptions,
-// then narrowed by "unavailable" exceptions and booked appointments. End-exclusive throughout.
-export function computeDailyAvailability(input: {
-  date: string; // 'YYYY-MM-DD'
-  weekly: WeeklySchedule;
-  exceptions?: ScheduleExceptionInput[];
-  booked?: TimeInterval[];
-}): TimeInterval[] {
-  const { date, weekly, exceptions = [], booked = [] } = input;
+function weekdayOf(date: string): Weekday {
   const [y, m, d] = date.split('-').map(Number);
-  const weekday = WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
 
-  let base: MinuteInterval[] = mergeIntervals(
+// Weekly base for the weekday, widened by "available" exceptions then narrowed by
+// "unavailable" ones. Booked appointments are NOT subtracted here. End-exclusive.
+function availableMinuteIntervals(
+  weekday: Weekday,
+  weekly: WeeklySchedule,
+  exceptions: ScheduleExceptionInput[],
+): MinuteInterval[] {
+  if (exceptions.some((e) => e.is_unavailable && !e.start_time && !e.end_time)) return [];
+
+  let base = mergeIntervals(
     (weekly[weekday] ?? []).map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) })),
   );
-
-  const hasFullDayOff = exceptions.some(
-    (e) => e.is_unavailable && !e.start_time && !e.end_time,
-  );
-  if (hasFullDayOff) return [];
 
   const additions: MinuteInterval[] = [];
   const blocks: MinuteInterval[] = [];
@@ -438,12 +466,77 @@ export function computeDailyAvailability(input: {
   }
 
   base = mergeIntervals([...base, ...additions]);
-  base = subtractIntervals(base, blocks);
+  return subtractIntervals(base, blocks);
+}
 
+// Free intervals for one owner on one date: weekly base, widened by "available" exceptions,
+// then narrowed by "unavailable" exceptions and booked appointments. End-exclusive throughout.
+export function computeDailyAvailability(input: {
+  date: string; // 'YYYY-MM-DD'
+  weekly: WeeklySchedule;
+  exceptions?: ScheduleExceptionInput[];
+  booked?: TimeInterval[];
+}): TimeInterval[] {
+  const { date, weekly, exceptions = [], booked = [] } = input;
+  const base = availableMinuteIntervals(weekdayOf(date), weekly, exceptions);
   const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
   const free = subtractIntervals(base, bookedMin);
-
   return free.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
+}
+
+// Discrete bookable slots for one owner on one date: each weekly block chopped into
+// back-to-back fixed slots of its granularity (measured from block start), kept only when
+// the slot lies fully inside the available window (weekly ± exceptions) and overlaps no
+// booked (scheduled+requested) interval. End-exclusive throughout.
+export function computeDailySlots(input: {
+  date: string; // 'YYYY-MM-DD'
+  weekly: WeeklySchedule;
+  exceptions?: ScheduleExceptionInput[];
+  booked?: TimeInterval[];
+}): TimeInterval[] {
+  const { date, weekly, exceptions = [], booked = [] } = input;
+  const weekday = weekdayOf(date);
+  const available = availableMinuteIntervals(weekday, weekly, exceptions);
+  if (available.length === 0) return [];
+
+  const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
+
+  // Slots come from weekly blocks AND changed-hours "available" exceptions, each chopped at its
+  // own granularity — so an exception opening hours outside the weekly pattern is bookable (D-07c).
+  const sources: Array<{ start: number; end: number; gran: number }> = [];
+  for (const block of weekly[weekday] ?? []) {
+    const gran = block.granularity_minutes;
+    if (typeof gran === 'number' && Number.isInteger(gran) && gran > 0) {
+      sources.push({ start: toMinutes(block.start), end: toMinutes(block.end), gran });
+    }
+  }
+  for (const e of exceptions) {
+    if (e.is_unavailable || !e.start_time || !e.end_time) continue;
+    const gran = e.granularity_minutes;
+    if (typeof gran === 'number' && Number.isInteger(gran) && gran > 0) {
+      sources.push({ start: toMinutes(e.start_time), end: toMinutes(e.end_time), gran });
+    }
+  }
+
+  const seen = new Set<string>();
+  const slots: MinuteInterval[] = [];
+  for (const src of sources) {
+    for (let s = src.start; s + src.gran <= src.end; s += src.gran) {
+      const slot = { start: s, end: s + src.gran };
+      const inside = available.some((iv) => iv.start <= slot.start && slot.end <= iv.end);
+      if (!inside) continue;
+      const clash = bookedMin.some((b) =>
+        detectOverlap({ startsAt: slot.start, endsAt: slot.end }, { startsAt: b.start, endsAt: b.end }),
+      );
+      if (clash) continue;
+      const key = `${slot.start}-${slot.end}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      slots.push(slot);
+    }
+  }
+  slots.sort((a, b) => a.start - b.start);
+  return slots.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
 }
 
 export function detectOverlap(
