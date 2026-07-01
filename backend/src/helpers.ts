@@ -7,7 +7,6 @@ function getEntityName(table: TableKey): string {
   return String(structure.tables[table].uiName.en);
 }
 
-// SQL predicate that hides soft-deleted rows, or '' for tables without soft-delete.
 function softDeleteClause(table: TableKey): string {
   const policy = getSoftDeletePolicy(table);
   return policy ? `"${policy.deletedAtColumn}" IS NULL` : '';
@@ -71,6 +70,16 @@ function getRequiredFields(tableName: TableKey){
   return Object.entries(tableColumns).filter(([fieldName, column]) => column.required);
 }
 
+// Returns columns that carry a referencesUserRole descriptor (i.e. the referenced auth.users
+// row must have a specific role). Used by the generic write path instead of the removed
+// composite-FK role constraint.
+function getRoleCheckedColumns(tableName: TableKey): Array<{ column: string; role: string }> {
+  const columns = structure.tables[tableName].columns as Record<string, ColumnDef>;
+  return Object.entries(columns)
+    .filter(([, def]) => def.referencesUserRole != null)
+    .map(([column, def]) => ({ column, role: def.referencesUserRole! }));
+}
+
 function formatTableColumnsForQuery(fieldsNames: string[], from: number = 1): string[]{
   let tupleWithReplaceParameters = '';
   for (let columnsCount = from; columnsCount <= fieldsNames.length; columnsCount++){
@@ -81,4 +90,4 @@ function formatTableColumnsForQuery(fieldsNames: string[], from: number = 1): st
   return [tupleContent, tupleWithReplaceParameters];
 }
 
-export { getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause };
+export { getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause, getRoleCheckedColumns };

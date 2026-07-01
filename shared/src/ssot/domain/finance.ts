@@ -9,18 +9,18 @@ const LEDGER_ENTRY_TYPES = [
 
 export const financeTables = {
   // Immutable: balance is SUM over entries; corrections are new adjustment rows.
-  // business_id is derived via the client.
+  // business_id is derived via the client (auth.users.business_id).
   ledger_entries: {
     columns: {
       id: pkColumn,
-      client_id: {
+      client_user_id: {
         type: 'string',
         label: { es: 'Cliente', en: 'Client' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
       },
       appointment_id: {
         type: 'string',
@@ -77,5 +77,15 @@ export const financeTables = {
       column: 'entry_type',
       values: LEDGER_ENTRY_TYPES.map((t) => ({ value: t.value, label: t.label })),
     },
+    businessJoin: {
+      paths: [{ parentTable: 'auth.users', localFk: 'client_user_id', parentPk: 'id' }],
+    },
+    roleRequired: {
+      create: ['Admin', 'Receptionist'],
+      read:   ['Admin', 'Receptionist', 'Client'],
+      update: [],
+      delete: [],
+    },
+    ownership: { ownerColumn: 'client_user_id' },
   } satisfies TableStructure,
 };

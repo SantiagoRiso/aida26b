@@ -11,19 +11,30 @@ import {
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed } from './crud-policy';
+import { assertCrudAllowed, reNumberFragment } from './crud-policy';
+import type { AuthUser } from '../auth';
 
 import {
   validateOnlyPk,
   sendErrorsIfInvalid,
 } from '../validation/validate';
 
+type AuthedRequest = express.Request & { user?: AuthUser };
+
 export async function deleteHandler(
   req: express.Request,
   res: express.Response,
   pool: Pool
 ) {
-  const allowed = assertCrudAllowed(req.params.tableName, 'delete');
+  const user = (req as AuthedRequest).user;
+
+  // Fail closed: no authenticated user means no authority. A missing req.user must
+  // never resolve to a privileged identity.
+  if (!user) {
+    return sendError(res, 401, 'unauthorized', 'Authentication required');
+  }
+
+  const allowed = assertCrudAllowed(req.params.tableName, 'delete', user);
 
   if (!allowed.ok) {
     return sendError(res, allowed.status, allowed.code, allowed.message);
@@ -31,6 +42,7 @@ export async function deleteHandler(
 
   const tableName = allowed.table;
   const entityName = getEntityName(tableName);
+  const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
   const pk = validateOnlyPk(tableName, req.query);
 
@@ -50,7 +62,7 @@ export async function deleteHandler(
 
   if (softDelete) {
     // Referenced core records are archived, never physically removed.
-    const actorId = (req as { user?: { id?: number } }).user?.id ?? null;
+    const actorId = user?.id ?? null;
     const sets = [`${softDelete.deletedAtColumn} = now()`, `updated_at = now()`];
     params = [];
     let nextParam = 1;
@@ -62,19 +74,67 @@ export async function deleteHandler(
 
     const whereArguments = columnNamesEqualsNumber(pkFields, nextParam, ' AND ');
     params.push(...pkValues);
+    nextParam += pkFields.length;
+
+    // AND scope into WHERE so out-of-scope rows yield rowCount 0 → 404.
+    const scopeConditions: string[] = [];
+    if (allowed.discriminatorWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...(allowed.discriminatorParams ?? []));
+      nextParam = nextIndex;
+    }
+    if (allowed.businessWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...allowed.businessParams);
+      nextParam = nextIndex;
+    }
+    if (allowed.ownerWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...(allowed.ownerParams ?? []));
+      nextParam = nextIndex;
+    }
+
+    const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
 
     query = `
-      UPDATE ${tableName}
+      UPDATE ${physicalTable}
       SET ${sets.join(', ')}
-      WHERE ${whereArguments} AND ${softDelete.deletedAtColumn} IS NULL
+      WHERE ${whereArguments} AND ${softDelete.deletedAtColumn} IS NULL${scopeClause}
       RETURNING *
     `;
   } else {
     const whereArguments = columnNamesEqualsNumber(pkFields, 1, ' AND ');
-    params = pkValues;
+    params = [...pkValues];
+    let nextParam = pkValues.length + 1;
+
+    const scopeConditions: string[] = [];
+    if (allowed.discriminatorWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...(allowed.discriminatorParams ?? []));
+      nextParam = nextIndex;
+    }
+    if (allowed.businessWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...allowed.businessParams);
+      nextParam = nextIndex;
+    }
+    if (allowed.ownerWhere) {
+      const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextParam);
+      scopeConditions.push(sql);
+      params.push(...(allowed.ownerParams ?? []));
+      nextParam = nextIndex;
+    }
+
+    const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
+
     query = `
-      DELETE FROM ${tableName}
-      WHERE ${whereArguments}
+      DELETE FROM ${physicalTable}
+      WHERE ${whereArguments}${scopeClause}
       RETURNING *
     `;
   }

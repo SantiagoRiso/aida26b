@@ -9,7 +9,7 @@ import type {
 
 // Each table literal `satisfies TableStructure`, which keeps its narrow literal type and hides
 // the optional metadata fields. Read through the contract type to reach them generically.
-function tableOf(tableKey: TableKey): TableStructure {
+export function tableOf(tableKey: TableKey): TableStructure {
   return structure.tables[tableKey] as TableStructure;
 }
 

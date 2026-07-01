@@ -2,8 +2,21 @@ import { createApp } from '../src/app';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
+import type { AuthUser } from '../src/auth';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
+// Handlers fail closed without an authenticated user; inject a cross-business super-admin
+// explicitly so the policy suite exercises the privileged path without a real session.
+const superAdmin: AuthUser = {
+  id: 0,
+  username: 'policy-admin',
+  email: null,
+  role: 'Admin',
+  business_id: null,
+  is_active: true,
+  must_change_password: false,
+};
 
 const TESTS_PORT = 4138;
 const API_BASE = `http://localhost:${TESTS_PORT}/api`;
@@ -11,7 +24,8 @@ const API_BASE = `http://localhost:${TESTS_PORT}/api`;
 let server: any;
 let testsPool: Pool;
 let businessId: string;
-let professionalId: string;
+let professionalUserId: string;
+let clientUserId: string;
 
 async function api(path: string, init?: RequestInit) {
   const response = await fetch(`${API_BASE}${path}`, init);
@@ -29,13 +43,21 @@ beforeAll(async () => {
   );
   businessId = business.rows[0].id;
 
-  const professional = await testsPool.query<{ id: string }>(
-    `INSERT INTO professionals (business_id, display_name) VALUES ($1, 'Pro') RETURNING id`,
+  const professionalUser = await testsPool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+     VALUES ('policy_pro', 'pro@policy.test', 'Policy Pro', 'h', 's', 'Professional', $1) RETURNING id`,
     [businessId]
   );
-  professionalId = professional.rows[0].id;
+  professionalUserId = professionalUser.rows[0].id;
 
-  const app = createApp(testsPool);
+  const clientUser = await testsPool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+     VALUES ('policy_cli', 'cli@policy.test', 'Policy Client', 'h', 's', 'Client', $1) RETURNING id`,
+    [businessId]
+  );
+  clientUserId = clientUser.rows[0].id;
+
+  const app = createApp(testsPool, { defaultUser: superAdmin });
   server = app.listen(TESTS_PORT);
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
@@ -118,7 +140,7 @@ describe('delete semantics', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        professional_id: professionalId,
+        professional_user_id: professionalUserId,
         resource_id: null,
         exception_date: '2026-07-01',
         is_unavailable: true,
@@ -138,5 +160,134 @@ describe('delete semantics', () => {
       [id]
     );
     expect(stored.rows.length).toBe(0);
+  });
+});
+
+describe('app-layer role check on generic write path', () => {
+  test('POST schedules with a Client user as professional_user_id → 422 invalid_reference_role', async () => {
+    const res = await api('/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: clientUserId,
+        resource_id: null,
+        weekly: '{}',
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_reference_role');
+  });
+
+  test('POST schedules with a Professional user as professional_user_id → 201', async () => {
+    const res = await api('/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: professionalUserId,
+        resource_id: null,
+        weekly: '{}',
+      }),
+    });
+    expect([201, 409]).toContain(res.status);
+  });
+
+  test('POST schedule_exceptions with a Client user as professional_user_id → 422 invalid_reference_role', async () => {
+    const res = await api('/schedule_exceptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: clientUserId,
+        resource_id: null,
+        exception_date: '2026-08-01',
+        is_unavailable: true,
+        start_time: null,
+        end_time: null,
+        reason: null,
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_reference_role');
+  });
+
+  test('POST schedule_exceptions with a Professional user as professional_user_id → 201', async () => {
+    const res = await api('/schedule_exceptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: professionalUserId,
+        resource_id: null,
+        exception_date: '2026-08-02',
+        is_unavailable: true,
+        start_time: null,
+        end_time: null,
+        reason: null,
+      }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  test('POST client_professional_services with Professional as client_user_id → 422 invalid_reference_role', async () => {
+    const svcRes = await testsPool.query<{ id: string }>(
+      `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+       VALUES ($1, 'Role Test Svc', 30, 0) RETURNING id`,
+      [businessId]
+    );
+    const serviceId = svcRes.rows[0].id;
+
+    const res = await api('/client_professional_services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_user_id: professionalUserId,   // wrong: Professional used as Client
+        professional_user_id: professionalUserId,
+        service_id: serviceId,
+        price_ars: '10.00',
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_reference_role');
+  });
+
+  test('POST client_professional_services with Client as professional_user_id → 422 invalid_reference_role', async () => {
+    const svcRes = await testsPool.query<{ id: string }>(
+      `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+       VALUES ($1, 'Role Test Svc 2', 30, 0) RETURNING id`,
+      [businessId]
+    );
+    const serviceId = svcRes.rows[0].id;
+
+    const res = await api('/client_professional_services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_user_id: clientUserId,
+        professional_user_id: clientUserId,   // wrong: Client used as Professional
+        service_id: serviceId,
+        price_ars: '10.00',
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_reference_role');
+  });
+
+  test('POST client_professional_services with correct roles → 201', async () => {
+    const svcRes = await testsPool.query<{ id: string }>(
+      `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+       VALUES ($1, 'Role Test Svc 3', 30, 0) RETURNING id`,
+      [businessId]
+    );
+    const serviceId = svcRes.rows[0].id;
+
+    const res = await api('/client_professional_services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_user_id: clientUserId,
+        professional_user_id: professionalUserId,
+        service_id: serviceId,
+        price_ars: '10.00',
+      }),
+    });
+    expect(res.status).toBe(201);
   });
 });

@@ -22,7 +22,8 @@ import {
   sendError,
 } from "../status_messages";
 
-import { assertCrudAllowed } from "./crud-policy";
+import { assertCrudAllowed, reNumberFragment, getSqlTable } from "./crud-policy";
+import type { AuthUser } from "../auth";
 
 import type {
   TableKey,
@@ -35,12 +36,22 @@ import {
   sendErrorsIfInvalid,
 } from "../validation/validate";
 
+type AuthedRequest = express.Request & { user?: AuthUser };
+
 export async function getHandler(
   req: express.Request,
   res: express.Response,
   pool: Pool
 ) {
-  const allowed = assertCrudAllowed(req.params.tableName, "read");
+  const user = (req as AuthedRequest).user;
+
+  // Fail closed: no authenticated user means no authority. A missing req.user must
+  // never resolve to a privileged identity.
+  if (!user) {
+    return sendError(res, 401, 'unauthorized', 'Authentication required');
+  }
+
+  const allowed = assertCrudAllowed(req.params.tableName, "read", user);
 
   if (!allowed.ok) {
     return sendError(res, allowed.status, allowed.code, allowed.message);
@@ -50,10 +61,66 @@ export async function getHandler(
   const entityName = getEntityName(tableName);
 
   if (isListRequest(req.query)) {
-    return getListOfTable(pool, res, tableName, req.query);
+    return getListOfTable(pool, res, tableName, req.query, {
+      sqlTable: allowed.sqlTable,
+      businessWhere: allowed.businessWhere,
+      businessParams: allowed.businessParams,
+      ownerWhere: allowed.ownerWhere,
+      ownerParams: allowed.ownerParams,
+      discriminatorWhere: allowed.discriminatorWhere,
+      discriminatorParams: allowed.discriminatorParams,
+    });
   }
 
-  return getRowOfTable(pool, res, tableName, req.query, entityName);
+  return getRowOfTable(pool, res, tableName, req.query, entityName, {
+    sqlTable: allowed.sqlTable,
+    businessWhere: allowed.businessWhere,
+    businessParams: allowed.businessParams,
+    ownerWhere: allowed.ownerWhere,
+    ownerParams: allowed.ownerParams,
+    discriminatorWhere: allowed.discriminatorWhere,
+    discriminatorParams: allowed.discriminatorParams,
+  });
+}
+
+// Discriminator appears first so the DB can use it for index selection.
+function buildScopeConditions(
+  allowed: {
+    businessWhere: string;
+    businessParams: unknown[];
+    ownerWhere?: string;
+    ownerParams?: unknown[];
+    discriminatorWhere?: string;
+    discriminatorParams?: unknown[];
+  },
+  startIndex: number,
+): { conditions: string[]; values: unknown[]; nextIndex: number } {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let idx = startIndex;
+
+  if (allowed.discriminatorWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, idx);
+    conditions.push(sql);
+    values.push(...(allowed.discriminatorParams ?? []));
+    idx = nextIndex;
+  }
+
+  if (allowed.businessWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, idx);
+    conditions.push(sql);
+    values.push(...allowed.businessParams);
+    idx = nextIndex;
+  }
+
+  if (allowed.ownerWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, idx);
+    conditions.push(sql);
+    values.push(...(allowed.ownerParams ?? []));
+    idx = nextIndex;
+  }
+
+  return { conditions, values, nextIndex: idx };
 }
 
 export function buildListQuery(
@@ -61,11 +128,15 @@ export function buildListQuery(
   query: express.Request["query"],
   filterConfig: Record<string, ColumnDef>,
   defaultSort: string | string[],
-  sortableColumns: string[]
+  sortableColumns: string[],
+  // Pre-built scope conditions (with $N starting at 1) and their values.
+  // paramIndex begins AFTER these to avoid numbering collisions.
+  scopeConditions: string[] = [],
+  scopeValues: unknown[] = [],
 ) {
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let paramIndex = 1;
+  const conditions: string[] = [...scopeConditions];
+  const values: unknown[] = [...scopeValues];
+  let paramIndex = scopeValues.length + 1;
 
   for (const [key, rawValue] of Object.entries(query)) {
     if (!key.startsWith("filter_") || rawValue == null || rawValue === "") {
@@ -264,15 +335,21 @@ function isListRequest(query: express.Request["query"]): boolean {
   );
 }
 
+// SQL alias for a table in generated queries. The stable table key is a valid SQL
+// identifier; the localized UI name is not (it may contain spaces) and must never be an alias.
+function sqlAlias(table: TableKey): string {
+  return table;
+}
+
 function getJoinsStatements(
   queryTable: TableKey,
   referencedRelations: TableKey[]
 ): string {
   let joinsStatement = "";
-  const entityName = getEntityName(queryTable);
+  const entityName = sqlAlias(queryTable);
 
   referencedRelations.forEach((tableName) => {
-    const referencedEntityName = getEntityName(tableName);
+    const referencedEntityName = sqlAlias(tableName);
 
     joinsStatement += ` JOIN ${tableName} ${referencedEntityName} ON `;
 
@@ -289,7 +366,7 @@ function getJoinsStatements(
 }
 
 function getSelectStatement(tableName: TableKey): string {
-  const entityName = getEntityName(tableName);
+  const entityName = sqlAlias(tableName);
   const selectFields = [`${entityName}.*`];
 
   const derivedFields: [string, ColumnDef][] = getDerivableFields(tableName);
@@ -300,7 +377,7 @@ function getSelectStatement(tableName: TableKey): string {
 
       const expression = column.derivable?.sqlGenerationStatement.replace(
         /entityName/g,
-        getEntityName(originTable)
+        sqlAlias(originTable)
       );
 
       return `${expression} AS ${fieldName}`;
@@ -310,24 +387,25 @@ function getSelectStatement(tableName: TableKey): string {
   return `SELECT ${selectFields.join(", ")}`;
 }
 
-function getBaseSelectQuery(tableName: TableKey): string {
+function getBaseSelectQuery(tableName: TableKey, sqlTableOverride?: string): string {
   const referencedRelations = getReferencedRelations(tableName);
   const softDelete = softDeleteClause(tableName);
+  const physicalTable = sqlTableOverride ?? tableName;
 
   if (referencedRelations.length > 0) {
-    const alias = getEntityName(tableName);
+    const alias = sqlAlias(tableName);
     const where = softDelete ? `WHERE ${alias}.${softDelete}` : "";
     return `
       ${getSelectStatement(tableName)}
-      FROM ${tableName} ${alias}
+      FROM ${physicalTable} ${alias}
       ${getJoinsStatements(tableName, referencedRelations)}
       ${where}
     `;
   }
 
   return softDelete
-    ? `SELECT * FROM ${tableName} WHERE ${softDelete}`
-    : `SELECT * FROM ${tableName}`;
+    ? `SELECT * FROM ${physicalTable} WHERE ${softDelete}`
+    : `SELECT * FROM ${physicalTable}`;
 }
 
 function getListFilterConfig(tableName: TableKey): Record<string, ColumnDef> {
@@ -338,18 +416,31 @@ async function getListOfTable(
   pool: Pool,
   res: express.Response,
   tableName: TableKey,
-  query: express.Request["query"]
+  query: express.Request["query"],
+  allowed: {
+    sqlTable: string;
+    businessWhere: string;
+    businessParams: unknown[];
+    ownerWhere?: string;
+    ownerParams?: unknown[];
+    discriminatorWhere?: string;
+    discriminatorParams?: unknown[];
+  },
 ) {
   try {
     const defaultSort = getPkFields(tableName);
 
+    const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, 1);
+
     const { dataQuery, dataValues, countQuery, countValues, page, limit } =
       buildListQuery(
-        getBaseSelectQuery(tableName),
+        getBaseSelectQuery(tableName, allowed.sqlTable !== tableName ? allowed.sqlTable : undefined),
         query,
         getListFilterConfig(tableName),
         defaultSort,
-        getSortableColumns(tableName)
+        getSortableColumns(tableName),
+        scopeConditions,
+        scopeValues,
       );
 
     const [dataResult, countResult] = await Promise.all([
@@ -357,7 +448,7 @@ async function getListOfTable(
       pool.query(countQuery, countValues),
     ]);
 
-    const total = parseInt(countResult.rows[0].count, 10);
+    const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
 
     return sendList(res, dataResult.rows, { page, limit, total });
   } catch (error) {
@@ -369,23 +460,57 @@ async function getListOfTable(
 async function getRowByPKs(
   pool: Pool,
   tableName: TableKey,
-  pkValues: unknown[]
+  pkValues: unknown[],
+  allowed: {
+    sqlTable: string;
+    businessWhere: string;
+    businessParams: unknown[];
+    ownerWhere?: string;
+    ownerParams?: unknown[];
+    discriminatorWhere?: string;
+    discriminatorParams?: unknown[];
+  },
 ) {
-  const whereArguments = columnNamesEqualsNumber(
-    getPkFields(tableName),
-    1,
-    " AND "
-  );
-
+  const pkFields = getPkFields(tableName);
+  const whereArguments = columnNamesEqualsNumber(pkFields, 1, " AND ");
   const softDelete = softDeleteClause(tableName);
+  const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
+
+  const allParams: unknown[] = [...pkValues];
+  const extraConditions: string[] = [];
+
+  // Discriminator before business scope for index efficiency.
+  let nextIdx = pkValues.length + 1;
+
+  if (allowed.discriminatorWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextIdx);
+    extraConditions.push(sql);
+    allParams.push(...(allowed.discriminatorParams ?? []));
+    nextIdx = nextIndex;
+  }
+
+  if (allowed.businessWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextIdx);
+    extraConditions.push(sql);
+    allParams.push(...allowed.businessParams);
+    nextIdx = nextIndex;
+  }
+  if (allowed.ownerWhere) {
+    const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextIdx);
+    extraConditions.push(sql);
+    allParams.push(...(allowed.ownerParams ?? []));
+    nextIdx = nextIndex;
+  }
+
+  const extraClause = extraConditions.length > 0 ? ` AND ${extraConditions.join(" AND ")}` : "";
 
   const queryStatement = `
     SELECT *
-    FROM ${tableName}
-    WHERE ${whereArguments}${softDelete ? ` AND ${softDelete}` : ""}
+    FROM ${physicalTable}
+    WHERE ${whereArguments}${softDelete ? ` AND ${softDelete}` : ""}${extraClause}
   `;
 
-  return tryQuery(pool, queryStatement, pkValues);
+  return tryQuery(pool, queryStatement, allParams);
 }
 
 async function getRowOfTable(
@@ -393,7 +518,16 @@ async function getRowOfTable(
   res: express.Response,
   tableName: TableKey,
   query: express.Request["query"],
-  entityName: string
+  entityName: string,
+  allowed: {
+    sqlTable: string;
+    businessWhere: string;
+    businessParams: unknown[];
+    ownerWhere?: string;
+    ownerParams?: unknown[];
+    discriminatorWhere?: string;
+    discriminatorParams?: unknown[];
+  },
 ) {
   const pk = validateOnlyPk(tableName, query);
 
@@ -410,7 +544,8 @@ async function getRowOfTable(
   const responseQuery: QueryResponse = await getRowByPKs(
     pool,
     tableName,
-    pkValues
+    pkValues,
+    allowed,
   );
 
   if (!responseQuery.success) {

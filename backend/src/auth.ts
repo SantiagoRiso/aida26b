@@ -1,15 +1,15 @@
 import crypto from 'crypto';
 import { promisify } from 'util';
+import type { Role } from '../../shared/src/types/types';
 
 const scrypt = promisify(crypto.scrypt);
-
-export type Role = 'Admin' | 'Professional' | 'Receptionist' | 'Client';
 
 export type AuthUser = {
   id: number;
   username: string;
   email: string | null;
   role: Role;
+  business_id: number | null;
   is_active: boolean;
   must_change_password: boolean;
 };
@@ -87,6 +87,7 @@ export function publicUser(row: Record<string, unknown>): AuthUser {
     username: String(row.username),
     email: row.email === null || row.email === undefined ? null : String(row.email),
     role: row.role as Role,
+    business_id: row.business_id == null ? null : Number(row.business_id),
     is_active: Boolean(row.is_active),
     must_change_password: Boolean(row.must_change_password),
   };

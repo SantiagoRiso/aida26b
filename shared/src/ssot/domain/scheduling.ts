@@ -16,14 +16,15 @@ export const schedulingTables = {
   schedules: {
     columns: {
       id: pkColumn,
-      professional_id: {
+      professional_user_id: {
         type: 'string',
         label: { es: 'Profesional', en: 'Professional' },
         input: 'select',
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Professional',
       },
       resource_id: {
         type: 'string',
@@ -48,19 +49,33 @@ export const schedulingTables = {
     title: { es: 'Horarios', en: 'Schedules' },
     addButtonLabel: { es: 'Agregar Horario', en: 'Add Schedule' },
     crud: { create: true, read: true, update: true, delete: false },
+    // Business is derived via whichever owner is set (professional or resource).
+    businessJoin: {
+      paths: [
+        { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
+        { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
+      ],
+    },
+    roleRequired: {
+      create: ['Admin', 'Professional', 'Receptionist'],
+      read:   ['Admin', 'Professional', 'Receptionist', 'Client'],
+      update: ['Admin', 'Professional', 'Receptionist'],
+      delete: [],
+    },
   } satisfies TableStructure,
 
   schedule_exceptions: {
     columns: {
       id: pkColumn,
-      professional_id: {
+      professional_user_id: {
         type: 'string',
         label: { es: 'Profesional', en: 'Professional' },
         input: 'select',
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Professional',
       },
       resource_id: {
         type: 'string',
@@ -114,6 +129,19 @@ export const schedulingTables = {
     title: { es: 'Excepciones de Horario', en: 'Schedule Exceptions' },
     addButtonLabel: { es: 'Agregar Excepción', en: 'Add Exception' },
     crud: { create: true, read: true, update: true, delete: true },
+    // Business is derived via whichever owner is set (professional or resource).
+    businessJoin: {
+      paths: [
+        { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
+        { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
+      ],
+    },
+    roleRequired: {
+      create: ['Admin', 'Professional', 'Receptionist'],
+      read:   ['Admin', 'Professional', 'Receptionist', 'Client'],
+      update: ['Admin', 'Professional', 'Receptionist'],
+      delete: ['Admin', 'Professional', 'Receptionist'],
+    },
   } satisfies TableStructure,
 
   // The appointment lifecycle is workflow-owned. ends_at is trigger-maintained and price is
@@ -121,23 +149,23 @@ export const schedulingTables = {
   appointments: {
     columns: {
       id: pkColumn,
-      client_id: {
+      client_user_id: {
         type: 'string',
         label: { es: 'Cliente', en: 'Client' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
       },
-      professional_id: {
+      professional_user_id: {
         type: 'string',
         label: { es: 'Profesional', en: 'Professional' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
       },
       resource_id: {
         type: 'string',
@@ -241,18 +269,19 @@ export const schedulingTables = {
     },
   } satisfies TableStructure,
 
-  // A professional sharing calendar access with another user. business_id derived.
+  // A professional sharing calendar access with another user. Managed through explicit
+  // grant endpoints; not exposed through generic CRUD.
   calendar_grants: {
     columns: {
       id: pkColumn,
-      professional_id: {
+      professional_user_id: {
         type: 'string',
         label: { es: 'Profesional', en: 'Professional' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
       },
       grantee_user_id: {
         type: 'string',
@@ -268,6 +297,9 @@ export const schedulingTables = {
     uiName: { es: 'Permiso de Calendario', en: 'Calendar Grant' },
     title: { es: 'Permisos de Calendario', en: 'Calendar Grants' },
     protected: true,
+    businessJoin: {
+      paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
+    },
   } satisfies TableStructure,
 };
 
@@ -332,7 +364,6 @@ function subtractIntervals(base: MinuteInterval[], blocks: MinuteInterval[]): Mi
   return current;
 }
 
-// Validate the weekly JSONB shape stored on `schedules.weekly`.
 export function validateWeeklySchedule(
   value: unknown,
 ): { ok: true; value: WeeklySchedule } | { ok: false; errors: string[] } {
@@ -415,7 +446,6 @@ export function computeDailyAvailability(input: {
   return free.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
 }
 
-// End-exclusive overlap test for two booked time ranges (epoch milliseconds).
 export function detectOverlap(
   a: { startsAt: number; endsAt: number },
   b: { startsAt: number; endsAt: number },

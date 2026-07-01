@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { sendList, sendData, sendError } from '../src/status_messages';
 import { assertCrudAllowed, getCrudPolicy } from '../src/routes/crud-policy';
 import { sendErrorsIfInvalid, validateFullObject } from '../src/validation/validate';
+import type { AuthUser } from '../src/auth';
 
 function fakeRes() {
   const res = {
@@ -19,6 +20,16 @@ function fakeRes() {
   };
   return res;
 }
+
+const adminUser: AuthUser = {
+  id: 1,
+  username: 'admin',
+  email: null,
+  role: 'Admin',
+  business_id: null,
+  is_active: true,
+  must_change_password: false,
+};
 
 describe('standard response envelopes', () => {
   it('list endpoints return { success, data, meta }', () => {
@@ -60,36 +71,36 @@ describe('standard response envelopes', () => {
 
 describe('generic CRUD policy gate', () => {
   it('allows ordinary configuration entities', () => {
-    const check = assertCrudAllowed('clients', 'read');
+    const check = assertCrudAllowed('clients', 'read', adminUser);
     expect(check.ok).toBe(true);
     if (check.ok) expect(check.table).toBe('clients');
     expect(getCrudPolicy('clients' as any)).toBeTruthy();
   });
 
   it('rejects unknown entities as not_found', () => {
-    const check = assertCrudAllowed('does_not_exist', 'read');
+    const check = assertCrudAllowed('does_not_exist', 'read', adminUser);
     expect(check).toMatchObject({ ok: false, status: 404, code: 'not_found' });
   });
 
   it('hides protected entities behind not_found (no generic reads/writes)', () => {
     for (const t of ['appointments', 'ledger_entries', 'audit_events', 'users', 'calendar_grants']) {
-      const check = assertCrudAllowed(t, 'read');
+      const check = assertCrudAllowed(t, 'read', adminUser);
       expect(check, t).toMatchObject({ ok: false, status: 404, code: 'not_found' });
       expect(getCrudPolicy(t as any), t).toBeNull();
     }
   });
 
   it('rejects operations the entity does not expose', () => {
-    expect(assertCrudAllowed('schedules', 'delete')).toMatchObject({
+    expect(assertCrudAllowed('schedules', 'delete', adminUser)).toMatchObject({
       ok: false,
       status: 405,
       code: 'operation_not_allowed',
     });
-    expect(assertCrudAllowed('client_professional_services', 'delete')).toMatchObject({
+    expect(assertCrudAllowed('client_professional_services', 'delete', adminUser)).toMatchObject({
       ok: false,
       status: 405,
     });
-    expect(assertCrudAllowed('schedule_exceptions', 'delete').ok).toBe(true);
+    expect(assertCrudAllowed('schedule_exceptions', 'delete', adminUser).ok).toBe(true);
   });
 });
 
@@ -109,10 +120,7 @@ describe('validation adapter', () => {
   it('does not respond when input is valid', () => {
     const res = fakeRes();
     const result = validateFullObject('clients', {
-      business_id: '1',
-      user_id: '1',
       display_name: 'Ana',
-      email: 'ana@example.com',
       phone: '123',
       notes: 'x',
     });

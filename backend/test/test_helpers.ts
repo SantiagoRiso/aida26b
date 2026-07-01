@@ -9,8 +9,8 @@ async function fetchFullTable(tableName: string) {
   }
 }
 
-async function fetchById(tableName: string, id: string) {
-  const queryParams = new URLSearchParams([['id', id]]).toString();
+async function fetchById(tableName: string, id: string, pkField: string = 'id') {
+  const queryParams = new URLSearchParams([[pkField, id]]).toString();
   try {
     return await fetch(`${API_BASE}/${tableName}?` + queryParams);
   } catch (error) {
@@ -32,8 +32,8 @@ async function insertRow(tableName: string, row: Record<string, unknown>) {
   }
 }
 
-async function updateRow(tableName: string, id: string, row: Record<string, unknown>) {
-  const queryParams = new URLSearchParams([['id', id]]).toString();
+async function updateRow(tableName: string, id: string, row: Record<string, unknown>, pkField: string = 'id') {
+  const queryParams = new URLSearchParams([[pkField, id]]).toString();
   try {
     return await fetch(`${API_BASE}/${tableName}?` + queryParams, {
       method: 'PUT',
@@ -46,8 +46,8 @@ async function updateRow(tableName: string, id: string, row: Record<string, unkn
   }
 }
 
-async function deleteRow(tableName: string, id: string) {
-  const queryParams = new URLSearchParams([['id', id]]).toString();
+async function deleteRow(tableName: string, id: string, pkField: string = 'id') {
+  const queryParams = new URLSearchParams([[pkField, id]]).toString();
   try {
     return await fetch(`${API_BASE}/${tableName}?` + queryParams, { method: 'DELETE' });
   } catch (error) {

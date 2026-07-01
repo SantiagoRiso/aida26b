@@ -9,11 +9,16 @@ import fs from 'fs';
 import * as auth from './auth';
 
 import { mountGenericRoutes, mountObservability } from './app';
+import { mountGrantRoutes } from './routes/grants';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// One known reverse-proxy hop (ingress) terminates TLS and sets X-Forwarded-For, so
+// req.ip reflects the real client rather than the proxy. Audited IPs depend on this.
+app.set('trust proxy', 1);
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -48,26 +53,36 @@ function isUniqueViolation(error: unknown) {
   );
 }
 
-// audit_events.business_id is NOT NULL, so derive it from the actor's business; skip the
-// write when none resolves (e.g. failed login). Best-effort: a failure never breaks the request.
+// audit_events.business_id is NOT NULL. By default the business is derived from the actor's
+// session; callers may pass an explicit actor/business to record events with no session
+// (e.g. a failed login, resolved from the attempted account). The write is skipped only when
+// no business resolves. Best-effort: a failure never breaks the request.
 async function audit(
   req: Request,
   eventType: string,
   outcome: string,
-  details: Record<string, unknown> = {}
+  details: Record<string, unknown> = {},
+  override: { actorId?: number | null; businessId?: number | null } = {}
 ) {
   try {
-    const actorId = (req as AuthedRequest).user?.id ?? null;
+    const actorId =
+      override.actorId !== undefined
+        ? override.actorId
+        : (req as AuthedRequest).user?.id ?? null;
 
-    if (actorId === null) {
-      return;
+    let businessId: number | null;
+    if (override.businessId !== undefined) {
+      businessId = override.businessId;
+    } else {
+      if (actorId === null) {
+        return;
+      }
+      const business = await pool.query<{ business_id: number | null }>(
+        'SELECT business_id FROM auth.users WHERE id = $1',
+        [actorId]
+      );
+      businessId = business.rows[0]?.business_id ?? null;
     }
-
-    const business = await pool.query<{ business_id: number | null }>(
-      'SELECT business_id FROM auth.users WHERE id = $1',
-      [actorId]
-    );
-    const businessId = business.rows[0]?.business_id ?? null;
 
     if (businessId === null) {
       return;
@@ -107,6 +122,7 @@ async function loadSession(req: Request) {
        u.username,
        u.email,
        u.role,
+       u.business_id,
        u.is_active,
        u.must_change_password
      FROM auth.sessions s
@@ -156,20 +172,6 @@ const requireAdmin: RequestHandler = async (req, res, next) => {
   return res.status(403).json({ error: 'Forbidden' });
 };
 
-// Any authenticated Admin may write; all authenticated users may read.
-const requireWrite: RequestHandler = async (req, res, next) => {
-  if ((req as AuthedRequest).user?.role === 'Admin') {
-    return next();
-  }
-
-  await audit(req, 'permission_denied', 'denied', {
-    path: req.path,
-    method: req.method,
-  });
-
-  return res.status(403).json({ error: 'Forbidden' });
-};
-
 app.post('/api/auth/login', async (req, res) => {
   try {
     const username =
@@ -186,6 +188,7 @@ app.post('/api/auth/login', async (req, res) => {
          password_hash,
          password_salt,
          role,
+         business_id,
          is_active,
          must_change_password
        FROM auth.users
@@ -201,7 +204,12 @@ app.post('/api/auth/login', async (req, res) => {
       (await auth.verifyPassword(password, row.password_salt, row.password_hash));
 
     if (!ok) {
-      await audit(req, 'login_failed', 'failure', { username });
+      // Record failed attempts against a real account (resolved from the row); attempts on an
+      // unknown username have no business to attribute and are not audited.
+      await audit(req, 'login_failed', 'failure', { username }, {
+        actorId: row?.id ?? null,
+        businessId: row?.business_id ?? null,
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -310,9 +318,19 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
          must_change_password = false,
          updated_at = now()
        WHERE id = $3
-       RETURNING id, username, email, role, is_active, must_change_password`,
+       RETURNING id, username, email, role, business_id, is_active, must_change_password`,
       [passwordHash, passwordSalt, user.id]
     );
+
+    // Invalidate the user's other sessions so a changed password locks out anyone
+    // holding an older token; the current session stays valid.
+    const currentToken = getSessionToken(req);
+    if (currentToken) {
+      await pool.query(
+        'DELETE FROM auth.sessions WHERE user_id = $1 AND token_hash <> $2',
+        [user.id, auth.hashToken(currentToken)]
+      );
+    }
 
     (req as AuthedRequest).user = auth.publicUser(result.rows[0]);
 
@@ -325,52 +343,122 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   }
 });
 
+// Role is immutable after creation — change requires deactivate + recreate.
+// business_id comes from the admin session; any body-supplied value is ignored.
 app.post(
   '/api/admin/users',
   requireAuth,
   requirePasswordReady,
   requireAdmin,
   async (req, res) => {
-    try {
-      const username =
-        typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    const username =
+      typeof req.body.username === 'string' ? req.body.username.trim() : '';
 
-      const email =
-        typeof req.body.email === 'string' && req.body.email.trim()
-          ? req.body.email.trim()
-          : null;
+    // email is NOT NULL in the schema; fall back to a placeholder when no address is provided.
+    const emailRaw =
+      typeof req.body.email === 'string' && req.body.email.trim()
+        ? req.body.email.trim()
+        : null;
 
-      const password = readPassword(req.body.password);
-      const role = req.body.role;
+    const password = readPassword(req.body.password);
+    const role = req.body.role;
+    const displayName =
+      typeof req.body.display_name === 'string' && req.body.display_name.trim()
+        ? req.body.display_name.trim()
+        : username;
 
-      if (!username || !password || !auth.isRole(role)) {
-        return res.status(400).json({
-          error: 'Valid username, password and role are required',
-        });
-      }
-
-      const { passwordHash, passwordSalt } = await auth.hashPassword(password);
-
-      const result = await pool.query(
-        `INSERT INTO auth.users
-         (username, email, password_hash, password_salt, role)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, username, email, role, is_active, must_change_password`,
-        [username, email, passwordHash, passwordSalt, role]
-      );
-
-      await audit(req, 'user_created', 'success', {
-        user_id: result.rows[0].id,
-        role,
+    if (!username || !password || !auth.isRole(role)) {
+      return res.status(400).json({
+        error: 'Valid username, password and role are required',
       });
+    }
 
-      return res.status(201).json(result.rows[0]);
+    const sessionUser = (req as AuthedRequest).user!;
+
+    // A null business_id means "see/act across all businesses"; stamping it onto a new
+    // user would mint a cross-tenant account. Admin user-management requires a concrete business.
+    if (sessionUser.business_id == null) {
+      return res.status(400).json({
+        error: 'A business context is required to manage users',
+      });
+    }
+    const email = emailRaw ?? `${username}@noemail.local`;
+    const { passwordHash, passwordSalt } = await auth.hashPassword(password);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // All person attributes (display_name, phone, bio, notes) live on auth.users directly.
+      const userResult = await client.query(
+        `INSERT INTO auth.users
+           (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+         RETURNING id`,
+        [username, email, displayName, passwordHash, passwordSalt, role, sessionUser.business_id]
+      );
+      const newUserId: number = userResult.rows[0].id;
+
+      await client.query('COMMIT');
+
+      await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+
+      return res.status(201).json({ id: newUserId, username, role });
     } catch (error) {
+      await client.query('ROLLBACK');
+
       if (isUniqueViolation(error)) {
         return res.status(409).json({ error: 'Username already exists' });
       }
 
       console.error('Error creating user:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// Soft-deactivates a user; deletes their sessions. Role is immutable — change requires deactivate + recreate.
+app.post(
+  '/api/admin/users/:id/deactivate',
+  requireAuth,
+  requirePasswordReady,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const userId = Number(req.params.id);
+      const sessionUser = (req as AuthedRequest).user!;
+
+      if (!Number.isInteger(userId)) {
+        return res.status(400).json({ error: 'Valid user id is required' });
+      }
+
+      if (sessionUser.business_id == null) {
+        return res.status(400).json({
+          error: 'A business context is required to manage users',
+        });
+      }
+
+      const result = await pool.query(
+        `UPDATE auth.users
+         SET is_active = false, deleted_at = now(), deleted_by_user_id = $1, updated_at = now()
+         WHERE id = $2 AND business_id = $3 AND is_active = true
+         RETURNING id, username, role`,
+        [sessionUser.id, userId, sessionUser.business_id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [userId]);
+
+      await audit(req, 'user_deactivated', 'success', { user_id: userId });
+
+      return res.json({ user: result.rows[0] });
+    } catch (error) {
+      console.error('Error deactivating user:', error);
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -385,6 +473,7 @@ app.post(
     try {
       const userId = Number(req.params.id);
       const password = readPassword(req.body.password);
+      const sessionUser = (req as AuthedRequest).user!;
 
       if (!Number.isInteger(userId) || !password) {
         return res.status(400).json({
@@ -392,8 +481,16 @@ app.post(
         });
       }
 
+      if (sessionUser.business_id == null) {
+        return res.status(400).json({
+          error: 'A business context is required to manage users',
+        });
+      }
+
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
+      // Scope by the admin's business so a tenant admin can only reset their own
+      // users' passwords, never another business's accounts.
       const result = await pool.query(
         `UPDATE auth.users
          SET
@@ -401,9 +498,9 @@ app.post(
            password_salt = $2,
            must_change_password = true,
            updated_at = now()
-         WHERE id = $3
+         WHERE id = $3 AND business_id = $4 AND is_active = true
          RETURNING id, username, email, role, is_active, must_change_password`,
-        [passwordHash, passwordSalt, userId]
+        [passwordHash, passwordSalt, userId, sessionUser.business_id]
       );
 
       if (result.rows.length === 0) {
@@ -422,10 +519,18 @@ app.post(
   }
 );
 
+// Explicit grant-management surface; calendar_grants stays protected in SSOT (no generic CRUD).
+mountGrantRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
 // Same route stack as the test app factory, with the runtime auth guards layered on.
+// Role and business-scope decisions live inside handlers via the declarative gate.
 mountGenericRoutes(app, pool, {
   read: [requireAuth, requirePasswordReady],
-  write: [requireAuth, requirePasswordReady, requireWrite],
+  write: [requireAuth, requirePasswordReady],
 });
 
 let frontendDistPath = path.join(__dirname, '../../frontend/dist');

@@ -30,8 +30,6 @@ describe('foundation seed', () => {
   it('is idempotent (no duplicate rows after a second run)', async () => {
     expect(await count('businesses')).toBe(1);
     expect(await count('auth.users')).toBe(4);
-    expect(await count('clients')).toBe(1);
-    expect(await count('professionals')).toBe(1);
     expect(await count('resources')).toBe(1);
     expect(await count('services')).toBe(1);
     expect(await count('client_professional_services')).toBe(1);
@@ -51,13 +49,34 @@ describe('foundation seed', () => {
     expect(roles).toEqual(['Admin', 'Client', 'Professional', 'Receptionist']);
   });
 
-  it('links every client to a user and scopes direct owners to the business', async () => {
-    const nullUser = await pool.query(`SELECT 1 FROM clients WHERE user_id IS NULL`);
-    expect(nullUser.rows.length).toBe(0);
+  it('all users have a display_name (NOT NULL column)', async () => {
+    const missing = await pool.query(`SELECT 1 FROM auth.users WHERE display_name IS NULL OR display_name = ''`);
+    expect(missing.rows.length).toBe(0);
+  });
 
+  it('professional user has bio set; client user has phone set', async () => {
+    const pro = await pool.query<{ bio: string | null }>(
+      `SELECT bio FROM auth.users WHERE role = 'Professional' LIMIT 1`
+    );
+    expect(pro.rows[0]?.bio).not.toBeNull();
+
+    const client = await pool.query<{ phone: string | null }>(
+      `SELECT phone FROM auth.users WHERE role = 'Client' LIMIT 1`
+    );
+    expect(client.rows[0]?.phone).not.toBeNull();
+  });
+
+  it('links every user to a business; business scoped through auth.users', async () => {
     const business = await pool.query<{ id: string }>(`SELECT id FROM businesses LIMIT 1`);
     const businessId = business.rows[0].id;
-    for (const table of ['clients', 'professionals', 'resources', 'services']) {
+
+    const wrongBiz = await pool.query(
+      `SELECT 1 FROM auth.users WHERE business_id IS NULL OR business_id <> $1`,
+      [businessId]
+    );
+    expect(wrongBiz.rows.length, 'all seeded users must belong to the demo business').toBe(0);
+
+    for (const table of ['resources', 'services']) {
       const r = await pool.query(`SELECT 1 FROM ${table} WHERE business_id <> $1`, [businessId]);
       expect(r.rows.length, `${table} business scope`).toBe(0);
     }
@@ -66,14 +85,14 @@ describe('foundation seed', () => {
   it('keeps schedules tied to exactly one owner with valid FKs', async () => {
     const bad = await pool.query(
       `SELECT 1 FROM schedules
-       WHERE (professional_id IS NULL) = (resource_id IS NULL)`
+       WHERE (professional_user_id IS NULL) = (resource_id IS NULL)`
     );
     expect(bad.rows.length).toBe(0);
 
     const cps = await pool.query(
       `SELECT 1 FROM client_professional_services cps
-       JOIN clients c ON c.id = cps.client_id
-       JOIN professionals p ON p.id = cps.professional_id
+       JOIN auth.users cu ON cu.id = cps.client_user_id
+       JOIN auth.users pu ON pu.id = cps.professional_user_id
        JOIN services s ON s.id = cps.service_id`
     );
     expect(cps.rows.length).toBe(1);

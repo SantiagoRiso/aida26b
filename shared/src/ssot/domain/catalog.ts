@@ -55,30 +55,38 @@ export const catalogTables = {
     businessScoped: true,
     crud: { create: true, read: true, update: true, delete: true },
     softDelete,
+    roleRequired: {
+      create: ['Admin', 'Receptionist'],
+      read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
+      update: ['Admin', 'Receptionist'],
+      delete: ['Admin', 'Receptionist'],
+    },
   } satisfies TableStructure,
 
-  // Per-client price override for a professional's service. business_id is derived via parent.
+  // Per-client price override for a professional's service. business_id is derived via client.
   // No soft-delete columns and no DELETE grant, so generic delete is withheld.
   client_professional_services: {
     columns: {
       id: pkColumn,
-      client_id: {
+      client_user_id: {
         type: 'string',
         label: { es: 'Cliente', en: 'Client' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Client',
       },
-      professional_id: {
+      professional_user_id: {
         type: 'string',
         label: { es: 'Profesional', en: 'Professional' },
         input: 'select',
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Professional',
       },
       service_id: {
         type: 'string',
@@ -96,5 +104,15 @@ export const catalogTables = {
     title: { es: 'Precios por Cliente', en: 'Client Prices' },
     addButtonLabel: { es: 'Agregar Precio', en: 'Add Price' },
     crud: { create: true, read: true, update: true, delete: false },
+    // Business is derived via the client's auth.users record.
+    businessJoin: {
+      paths: [{ parentTable: 'auth.users', localFk: 'client_user_id', parentPk: 'id' }],
+    },
+    roleRequired: {
+      create: ['Admin', 'Receptionist'],
+      read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
+      update: ['Admin', 'Receptionist'],
+      delete: [],
+    },
   } satisfies TableStructure,
 };

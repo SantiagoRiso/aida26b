@@ -7,6 +7,40 @@ type Response = {
   code?: string;
 }
 
+// Canonical role union. Shared here so SSOT domain files need not import from backend.
+type Role = 'Admin' | 'Professional' | 'Receptionist' | 'Client';
+
+type RoleRequired = {
+  create?: Role[];
+  read?:   Role[];
+  update?: Role[];
+  delete?: Role[];
+};
+
+// Column that directly holds this row's owner user_id (Client-only row filtering).
+type OwnershipDescriptor = {
+  ownerColumn: string;
+};
+
+// Single join step used to derive business_id for tables without a direct business_id column.
+type BusinessJoinPath = {
+  parentTable: string;  // may be schema-qualified, e.g. 'auth.users'
+  localFk:     string;
+  parentPk:    string;
+};
+
+// Two paths support dual-owner tables (schedules, schedule_exceptions).
+type BusinessJoinDescriptor = {
+  paths: BusinessJoinPath[];
+};
+
+// Role discriminator: constrains every generic SQL operation to rows with a specific role value.
+// Used by clients (role='Client') and professionals (role='Professional') whose data lives on auth.users.
+type RoleDiscriminator = {
+  column: string;   // e.g. 'role'
+  value:  string;   // e.g. 'Client' or 'Professional'
+};
+
 type TypeMap = {
   string: string;
   number: number;
@@ -59,6 +93,7 @@ type ColumnDef = {
   sortable?: boolean;
   derivable?: {originTable: string, sqlGenerationStatement: string};
   foreignKey?: ForeignKeyDef;
+  referencesUserRole?: 'Professional' | 'Client';
 }
 
 // Generic-CRUD operations a table exposes. Operations are enabled explicitly so route
@@ -114,7 +149,14 @@ type TableStructure = {
   crud?: CrudPolicy
   softDelete?: SoftDeletePolicy
   status?: StatusMeta
-  schedulable?: SchedulableCapability // set on professionals and resources
+  schedulable?: SchedulableCapability
+  roleRequired?:  RoleRequired
+  ownership?:     OwnershipDescriptor
+  businessJoin?:  BusinessJoinDescriptor
+  // When set, generic SQL targets this schema-qualified table instead of the SSOT key name.
+  sqlTable?:          string
+  // When set, every generic SQL operation ANDs this column = value to constrain the entity type.
+  roleDiscriminator?: RoleDiscriminator
 }
 
 type InferType<FieldDefs extends Record<string, ColumnDef>> = {
@@ -137,4 +179,4 @@ type RendererProps<K extends TableKey> = {
 
 type RendererFunc = <K extends TableKey>(props: RendererProps<K>) => HTMLElement;
 
-export type {TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc};
+export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc};

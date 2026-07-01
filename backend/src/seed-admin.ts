@@ -36,13 +36,19 @@ async function main() {
      SELECT id FROM existing UNION ALL SELECT id FROM created`,
     [process.env.BUSINESS_NAME?.trim() || 'Default Business'],
   );
-  const businessId = business.rows[0].id;
+  const businessId = business.rows[0]?.id;
+
+  // An Admin must always have a business; fail fast if none could be resolved.
+  if (businessId == null) {
+    throw new Error('Could not resolve or create a business for the admin user');
+  }
 
   await pool.query(
-    `INSERT INTO auth.users (username, email, password_hash, password_salt, role, business_id, is_active, must_change_password)
-     VALUES ($1, $2, $3, $4, 'Admin', $5, true, false)
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id, is_active, must_change_password)
+     VALUES ($1, $2, $3, $4, $5, 'Admin', $6, true, false)
      ON CONFLICT (username) DO UPDATE
        SET email = EXCLUDED.email,
+           display_name = EXCLUDED.display_name,
            password_hash = EXCLUDED.password_hash,
            password_salt = EXCLUDED.password_salt,
            role = 'Admin',
@@ -50,7 +56,7 @@ async function main() {
            is_active = true,
            must_change_password = false,
            updated_at = now()`,
-    [username, email, passwordHash, passwordSalt, businessId],
+    [username, email, username, passwordHash, passwordSalt, businessId],
   );
 
   await pool.end();

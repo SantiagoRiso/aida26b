@@ -32,8 +32,13 @@ export async function insertedCorrectly(tableName: TableKey, row: Record<string,
   return body.data;
 }
 
-export async function fetchedByIdMatches(tableName: TableKey, id: string, expected: Record<string, unknown>) {
-  const response = await fetchById(tableName, id);
+export async function fetchedByIdMatches(
+  tableName: TableKey,
+  id: string,
+  expected: Record<string, unknown>,
+  pkField: string = 'id',
+) {
+  const response = await fetchById(tableName, id, pkField);
   assert.strictEqual(response.status, 200);
   const body = await response.json();
   assert.strictEqual(body.success, true);
@@ -42,8 +47,13 @@ export async function fetchedByIdMatches(tableName: TableKey, id: string, expect
   }
 }
 
-export async function updatedCorrectly(tableName: TableKey, id: string, row: Record<string, unknown>) {
-  const response = await updateRow(tableName, id, row);
+export async function updatedCorrectly(
+  tableName: TableKey,
+  id: string,
+  row: Record<string, unknown>,
+  pkField: string = 'id',
+) {
+  const response = await updateRow(tableName, id, row, pkField);
   assert.strictEqual(response.status, 202);
   const body = await response.json();
   assert.strictEqual(body.success, true);
@@ -53,8 +63,8 @@ export async function updatedCorrectly(tableName: TableKey, id: string, row: Rec
   return body.data;
 }
 
-export async function deletedCorrectly(tableName: TableKey, id: string) {
-  const response = await deleteRow(tableName, id);
+export async function deletedCorrectly(tableName: TableKey, id: string, pkField: string = 'id') {
+  const response = await deleteRow(tableName, id, pkField);
   assert.strictEqual(response.status, 200);
   const body = await response.json();
   assert.strictEqual(body.success, true);

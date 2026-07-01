@@ -11,6 +11,7 @@ class FakeDb {
     this.sessions = [];
     this.audit = [];
     this.clients = [];
+    this.professionals = [];
     this.nextUserId = Math.max(...users.map((user) => user.id)) + 1;
     this.nextClientId = 1;
   }
@@ -51,7 +52,14 @@ class FakeDb {
       return { rows: [] };
     }
     if (sql.startsWith('DELETE FROM auth.sessions WHERE user_id')) {
-      this.sessions = this.sessions.filter((item) => item.user_id !== params[0]);
+      if (sql.includes('token_hash <>')) {
+        // change-password drops the user's other sessions but keeps the current token (params[1]).
+        this.sessions = this.sessions.filter(
+          (item) => item.user_id !== params[0] || item.token_hash === params[1],
+        );
+      } else {
+        this.sessions = this.sessions.filter((item) => item.user_id !== params[0]);
+      }
       return { rows: [] };
     }
     if (sql.startsWith('INSERT INTO auth.users')) {
@@ -62,15 +70,16 @@ class FakeDb {
         id: this.nextUserId++,
         username: params[0],
         email: params[1],
-        password_hash: params[2],
-        password_salt: params[3],
-        role: params[4],
-        business_id: null,
+        display_name: params[2],
+        password_hash: params[3],
+        password_salt: params[4],
+        role: params[5],
+        business_id: params[6] ?? null,
         is_active: true,
         must_change_password: true,
       };
       this.users.push(user);
-      return { rows: [publicRow(user)] };
+      return { rows: [{ id: user.id }] };
     }
     if (sql.startsWith('UPDATE auth.users SET password_hash')) {
       const user = this.users.find((item) => item.id === params[2]);
@@ -81,25 +90,21 @@ class FakeDb {
       return { rows: [publicRow(user)] };
     }
 
-    // Generic CRUD over clients exercised by the write/read guard tests.
-    if (sql.startsWith('SELECT COUNT(') && /FROM clients/i.test(sql)) {
-      return { rows: [{ count: this.clients.length }] };
+    if (sql.startsWith('SELECT COUNT(') && /FROM auth\.users/i.test(sql) && /role/i.test(sql)) {
+      const role = params[0];
+      const bizId = params[1] !== undefined ? params[1] : null;
+      const matching = this.users.filter(
+        (u) => u.role === role && (bizId === null || u.business_id === bizId) && !u.deleted_at,
+      );
+      return { rows: [{ count: String(matching.length) }] };
     }
-    if (/SELECT \* FROM clients/i.test(sql) || /FROM clients/i.test(sql)) {
-      return { rows: this.clients };
-    }
-    if (sql.startsWith('INSERT INTO clients')) {
-      const client = {
-        id: String(this.nextClientId++),
-        business_id: params[0],
-        user_id: params[1],
-        display_name: params[2],
-        email: params[3],
-        phone: params[4],
-        notes: params[5],
-      };
-      this.clients.push(client);
-      return { rows: [client] };
+    if (/SELECT \* FROM \(SELECT \* FROM auth\.users/i.test(sql)) {
+      const role = params[0];
+      const bizId = params[1] !== undefined ? params[1] : null;
+      const matching = this.users.filter(
+        (u) => u.role === role && (bizId === null || u.business_id === bizId) && !u.deleted_at,
+      );
+      return { rows: matching };
     }
 
     throw new Error(`Unhandled query: ${sql}`);
@@ -112,6 +117,7 @@ function publicRow(user) {
     username: user.username,
     email: user.email,
     role: user.role,
+    business_id: user.business_id ?? null,
     is_active: user.is_active,
     must_change_password: user.must_change_password,
   };
@@ -171,10 +177,18 @@ test('login, me and logout manage the session cookie', async () => {
     const badLogin = await request(baseUrl, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'wrongpass' } });
     assert.equal(badLogin.status, 401);
 
-    const cookie = await login(baseUrl, 'admin', 'adminpass');
+    const loginRes = await request(baseUrl, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'adminpass' } });
+    assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.body.user.business_id, 1);
+    assert.equal(loginRes.body.user.must_change_password, false);
+    const cookie = loginRes.cookie;
+    assert.ok(cookie.startsWith('aida_session='));
+
     const me = await request(baseUrl, '/api/auth/me', { cookie });
     assert.equal(me.status, 200);
     assert.equal(me.body.user.role, 'Admin');
+    assert.equal(me.body.user.business_id, 1);
+    assert.equal(me.body.user.must_change_password, false);
 
     const logout = await request(baseUrl, '/api/auth/logout', { method: 'POST', cookie });
     assert.equal(logout.status, 204);
@@ -183,7 +197,7 @@ test('login, me and logout manage the session cookie', async () => {
   });
 });
 
-test('non-admin can read but cannot mutate scheduler data', async () => {
+test('non-admin can read clients but POST is disabled for all (405)', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const cookie = await login(baseUrl, 'pro', 'propass');
@@ -191,25 +205,24 @@ test('non-admin can read but cannot mutate scheduler data', async () => {
     const write = await request(baseUrl, '/api/clients', {
       method: 'POST',
       cookie,
-      body: { business_id: '1', user_id: '3', display_name: 'Ada', email: 'ada@example.com', phone: '1', notes: null },
+      body: { display_name: 'Ada', phone: '1', notes: null },
     });
-    assert.equal(write.status, 403);
-    assert.equal(db.audit.at(-1).event_type, 'permission_denied');
+    assert.equal(write.status, 405);
+    assert.equal(write.body.error.code, 'operation_not_allowed');
   });
 });
 
-test('admin can create a client through generic CRUD', async () => {
+test('generic POST to clients is disabled (405) — creation is via admin endpoint only', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const cookie = await login(baseUrl, 'admin', 'adminpass');
     const created = await request(baseUrl, '/api/clients', {
       method: 'POST',
       cookie,
-      body: { business_id: '1', user_id: '3', display_name: 'Grace Hopper', email: 'grace@example.com', phone: '2', notes: null },
+      body: { display_name: 'Grace Hopper', phone: '2', notes: null },
     });
-    assert.equal(created.status, 201);
-    assert.equal(created.body.data.display_name, 'Grace Hopper');
-    assert.equal(db.clients.length, 1);
+    assert.equal(created.status, 405);
+    assert.equal(created.body.error.code, 'operation_not_allowed');
   });
 });
 
@@ -267,5 +280,44 @@ test('first login users must change password before using the app', async () => 
     assert.equal(changed.status, 200);
     assert.equal(changed.body.user.must_change_password, false);
     assert.equal((await request(baseUrl, '/api/clients', { cookie: tempCookie })).status, 200);
+  });
+});
+
+test('must_change_password blocks write routes and clears after change', async () => {
+  const db = await makeDb();
+  await withServer(db, async (baseUrl) => {
+    const adminCookie = await login(baseUrl, 'admin', 'adminpass');
+    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'writetest', password: 'pass1234', role: 'Admin' } });
+
+    const tempCookie = await login(baseUrl, 'writetest', 'pass1234');
+
+    const blockedWrite = await request(baseUrl, '/api/services', {
+      method: 'POST',
+      cookie: tempCookie,
+      body: { name: 'Haircut', default_duration_minutes: 30, default_price_ars: '100.00' },
+    });
+    assert.equal(blockedWrite.status, 403);
+    assert.equal(blockedWrite.body.error, 'Password change required');
+
+    const logoutRes = await request(baseUrl, '/api/auth/logout', { method: 'POST', cookie: tempCookie });
+    assert.equal(logoutRes.status, 204);
+  });
+});
+
+test('change-password response carries business_id', async () => {
+  const db = await makeDb();
+  await withServer(db, async (baseUrl) => {
+    const adminCookie = await login(baseUrl, 'admin', 'adminpass');
+    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'chpwuser', password: 'oldpass1', role: 'Client' } });
+
+    const tempCookie = await login(baseUrl, 'chpwuser', 'oldpass1');
+    const changed = await request(baseUrl, '/api/auth/change-password', {
+      method: 'POST',
+      cookie: tempCookie,
+      body: { current_password: 'oldpass1', new_password: 'newpass123' },
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.body.user.must_change_password, false);
+    assert.ok('business_id' in changed.body.user);
   });
 });

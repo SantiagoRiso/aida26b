@@ -126,13 +126,13 @@ describe('scheduler entity set (academic surface removed)', () => {
 });
 
 describe('professionals and resources are independent, each schedulable', () => {
-  it('each has its own single-column PK (no supertype, no shared PK)', () => {
+  it('each has its own single-column PK', () => {
     expect(structure.tables.professionals.pk).toBe('id');
     expect(structure.tables.resources.pk).toBe('id');
   });
 
   it('both expose a schedulable capability pointing at their own owner FK', () => {
-    expect(getSchedulable('professionals')?.ownerForeignKey).toBe('professional_id');
+    expect(getSchedulable('professionals')?.ownerForeignKey).toBe('professional_user_id');
     expect(getSchedulable('resources')?.ownerForeignKey).toBe('resource_id');
     expect(getSchedulable('professionals')?.displayField).toBe('display_name');
     expect(getSchedulable('resources')?.displayField).toBe('name');
@@ -220,10 +220,16 @@ describe('appointment shape', () => {
 });
 
 describe('business scoping: only direct owners carry business_id', () => {
-  it('direct owners are business-scoped', () => {
-    for (const t of ['clients', 'professionals', 'resources', 'services', 'users', 'audit_events']) {
+  it('direct owners are business-scoped (resources/services/audit_events carry business_id directly)', () => {
+    for (const t of ['resources', 'services', 'audit_events']) {
       expect(isBusinessScoped(t as any), t).toBe(true);
     }
+    expect(isBusinessScoped('users' as any)).toBe(true);
+  });
+
+  it('clients and professionals are businessScoped (backed by auth.users which carries business_id)', () => {
+    expect(isBusinessScoped('clients' as any)).toBe(true);
+    expect(isBusinessScoped('professionals' as any)).toBe(true);
   });
 
   it('derived-scope entities are not business-scoped', () => {
@@ -254,8 +260,6 @@ describe('field-level validation', () => {
 
   it('reports an invalid field by name, not as an opaque string list', () => {
     const result = validateFullObject('clients', {
-      business_id: '1',
-      user_id: '1',
       display_name: 'Ana',
       email: 'not-an-email',
       phone: '123',

@@ -9,10 +9,15 @@ export const pkColumn = {
 } satisfies ColumnDef;
 
 // business_id only on direct owners; derived elsewhere.
+// editable: false — never expected in request body (server stamps from session).
+// derivable — excluded from getNotDerivableFields so the businessScoped branch
+//             in post.ts can append it cleanly without duplication.
 export const businessIdColumn = {
   type: 'string',
   label: { es: 'Negocio', en: 'Business' },
   input: 'select',
+  editable: false,
+  derivable: { originTable: 'auth.users', sqlGenerationStatement: 'business_id' },
   validator: { required: true },
   filterable: true,
   sortable: false,
