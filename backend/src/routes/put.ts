@@ -87,19 +87,20 @@ export async function putHandler(
     return;
   }
 
-  const validatedPk = validateOnlyPk(tableName, req.query);
+  // The id arrives as a path segment (/api/:tableName/:id), not a query param — matches
+  // how the frontend's crud.ts calls PUT and how generic entities only ever expose a single pk.
+  const pkFields = getPkFields(tableName);
+  const validatedPk = validateOnlyPk(tableName, { [pkFields[0]]: req.params.id });
 
   if (sendErrorsIfInvalid(res, validatedPk)) {
     return;
   }
 
-  const pkFields = getPkFields(tableName);
-
   const pkValues = pkFields.map(
     (pkField) => (validatedPk.data as Record<string, unknown>)[pkField]
   );
 
-  // D-16: own+Admin+granted enforcement for schedule tables — owner is read from the existing
+  // Own+Admin+granted enforcement for schedule tables — owner is read from the existing
   // row (authoritative), so a caller cannot edit a peer's row by omitting the owner in the body.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
     const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(

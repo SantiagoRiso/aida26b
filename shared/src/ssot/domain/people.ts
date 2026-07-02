@@ -100,7 +100,15 @@ export const peopleTables = {
     uiName: { es: 'Usuario', en: 'User' },
     title: { es: 'Usuarios', en: 'Users' },
     businessScoped: true,
+    // Stays protected (no generic writes — creation/deactivation/reset go through the
+    // dedicated /api/admin/users routes) but carves out a read-only exception so the
+    // admin Usuarios screen can list accounts through generic GET.
     protected: true,
+    crud: { create: false, read: true, update: false, delete: false },
+    roleRequired: { read: ['Admin'] },
+    // Reads go through a view, never the raw table — the generic SELECT is a literal
+    // "SELECT *" and auth.users carries password_hash/password_salt.
+    sqlTable: 'auth.users_directory',
     softDelete,
   } satisfies TableStructure,
 
@@ -193,7 +201,8 @@ export const peopleTables = {
       update: ['Admin', 'Receptionist', 'Client'],
       delete: ['Admin'],
     },
-    ownership: { ownerColumn: 'id' },
+    // A Client is confined to their own row on every op — this is their own profile.
+    ownership: { ownerColumn: 'id', role: 'Client' },
   } satisfies TableStructure,
 
   // Logical entity backed by auth.users WHERE role='Professional'.
@@ -238,7 +247,10 @@ export const peopleTables = {
       update: ['Admin', 'Receptionist', 'Professional'],
       delete: ['Admin'],
     },
-    ownership: { ownerColumn: 'id' },
+    // A Professional is confined to their own row only when writing (editing their own
+    // profile). Reads stay unscoped for every allowed role — Clients need the full
+    // professional list to book, Admin/Receptionist need it to manage the calendar.
+    ownership: { ownerColumn: 'id', role: 'Professional', ops: ['update', 'delete'] },
   } satisfies TableStructure,
 
   resources: {

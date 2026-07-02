@@ -34,8 +34,15 @@ export function isKnownTable(name: string): name is TableKey {
 }
 
 export function getCrudPolicy(table: TableKey): CrudPolicy | null {
-  if (isProtected(table)) return null;
-  return getSsotCrudPolicy(table) ?? null;
+  const policy = getSsotCrudPolicy(table) ?? null;
+  if (!policy) return null;
+  if (isProtected(table)) {
+    // A protected table is unreachable through generic CRUD unless it carves out a narrow
+    // op exception (e.g. users: read-only, for the admin Usuarios screen).
+    const hasException = Object.values(policy).some(Boolean);
+    return hasException ? policy : null;
+  }
+  return policy;
 }
 
 export type ScopeFragment = {
@@ -114,11 +121,20 @@ export function buildBusinessScope(
 // Unknown and protected entities both report not-found so the API never reveals which
 // protected tables exist.
 export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUser): CrudCheck {
-  if (!isKnownTable(name) || isProtected(name)) {
+  if (!isKnownTable(name)) {
     return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
   }
 
   const policy = getSsotCrudPolicy(name);
+
+  // Protected entities are unreachable through generic CRUD by default. A table may carve out
+  // a narrow exception for a single operation (e.g. users: read, for the admin Usuarios screen)
+  // by declaring an explicit crud policy for just that op — every other op stays 404'd here,
+  // same as a fully protected table.
+  if (isProtected(name) && !(policy && policy[op])) {
+    return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
+  }
+
   if (!policy) {
     return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
   }
@@ -140,18 +156,17 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
 
   const { businessWhere, businessParams } = buildBusinessScope(name as TableKey, user);
 
-  // Ownership scoping: a Client is confined to their own row on every operation;
-  // a Professional may read all peers (needed for scheduling) but may only modify
-  // their own profile. Staff (Admin/Receptionist) are never owner-scoped.
+  // Ownership scoping: self-restricts only the role (and, optionally, the specific ops) the
+  // descriptor targets — e.g. a Client is confined to their own row on every op for `clients`,
+  // but a Client reading `professionals` must NOT be scoped: the descriptor there targets only
+  // a Professional editing their own profile, and Clients need the full list to book.
   let ownerWhere: string | undefined;
   let ownerParams: unknown[] | undefined;
   if (meta.ownership) {
-    const selfScoped =
-      user.role === 'Client' ||
-      (user.role === 'Professional' && (op === 'update' || op === 'delete'));
-    if (selfScoped) {
-      const ownerCol = (meta.ownership as OwnershipDescriptor).ownerColumn;
-      ownerWhere = `"${ownerCol}" = ?`;
+    const ownership = meta.ownership as OwnershipDescriptor;
+    const opsMatch = !ownership.ops || ownership.ops.includes(op);
+    if (user.role === ownership.role && opsMatch) {
+      ownerWhere = `"${ownership.ownerColumn}" = ?`;
       ownerParams = [user.id];
     }
   }
@@ -184,7 +199,7 @@ export type OwnScheduleResult =
   | { ok: true }
   | { ok: false; status: number; code: string; message: string };
 
-// D-16 enforcement for schedule/exception/resource editing — the finer-grained gate the
+// Finer-grained gate for schedule/exception/resource editing that the
 // synchronous assertCrudAllowed cannot express (a granted-staff check needs a DB lookup).
 // Own + Admin + granted: a Professional edits only their own; an Admin any owner in their
 // business; a Receptionist/other staff only with a calendar_grant for that professional;
@@ -250,6 +265,6 @@ export async function assertOwnScheduleAllowed(
   }
 
   // Resource target: managed by Admin (handled above) + granted staff. The grant model is
-  // per-professional only, so non-admin staff cannot manage resources in D1 (Phase 4/D2 extension).
+  // per-professional only, so non-admin staff cannot manage resources in D1.
   return { ok: false, status: 403, code: 'forbidden', message: 'Only an Admin may manage resource schedules' };
 }

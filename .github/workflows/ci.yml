@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Unit, DB, and E2E tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: aida26_user
+          POSTGRES_PASSWORD: aida26pass
+          POSTGRES_DB: professional_agenda
+        ports:
+          - 5544:5432
+        options: >-
+          --health-cmd "pg_isready -U aida26_user"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Backend / test DB connection — single-role (aida26_user is superuser in CI).
+      DB_HOST: localhost
+      DB_PORT: 5544
+      DB_NAME: professional_agenda
+      DB_USER: aida26_user
+      DB_PASSWORD: aida26pass
+      # Used by the migration runner when DB_OWNER_* is unset; aida26_user acts as owner in CI.
+      DB_OWNER_USER: aida26_user
+      DB_OWNER_PASSWORD: aida26pass
+      NODE_ENV: test
+      PORT: 3000
+      # Tells playwright.config.ts to skip the webServer block (CI manages the stack).
+      CI: "true"
+      E2E_BASE_URL: "http://localhost:3000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # Install dependencies for both workspaces.
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      # Run database migrations on the CI Postgres service.
+      - name: Run migrations
+        run: npm run migrate --prefix backend
+
+      # Seed demo accounts and dataset used by the E2E journeys.
+      - name: Seed demo data
+        run: npm run seed:demo --prefix backend
+
+      # Install Playwright browsers (Chromium only for speed; all journeys use the default browser).
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      # Build the Vue frontend (produces frontend/dist/ served by Express).
+      - name: Build frontend
+        run: npm run build --prefix frontend
+
+      # Build the backend (produces backend/dist/server.js — required before starting it below).
+      - name: Build backend
+        run: npm run build --prefix backend
+
+      # Backend unit tests (no DB required — mocked or in-process).
+      - name: Backend unit tests
+        run: npm run test --prefix backend
+
+      # Backend DB integration tests — includes migration-seed-fresh.test.ts (SC5 item 7).
+      - name: Backend DB tests
+        run: npm run test:db --prefix backend
+
+      # Frontend unit tests (vitest, jsdom, no browser).
+      - name: Frontend unit tests
+        run: npm run test --prefix frontend
+
+      # Start Express (serves built frontend + API) in the background for E2E.
+      - name: Start backend server
+        run: node backend/dist/server.js &
+        env:
+          PORT: 3000
+
+      # Wait for the server to be ready before running E2E.
+      - name: Wait for server
+        run: |
+          echo "Waiting for server at http://localhost:3000/health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Server ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become ready in 30s."
+          exit 1
+
+      # Full E2E suite — all 8 spec files, workers:1 (serial, shared seeded DB).
+      - name: Frontend E2E tests
+        run: npm run test:e2e --prefix frontend
+        env:
+          E2E_BASE_URL: "http://localhost:3000"
+          CI: "true"
+
+      # Upload Playwright traces on failure for debugging.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

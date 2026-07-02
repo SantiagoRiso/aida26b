@@ -159,7 +159,6 @@ describe('ordinary vs protected CRUD boundaries', () => {
   ];
   const protectedTables = [
     'businesses',
-    'users',
     'sessions',
     'appointments',
     'ledger_entries',
@@ -179,6 +178,17 @@ describe('ordinary vs protected CRUD boundaries', () => {
       expect(isProtected(t as any), `${t} protected`).toBe(true);
       expect(getCrudPolicy(t as any), `${t} crud`).toBeUndefined();
     }
+  });
+
+  // users carves out a narrow read-only exception: the admin Usuarios screen lists accounts
+  // through generic GET, but every write stays unreachable — same as the other protected tables.
+  it('users stays protected but declares a read-only, Admin-only crud exception', () => {
+    expect(isProtected('users' as any)).toBe(true);
+    const policy = getCrudPolicy('users' as any);
+    expect(policy?.read).toBe(true);
+    expect(policy?.create).toBe(false);
+    expect(policy?.update).toBe(false);
+    expect(policy?.delete).toBe(false);
   });
 
   it('withholds generic delete where the schema grants no DELETE', () => {
@@ -257,7 +267,6 @@ describe('business scoping: only direct owners carry business_id', () => {
 describe('field-level validation', () => {
   it('returns a per-field error map keyed by field name', () => {
     const result = validateFullObject('clients', {});
-    expect('errors' in result).toBe(true);
     if ('fields' in result) {
       expect(result.fields).toBeTypeOf('object');
       expect(result.fields.display_name).toMatch(/required/);

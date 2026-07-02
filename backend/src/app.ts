@@ -35,8 +35,9 @@ export function mountGenericRoutes(
 
   app.get('/api/:tableName', ...read, (req, res) => getHandler(req, res, pool));
   app.post('/api/:tableName', ...write, (req, res) => postHandler(req, res, pool));
-  app.put('/api/:tableName', ...write, (req, res) => putHandler(req, res, pool));
-  app.delete('/api/:tableName', ...write, (req, res) => deleteHandler(req, res, pool));
+  // Frontend calls PUT/DELETE with the row id as a path segment (crud.ts updateRow/deleteRow).
+  app.put('/api/:tableName/:id', ...write, (req, res) => putHandler(req, res, pool));
+  app.delete('/api/:tableName/:id', ...write, (req, res) => deleteHandler(req, res, pool));
 }
 
 export function mountObservability(app: express.Express, pool: Pool) {

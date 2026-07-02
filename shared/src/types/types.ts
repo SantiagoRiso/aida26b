@@ -17,9 +17,14 @@ type RoleRequired = {
   delete?: Role[];
 };
 
-// Column that directly holds this row's owner user_id (Client-only row filtering).
+// Column that holds this row's owner user_id, and which role/operations get self-scoped to it.
+// e.g. clients self-scopes Client on every op (a client only ever sees their own row); professionals
+// self-scopes Professional on writes only (editing a peer's profile), never Client reads (clients
+// need the full professional list to book) — the target role/ops are what makes that distinction.
 type OwnershipDescriptor = {
   ownerColumn: string;
+  role: Role;
+  ops?: Array<'create' | 'read' | 'update' | 'delete'>;  // defaults to every op when omitted
 };
 
 // Single join step used to derive business_id for tables without a direct business_id column.

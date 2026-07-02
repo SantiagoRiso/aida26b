@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import { createOwnerPool } from './db';
 import { hashPassword } from './auth';
 
 dotenv.config();
@@ -185,19 +186,8 @@ export async function seedFoundation(pool: Pick<Pool, 'query'>): Promise<void> {
   await upsertScheduleException(pool, professionalUserId, '2026-07-09');
 }
 
-function makePool(): Pool {
-  return new Pool({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME,
-    // Prefer owner credentials: the app role can't write config tables like businesses.
-    user: process.env.DB_OWNER_USER || process.env.DB_USER,
-    password: process.env.DB_OWNER_PASSWORD || process.env.DB_PASSWORD,
-  });
-}
-
 async function main() {
-  const pool = makePool();
+  const pool = createOwnerPool();
   try {
     await seedFoundation(pool);
     console.log('Foundation seed complete');

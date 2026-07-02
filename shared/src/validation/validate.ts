@@ -4,11 +4,9 @@ import type { ColumnDef, ColumnValidator, TableKey, TableRecordMap } from '../ty
 
 export type FieldErrors = Record<string, string>;
 
-// `errors` is the flattened message list (kept for existing callers); `fields` is the
-// authoritative per-field map.
 export type ParseResult<T extends TableKey> =
   | { data: TableRecordMap[T] }
-  | { errors: string[]; fields: FieldErrors };
+  | { fields: FieldErrors };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // Argentina (America/Argentina/Buenos_Aires) is UTC-3 all year - no daylight saving.
@@ -145,7 +143,7 @@ function validate<T extends TableKey>(table: T, data: unknown, fields: string[])
   }
 
   return Object.keys(fieldErrors).length > 0
-    ? { errors: Object.values(fieldErrors), fields: fieldErrors }
+    ? { fields: fieldErrors }
     : { data: out as TableRecordMap[T] };
 }
 

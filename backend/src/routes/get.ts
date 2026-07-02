@@ -15,9 +15,7 @@ import {
 import { getPkFields } from "../../../shared/src/utils/utils";
 
 import {
-  sendSuccessOperationMessage,
-  sendNotFoundMessage,
-  sendErrorMessage,
+  sendData,
   sendList,
   sendError,
 } from "../status_messages";
@@ -285,7 +283,14 @@ export function buildListQuery(
     Math.min(parseInt(String(requestedPage || "1"), 10) || 1, 1000)
   );
 
-  const limit = 20;
+  const requestedLimit = Array.isArray(query.limit)
+    ? query.limit[0]
+    : query.limit;
+
+  const limit = Math.max(
+    1,
+    Math.min(parseInt(String(requestedLimit || "20"), 10) || 20, 500)
+  );
   const offset = (page - 1) * limit;
 
   const fromClause = tableNameOrCTE.includes(" ")
@@ -331,6 +336,7 @@ function isListRequest(query: express.Request["query"]): boolean {
       key === "page" ||
       key === "sort" ||
       key === "dir" ||
+      key === "limit" ||
       key.startsWith("filter_")
   );
 }
@@ -549,18 +555,12 @@ async function getRowOfTable(
   );
 
   if (!responseQuery.success) {
-    return sendErrorMessage(res, responseQuery.message);
+    return sendError(res, 500, "internal_error", responseQuery.message);
   }
 
   if (responseQuery.data.rowCount === 0) {
-    return sendNotFoundMessage(res, entityName);
+    return sendError(res, 404, "not_found", `${entityName} not found`);
   }
 
-  return sendSuccessOperationMessage(
-    res,
-    entityName,
-    responseQuery.data.rows[0],
-    "fetched",
-    200
-  );
+  return sendData(res, responseQuery.data.rows[0], 200);
 }

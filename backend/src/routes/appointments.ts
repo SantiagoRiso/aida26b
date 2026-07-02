@@ -342,9 +342,17 @@ export function mountAppointmentRoutes(
       });
 
       if (verdict.requires_override && !override) {
-        // Warn first; do NOT commit.
+        // Warn first; do NOT commit. The client requirement below is checked only once we're
+        // actually about to write a row — a caller probing for conflicts without a client yet
+        // chosen must still see the verdict, not a premature validation error.
         await client.query('ROLLBACK');
         return sendData(res, verdict);
+      }
+
+      // appointments.client_user_id is NOT NULL — every booking requires a client.
+      if (!Number.isInteger(clientUserId) || (clientUserId as number) <= 0) {
+        await client.query('ROLLBACK');
+        return sendError(res, 422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
       }
 
       const insert = await client.query<Record<string, unknown>>(
@@ -381,7 +389,10 @@ export function mountAppointmentRoutes(
         const e = err as { status: number; code: string; message: string };
         return sendError(res, e.status, e.code, e.message);
       }
-      throw err;
+      // Any other error (e.g. an unexpected DB constraint violation) must never crash
+      // the process — surface it as a 500 instead of rethrowing into an unhandled rejection.
+      console.error('Error scheduling appointment:', err);
+      return sendError(res, 500, 'internal_error', 'Internal server error');
     } finally {
       client.release();
     }

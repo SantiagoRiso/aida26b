@@ -83,11 +83,21 @@ describe('generic CRUD policy gate', () => {
   });
 
   it('hides protected entities behind not_found (no generic reads/writes)', () => {
-    for (const t of ['appointments', 'ledger_entries', 'audit_events', 'users', 'calendar_grants']) {
+    for (const t of ['appointments', 'ledger_entries', 'audit_events', 'calendar_grants']) {
       const check = assertCrudAllowed(t, 'read', adminUser);
       expect(check, t).toMatchObject({ ok: false, status: 404, code: 'not_found' });
       expect(getCrudPolicy(t as any), t).toBeNull();
     }
+  });
+
+  // users carves out a narrow read-only exception (admin Usuarios screen) — writes stay
+  // 404'd like every other protected entity.
+  it('users stays protected for writes but allows reads for an authorized Admin', () => {
+    expect(assertCrudAllowed('users', 'create', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
+    expect(assertCrudAllowed('users', 'update', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
+    expect(assertCrudAllowed('users', 'delete', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
+    expect(assertCrudAllowed('users', 'read', adminUser).ok).toBe(true);
+    expect(getCrudPolicy('users' as any)?.read).toBe(true);
   });
 
   it('rejects operations the entity does not expose', () => {

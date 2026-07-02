@@ -8,9 +8,9 @@ export * from '../../../shared/src/validation/validate';
 // Returns true on validation failure (after sending the error) so the caller can stop.
 export function sendErrorsIfInvalid<T>(
   res: Response,
-  result: { data: T } | { errors: string[]; fields: FieldErrors },
-): result is { errors: string[]; fields: FieldErrors } {
-  if ('errors' in result) {
+  result: { data: T } | { fields: FieldErrors },
+): result is { fields: FieldErrors } {
+  if ('fields' in result) {
     sendError(res, 400, 'validation_error', 'Validation failed', result.fields);
     return true;
   }

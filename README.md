@@ -107,6 +107,53 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
 7. Ejecutar tests de integración con base de datos: `npm run test:db`
 8. Ejecutar tests E2E Playwright: `npm run test:e2e`
 
+## Demo accounts
+
+Para probar el sistema con un dataset realista de un consultorio de Buenos Aires
+(psicólogos, nutricionista, kinesiólogo, salas como recursos, clientes, turnos, cuenta
+corriente y auditoría), cargá los datos de demostración:
+
+```
+npm run migrate --prefix backend && npm run seed:demo --prefix backend
+```
+
+> **Credenciales SOLO para uso local / demostración.** No son secretos reales; se guardan
+> hasheadas en la base. Todas comparten la misma contraseña: `demo-pass-123`.
+
+| Rol           | Usuario               | Contraseña      | Notas                                                                   |
+| ------------- | --------------------- | --------------- | ----------------------------------------------------------------------- |
+| Admin         | `demo_admin`          | `demo-pass-123` | Acceso total al negocio; autorizó el sobreturno y los ajustes.          |
+| Profesional   | `demo_pro`            | `demo-pass-123` | Psicóloga; su calendario es compartido con la recepcionista y `demo_pro5`. |
+| Profesional   | `demo_pro5`           | `demo-pass-123` | **Tiene un permiso sobre el calendario de `demo_pro`** (profesional como grantee). |
+| Recepcionista | `demo_recep`          | `demo-pass-123` | **Tiene permisos** sobre los calendarios de `demo_pro` y `demo_pro2`.   |
+| Cliente       | `demo_client`         | `demo-pass-123` | Homero Simpson; saldo en cero (cargó y pagó).                           |
+| Cliente       | `demo_client_overdue` | `demo-pass-123` | Bart Simpson; **saldo vencido positivo** (pago parcial + mora).         |
+| Profesional   | `demo_reset`          | `demo-pass-123` | **Sembrado con `must_change_password`** — ejercita el cambio forzado de contraseña. |
+
+Además se siembran ~6-8 profesionales (`demo_pro` … `demo_pro6`, `demo_reset`), una segunda
+recepcionista (`demo_recep2`) y ~30 clientes (`demo_client2` … `demo_client30`), todos con la
+misma contraseña `demo-pass-123`. Los usernames coinciden exactamente con
+`frontend/e2e/helpers.ts` para que las pruebas E2E resuelvan las cuentas correctas.
+
+## Integración continua (CI)
+
+El workflow `.github/workflows/ci.yml` corre automáticamente en cada `push` y `pull_request`.
+
+**Qué hace CI:**
+
+1. Levanta un servicio de **PostgreSQL 18-alpine** (la misma versión que usa `docker-compose.yml` localmente).
+2. Aplica las migraciones (`npm run migrate`).
+3. Carga el dataset de demostración (`npm run seed:demo`).
+4. Instala los navegadores de Playwright (Chromium).
+5. Compila el frontend (`npm run build`).
+6. Corre los tests en orden:
+   - Tests unitarios del backend (`npm run test --prefix backend`)
+   - Tests de integración con la base de datos, incluido el test de migración+seed en esquema fresco — `migration-seed-fresh.test.ts` (`npm run test:db --prefix backend`)
+   - Tests unitarios del frontend con Vitest (`npm run test --prefix frontend`)
+   - Suite E2E completa de Playwright contra el servidor Express corriendo en CI (`npm run test:e2e --prefix frontend`)
+
+**Versión de PostgreSQL:** PostgreSQL 18 (`postgres:18-alpine`), la misma que corre en `docker-compose.yml` y `docker-compose.combined.yml`. Los tests en CI ejercen la misma versión de motor que el entorno local y de producción.
+
 ## Uso
 
 1. Ejecutar el backend: `npm start` en la raíz o en el directorio backend (servirá en http://localhost:3000)

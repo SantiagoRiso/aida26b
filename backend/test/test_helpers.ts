@@ -32,10 +32,11 @@ async function insertRow(tableName: string, row: Record<string, unknown>) {
   }
 }
 
-async function updateRow(tableName: string, id: string, row: Record<string, unknown>, pkField: string = 'id') {
-  const queryParams = new URLSearchParams([[pkField, id]]).toString();
+// pkField is accepted for signature parity with fetchById but generic PUT/DELETE take the id
+// as a path segment, matching the frontend's crud.ts calls — there is no query-string form.
+async function updateRow(tableName: string, id: string, row: Record<string, unknown>, _pkField: string = 'id') {
   try {
-    return await fetch(`${API_BASE}/${tableName}?` + queryParams, {
+    return await fetch(`${API_BASE}/${tableName}/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(row),
@@ -46,10 +47,9 @@ async function updateRow(tableName: string, id: string, row: Record<string, unkn
   }
 }
 
-async function deleteRow(tableName: string, id: string, pkField: string = 'id') {
-  const queryParams = new URLSearchParams([[pkField, id]]).toString();
+async function deleteRow(tableName: string, id: string, _pkField: string = 'id') {
   try {
-    return await fetch(`${API_BASE}/${tableName}?` + queryParams, { method: 'DELETE' });
+    return await fetch(`${API_BASE}/${tableName}/${id}`, { method: 'DELETE' });
   } catch (error) {
     console.log(error);
     throw error;

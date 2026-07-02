@@ -161,6 +161,17 @@ describe('Professional self-scope on writes', () => {
       expect(result.ownerWhere).toBeUndefined();
     }
   });
+
+  // Regression: the professionals ownership descriptor targets a Professional editing their
+  // own profile, never a Client — a Client reading the list must see every professional so
+  // the portal booking flow can populate its professional picker.
+  test('Client reading professionals is NOT owner-scoped (needs the full list to book)', () => {
+    const result = assertCrudAllowed('professionals', 'read', clientUser);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ownerWhere).toBeUndefined();
+    }
+  });
 });
 
 const TESTS_PORT = 4139;
@@ -279,7 +290,7 @@ describe('generic routes fail closed without an authenticated user', () => {
   });
 
   test('PUT is rejected with 401', async () => {
-    const res = await call('/services', {
+    const res = await call('/services/1', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: 1 }),
@@ -288,7 +299,7 @@ describe('generic routes fail closed without an authenticated user', () => {
   });
 
   test('DELETE is rejected with 401', async () => {
-    const res = await call('/services?id=1', { method: 'DELETE' });
+    const res = await call('/services/1', { method: 'DELETE' });
     expect(res.status).toBe(401);
   });
 });

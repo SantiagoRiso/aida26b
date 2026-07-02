@@ -80,9 +80,12 @@ describe('protected entities are not reachable through generic CRUD', () => {
     'calendar_grants',
     'businesses',
   ];
+  // users carves out a read-only exception (admin Usuarios screen) — excluded from the
+  // blanket read-block list, covered by its own describe block below instead.
+  const readBlockedEntities = protectedEntities.filter((e) => e !== 'users');
 
   test('reads are blocked as not_found', async () => {
-    for (const entity of protectedEntities) {
+    for (const entity of readBlockedEntities) {
       const res = await api(`/${entity}`);
       expect(res.status, `GET ${entity}`).toBe(404);
       expect(res.body.error.code, `GET ${entity}`).toBe('not_found');
@@ -99,6 +102,37 @@ describe('protected entities are not reachable through generic CRUD', () => {
       expect(res.status, `POST ${entity}`).toBe(404);
       expect(res.body.error.code, `POST ${entity}`).toBe('not_found');
     }
+  });
+});
+
+describe('users carves out a read-only exception for the admin Usuarios screen', () => {
+  test('GET users succeeds for an Admin (super-admin fixture)', async () => {
+    const res = await api('/users');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  test('writes to users still 404 as not_found (create/update/delete stay protected)', async () => {
+    const post = await api('/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(post.status).toBe(404);
+    expect(post.body.error.code).toBe('not_found');
+
+    const put = await api('/users/1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(put.status).toBe(404);
+    expect(put.body.error.code).toBe('not_found');
+
+    const del = await api('/users/1', { method: 'DELETE' });
+    expect(del.status).toBe(404);
+    expect(del.body.error.code).toBe('not_found');
   });
 });
 
@@ -122,13 +156,13 @@ describe('ordinary configuration entities are allowed', () => {
 
 describe('operations the entity does not expose are rejected (405)', () => {
   test('schedules cannot be deleted generically (no DELETE grant)', async () => {
-    const res = await api('/schedules?id=1', { method: 'DELETE' });
+    const res = await api('/schedules/1', { method: 'DELETE' });
     expect(res.status).toBe(405);
     expect(res.body.error.code).toBe('operation_not_allowed');
   });
 
   test('client_professional_services cannot be deleted generically', async () => {
-    const res = await api('/client_professional_services?id=1', { method: 'DELETE' });
+    const res = await api('/client_professional_services/1', { method: 'DELETE' });
     expect(res.status).toBe(405);
     expect(res.body.error.code).toBe('operation_not_allowed');
   });
@@ -153,7 +187,7 @@ describe('delete semantics', () => {
     expect(created.status).toBe(201);
     const id = created.body.data.id;
 
-    const del = await api(`/schedule_exceptions?id=${id}`, { method: 'DELETE' });
+    const del = await api(`/schedule_exceptions/${id}`, { method: 'DELETE' });
     expect(del.status).toBe(200);
 
     const stored = await testsPool.query(

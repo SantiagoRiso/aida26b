@@ -1,0 +1,227 @@
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+import { useLabel } from '@/composables/useLabel';
+import { roleAllowedFor } from '@/router/access';
+import { listRows } from '@/api/crud';
+import { structure } from '@shared/ssot/structure';
+import type { TableKey, ColumnDef } from '@shared/types/types';
+import Skeleton from '@/components/shared/Skeleton.vue';
+import EmptyState from '@/components/shared/EmptyState.vue';
+import GenericFilters from '@/components/generic/GenericFilters.vue';
+import Pagination from '@/components/generic/Pagination.vue';
+
+const props = defineProps<{
+  tableKey: TableKey;
+}>();
+
+const emit = defineEmits<{
+  edit: [row: Record<string, unknown>];
+  create: [];
+}>();
+
+const auth = useAuthStore();
+const { label } = useLabel();
+
+const tableSpec = computed(() => structure.tables[props.tableKey]);
+
+const columns = computed(() => {
+  const cols = tableSpec.value.columns as Record<string, ColumnDef>;
+  return Object.entries(cols).map(([key, col]) => ({ key, col }));
+});
+
+const userRole = computed(() => auth.user?.role);
+
+function canCreate(): boolean {
+  const crud = tableSpec.value.crud;
+  if (!crud?.create) return false;
+  const required = tableSpec.value.roleRequired?.create;
+  if (!userRole.value) return false;
+  return roleAllowedFor(required, userRole.value);
+}
+
+function canUpdate(): boolean {
+  const crud = tableSpec.value.crud;
+  if (!crud?.update) return false;
+  const required = tableSpec.value.roleRequired?.update;
+  if (!userRole.value) return false;
+  return roleAllowedFor(required, userRole.value);
+}
+
+function canDelete(): boolean {
+  const crud = tableSpec.value.crud;
+  if (!crud?.delete) return false;
+  const required = tableSpec.value.roleRequired?.delete;
+  if (!userRole.value) return false;
+  return roleAllowedFor(required, userRole.value);
+}
+
+const sortField = ref('');
+const sortDir = ref<'asc' | 'desc'>('asc');
+
+function toggleSort(field: string) {
+  if (sortField.value === field) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortField.value = field;
+    sortDir.value = 'asc';
+  }
+  reload();
+}
+
+const page = ref(1);
+const filters = ref<Record<string, string>>({});
+const rows = ref<Record<string, unknown>[]>([]);
+const total = ref(0);
+const limit = 20;
+const loading = ref(false);
+const loadError = ref(false);
+
+async function reload() {
+  loading.value = true;
+  loadError.value = false;
+  try {
+    const result = await listRows(props.tableKey, {
+      page: page.value,
+      sort: sortField.value || undefined,
+      dir: sortDir.value,
+      filters: filters.value,
+    });
+    if (result.ok) {
+      rows.value = result.data as Record<string, unknown>[];
+      total.value = result.meta?.total ?? rows.value.length;
+    } else {
+      loadError.value = true;
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+function onFiltersChange(f: Record<string, string>) {
+  filters.value = f;
+  page.value = 1;
+  reload();
+}
+
+function onPageChange(p: number) {
+  page.value = p;
+  reload();
+}
+
+// Switching entity screens resets sort/filter/paging before reloading.
+watch(() => props.tableKey, () => {
+  page.value = 1;
+  sortField.value = '';
+  filters.value = {};
+  rows.value = [];
+  total.value = 0;
+  reload();
+}, { immediate: true });
+
+const addLabel = computed(() => {
+  const tbl = tableSpec.value;
+  return 'addButtonLabel' in tbl && tbl.addButtonLabel
+    ? label(tbl.addButtonLabel as { es: string; en: string })
+    : label({ es: 'Nuevo', en: 'New' });
+});
+
+const tableTitle = computed(() => {
+  const tbl = tableSpec.value;
+  return 'title' in tbl && tbl.title
+    ? label(tbl.title as { es: string; en: string })
+    : label(tbl.uiName);
+});
+</script>
+
+<template>
+  <div class="space-y-4">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-semibold">{{ tableTitle }}</h1>
+      <button
+        v-if="canCreate()"
+        type="button"
+        class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+        @click="emit('create')"
+      >
+        {{ addLabel }}
+      </button>
+    </div>
+
+    <GenericFilters :table-key="tableKey" @change="onFiltersChange" />
+
+    <div class="overflow-x-auto rounded-lg border border-border">
+      <table class="w-full text-sm">
+        <thead class="bg-surface text-left">
+          <tr>
+            <th
+              v-for="{ key, col } in columns"
+              :key="key"
+              class="px-4 py-3 font-semibold"
+              :class="col.sortable ? 'cursor-pointer select-none hover:bg-border' : ''"
+              @click="col.sortable ? toggleSort(key) : undefined"
+            >
+              {{ label(col.label) }}
+              <span v-if="col.sortable && sortField === key" class="ml-1 text-xs text-neutral">
+                {{ sortDir === 'asc' ? '↑' : '↓' }}
+              </span>
+            </th>
+            <th v-if="canUpdate() || canDelete()" class="px-4 py-3 font-semibold text-right">
+              {{ label({ es: 'Acciones', en: 'Actions' }) }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-if="loading">
+            <tr>
+              <td :colspan="columns.length + (canUpdate() || canDelete() ? 1 : 0)" class="p-4">
+                <Skeleton variant="row" :rows="4" />
+              </td>
+            </tr>
+          </template>
+          <template v-else-if="rows.length === 0">
+            <tr>
+              <td :colspan="columns.length + (canUpdate() || canDelete() ? 1 : 0)" class="p-4">
+                <EmptyState
+                  :heading="label({ es: `No hay ${tableTitle} para mostrar`, en: `No ${tableTitle} to show` })"
+                  :body="label({ es: 'Probá ajustar los filtros o creá el primero.', en: 'Try adjusting the filters, or create the first one.' })"
+                />
+              </td>
+            </tr>
+          </template>
+          <template v-else>
+            <tr
+              v-for="row in rows"
+              :key="String(row[tableSpec.pk as string] ?? '')"
+              class="border-t border-border hover:bg-surface"
+              :class="canUpdate() ? 'cursor-pointer' : ''"
+              @click="canUpdate() ? emit('edit', row) : undefined"
+            >
+              <td v-for="{ key } in columns" :key="key" class="px-4 py-3">
+                {{ row[key] ?? '—' }}
+              </td>
+              <td v-if="canUpdate() || canDelete()" class="px-4 py-3 text-right">
+                <button
+                  v-if="canUpdate()"
+                  type="button"
+                  class="mr-2 text-accent hover:underline text-xs"
+                  @click.stop="emit('edit', row)"
+                >
+                  {{ label({ es: 'Editar', en: 'Edit' }) }}
+                </button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <Pagination
+      v-if="!loading && rows.length > 0"
+      :page="page"
+      :limit="limit"
+      :total="total"
+      @change="onPageChange"
+    />
+  </div>
+</template>

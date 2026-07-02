@@ -44,18 +44,20 @@ export async function deleteHandler(
   const entityName = getEntityName(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
-  const pk = validateOnlyPk(tableName, req.query);
+  // The id arrives as a path segment (/api/:tableName/:id), not a query param — matches
+  // how the frontend's crud.ts calls DELETE and how generic entities only ever expose a single pk.
+  const pkFields = getPkFields(tableName);
+  const pk = validateOnlyPk(tableName, { [pkFields[0]]: req.params.id });
 
   if (sendErrorsIfInvalid(res, pk)) {
     return;
   }
 
-  const pkFields = getPkFields(tableName);
   const pkValues = pkFields.map(
     (pkField) => (pk.data as Record<string, unknown>)[pkField]
   );
 
-  // D-16: own+Admin+granted enforcement for schedule tables — owner read from the existing row.
+  // Own+Admin+granted enforcement for schedule tables — owner read from the existing row.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
     const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(
       `SELECT professional_user_id, resource_id FROM ${physicalTable} WHERE id = $1`,

@@ -148,7 +148,7 @@ describe('own-schedule authz (D-16) via generic schedule_exceptions create', () 
     const id = ((await createRes.json()) as any).data.id;
 
     // Reassigning the owner to a peer must be rejected — owner is identity, not editable.
-    const putRes = await fetch(`${baseUrl}/api/schedule_exceptions?id=${id}`, {
+    const putRes = await fetch(`${baseUrl}/api/schedule_exceptions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -1,0 +1,79 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import type { Role } from '@shared/types/types';
+import { useAuthStore } from '@/stores/auth';
+import { useUiStore } from '@/stores/ui';
+import { roleAllowedFor } from './access';
+import staffRoutes from './staff-routes';
+import portalRoutes from './portal-routes';
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    requiresAuth?: boolean;
+    roles?: Role[];
+  }
+}
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/auth/LoginView.vue'),
+      meta: { requiresAuth: false },
+    },
+    {
+      path: '/change-password',
+      name: 'change-password',
+      component: () => import('@/views/auth/ChangePasswordView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/',
+      redirect: '/login',
+    },
+    {
+      path: '/staff',
+      component: () => import('@/layouts/StaffLayout.vue'),
+      children: staffRoutes.map((r) => ({ ...r, path: r.path.replace('/staff/', '') })),
+    },
+    {
+      path: '/portal',
+      component: () => import('@/layouts/PortalLayout.vue'),
+      children: portalRoutes.map((r) => ({ ...r, path: r.path.replace('/portal/', '') })),
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/login',
+    },
+  ],
+});
+
+router.beforeEach((to) => {
+  const auth = useAuthStore();
+  const ui = useUiStore();
+
+  if (!auth.user && to.meta.requiresAuth !== false) {
+    return { name: 'login' };
+  }
+
+  // Block ALL navigation until the user updates their password.
+  if (auth.user?.must_change_password && to.name !== 'change-password') {
+    return { name: 'change-password' };
+  }
+
+  // Session expired: redirect to login on the next navigation and consume the flag.
+  // The current view stays visible until this next navigation (soft redirect, not an abrupt yank).
+  if (ui.sessionExpired && to.name !== 'login') {
+    ui.sessionExpired = false;
+    return { name: 'login' };
+  }
+
+  // Role gate: user authenticated but lacks permission — stay put and notify.
+  if (to.meta.roles && auth.user && !roleAllowedFor(to.meta.roles, auth.user.role)) {
+    ui.toast('error', 'notPermitted');
+    return false;
+  }
+});
+
+export default router;

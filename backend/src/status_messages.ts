@@ -21,28 +21,3 @@ export function sendError(
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
   return res.status(status).json({ success: false, error });
 }
-
-// Back-compat wrappers so existing callers keep compiling. Prefer sendData/sendList/sendError.
-function sendErrorMessage(res: express.Response, responseMessage: string) {
-  return sendError(res, 500, 'internal_error', responseMessage);
-}
-
-function sendSuccessOperationMessage(
-  res: express.Response,
-  _entityName: string,
-  data: any,
-  _operationDone: string,
-  successCode: number,
-) {
-  return sendData(res, data, successCode);
-}
-
-function sendInvalidInstanceMessage(res: express.Response, message: string) {
-  return sendError(res, 400, 'invalid_request', message);
-}
-
-function sendNotFoundMessage(res: express.Response, message: string) {
-  return sendError(res, 404, 'not_found', `${message} not found`);
-}
-
-export { sendErrorMessage, sendInvalidInstanceMessage, sendNotFoundMessage, sendSuccessOperationMessage };

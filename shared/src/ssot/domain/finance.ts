@@ -91,6 +91,6 @@ export const financeTables = {
       update: [],
       delete: [],
     },
-    ownership: { ownerColumn: 'client_user_id' },
+    ownership: { ownerColumn: 'client_user_id', role: 'Client' },
   } satisfies TableStructure,
 };

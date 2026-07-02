@@ -1,0 +1,68 @@
+import type { RouteRecordRaw } from 'vue-router';
+import type { Role } from '@shared/types/types';
+import { SCREEN_ROLES } from './access';
+
+const staffRoutes: RouteRecordRaw[] = [
+  {
+    path: '/staff/dashboard',
+    name: 'staff-dashboard',
+    component: () => import('@/views/staff/DashboardView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-dashboard'] as Role[] },
+  },
+  {
+    path: '/staff/calendar',
+    name: 'staff-calendar',
+    component: () => import('@/views/staff/CalendarView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-calendar'] as Role[] },
+  },
+  {
+    path: '/staff/clients',
+    name: 'staff-clients',
+    component: () => import('@/views/staff/ClientsView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-clients'] as Role[] },
+  },
+  {
+    path: '/staff/professionals',
+    name: 'staff-professionals',
+    component: () => import('@/views/staff/ProfessionalsView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-professionals'] as Role[] },
+  },
+  {
+    path: '/staff/services',
+    name: 'staff-services',
+    component: () => import('@/views/staff/ServicesView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-services'] as Role[] },
+  },
+  {
+    path: '/staff/resources',
+    name: 'staff-resources',
+    component: () => import('@/views/staff/ResourcesView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-resources'] as Role[] },
+  },
+  {
+    path: '/staff/users',
+    name: 'staff-users',
+    component: () => import('@/views/staff/UsersView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-users'] as Role[] },
+  },
+  {
+    path: '/staff/ledger',
+    name: 'staff-ledger',
+    component: () => import('@/views/staff/LedgerView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-ledger'] as Role[] },
+  },
+  {
+    path: '/staff/audit',
+    name: 'staff-audit',
+    component: () => import('@/views/staff/AuditView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-audit'] as Role[] },
+  },
+  {
+    path: '/staff/settings',
+    name: 'staff-settings',
+    component: () => import('@/views/staff/SettingsView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-settings'] as Role[] },
+  },
+];
+
+export default staffRoutes;

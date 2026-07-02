@@ -10,6 +10,7 @@
     "migrate": "tsx src/migrate.ts",
     "seed-admin": "tsx src/seed-admin.ts",
     "seed:foundation": "tsx src/seed-foundation.ts",
+    "seed:demo": "tsx src/seed-demo.ts",
     "test": "vitest run --config vitest.config.mts",
     "test:db": "vitest run --config vitest.db.config.mts"
   },

@@ -1,5 +1,12 @@
+import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import { createOwnerPool } from './db';
 import { DEFAULT_MIGRATIONS_DIR, listMigrationFiles, readMigration } from './migration-files';
+
+// Every other CLI entry point (server.ts, seed-*.ts) loads .env; migrate.ts must too,
+// otherwise `npm run migrate` fails standalone with "client password must be a string"
+// even though the same credentials work fine wherever dotenv has already run (test harness).
+dotenv.config();
 
 // Same advisory-lock key Flyway uses by convention — coexists with any
 // external migration tool that follows the same convention.
@@ -63,25 +70,8 @@ export async function runMigrations(pool: Pool, dir: string): Promise<number> {
   }
 }
 
-/**
- * Pool for running migrations as the schema owner.
- */
-function buildOwnerPool(): Pool {
-  const hasOwnerCreds =
-    process.env.DB_OWNER_USER !== undefined &&
-    process.env.DB_OWNER_USER !== '';
-
-  return new Pool({
-    host:     process.env.DB_HOST,
-    port:     parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME,
-    user:     hasOwnerCreds ? process.env.DB_OWNER_USER     : process.env.DB_USER,
-    password: hasOwnerCreds ? process.env.DB_OWNER_PASSWORD : process.env.DB_PASSWORD,
-  });
-}
-
 async function cli(): Promise<void> {
-  const pool = buildOwnerPool();
+  const pool = createOwnerPool();
   try {
     const applied = await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
     console.log(DEFAULT_MIGRATIONS_DIR);
