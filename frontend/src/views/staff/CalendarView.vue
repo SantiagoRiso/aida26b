@@ -54,6 +54,10 @@ const detailAppt = ref<Appointment | null>(null);
 const detailOpen = ref(false);
 
 const formOpen = ref(false);
+// Keep the form mounted through the close animation (cleared on @after-leave) so the panel
+// doesn't blank mid-close; opening flips it true via the watcher below.
+const formMounted = ref(false);
+watch(formOpen, (open) => { if (open) formMounted.value = true; });
 const formAppt = ref<Appointment | undefined>(undefined); // set for reschedule
 const formPrefillDate = ref<string | undefined>();
 const formPrefillStart = ref<string | undefined>();
@@ -314,34 +318,43 @@ function isoToMinutes(iso: string | null): number {
 // Map the cursor to the day column + slot row under it and highlight that one cell. Reads the lane
 // rows straight from the DOM so the box lands exactly on the rendered grid (any granularity).
 function onGridPointerMove(ev: PointerEvent) {
-  if (isDragging.value || !currentViewType.value.startsWith('timeGrid')) { hoverTarget.value = null; return; }
   const root = calendarRef.value?.getRootEl();
+  // Cursor is driven here (the timegrid CSS no longer sets it) so past cells don't look actionable.
+  const reset = () => { hoverTarget.value = null; if (root) root.style.cursor = ''; };
+  if (isDragging.value || !currentViewType.value.startsWith('timeGrid')) { reset(); return; }
   if (!root) { hoverTarget.value = null; return; }
   const col = geometry.columnAt(ev.clientX);
-  if (!col) { hoverTarget.value = null; return; }
+  if (!col) { reset(); return; }
 
   const seen = new Set<number>();
   const lanes = [...root.querySelectorAll<HTMLElement>('.fc-timegrid-slot-lane[data-time]')]
     .map((el) => ({ top: el.getBoundingClientRect().top, min: isoToMinutes(el.getAttribute('data-time')) }))
     .filter((l) => Number.isFinite(l.min) && !seen.has(l.min) && (seen.add(l.min), true))
     .sort((a, b) => a.top - b.top);
-  if (lanes.length < 2) { hoverTarget.value = null; return; }
+  if (lanes.length < 2) { reset(); return; }
   const rowSize = lanes[1].min - lanes[0].min;
 
   for (let i = 0; i < lanes.length; i++) {
     const top = lanes[i].top;
     const bottom = i + 1 < lanes.length ? lanes[i + 1].top : top + (top - lanes[i - 1].top);
     if (ev.clientY >= top && ev.clientY < bottom) {
+      // Fully-elapsed cells aren't interactable — no highlight, no actionable cursor.
+      if (cellElapsed(col.date, lanes[i].min + rowSize)) { hoverTarget.value = null; root.style.cursor = 'default'; return; }
+      root.style.cursor = 'pointer';
       // Only reassign when the cell actually changes — avoids a re-render on every pixel of movement.
       if (hoverTarget.value?.date === col.date && hoverTarget.value?.startMin === lanes[i].min) return;
       hoverTarget.value = { date: col.date, startMin: lanes[i].min, endMin: lanes[i].min + rowSize };
       return;
     }
   }
-  hoverTarget.value = null;
+  reset();
 }
 
-function clearHover() { hoverTarget.value = null; }
+function clearHover() {
+  hoverTarget.value = null;
+  const root = calendarRef.value?.getRootEl();
+  if (root) root.style.cursor = '';
+}
 
 onMounted(() => {
   const root = calendarRef.value?.getRootEl();
@@ -383,7 +396,7 @@ const customDrag = useCustomDrag({
   onCommit: (appt, target) => { requestMove(appt, target, () => {}); },
 });
 
-const { calendarOptions, timeBounds } = useAppointmentCalendar(
+const { calendarOptions } = useAppointmentCalendar(
   appointments,
   ref(auth.user),
   {
@@ -397,24 +410,61 @@ const { calendarOptions, timeBounds } = useAppointmentCalendar(
   { fine: fineDrag, slotStartsMinutes, slotMinutes },
 );
 
-function hmsToMinutes(hms: string): number {
-  const [h, m] = hms.split(':').map(Number);
-  return h * 60 + m;
-}
-
 // Resource availability overlay: green = free windows, grey hatch = closed/blocked (the complement
 // within the visible working range). Timegrid only — background fills are meaningless in month view.
 // No free windows on a day → the whole range reads as blocked, which is the "no availability" cue.
+// The minute of today where "past" ends and "present" begins — the START of the cell containing now
+// (now floored to the slot grid), NOT the exact minute. This keeps the current cell whole: it reads
+// as present (striped if unavailable, white/booked if available) instead of being split flat/striped
+// by a mid-cell boundary. Falls back to the exact minute when no grid is known (mixed 'Todos' view).
+const todayShadeFloor = computed(() => {
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const gran = slotMinutes.value;
+  const starts = slotStartsMinutes.value;
+  if (!gran || !starts || starts.length === 0) return nowMin;
+  const anchor = Math.min(...starts);
+  if (nowMin <= anchor) return nowMin;
+  return anchor + Math.floor((nowMin - anchor) / gran) * gran;
+});
+
+// Lower bound (minutes from midnight) below which availability shading is suppressed: past time
+// reads plain, since it can't be booked. A fully-past day returns null (skip it entirely). Today
+// transitions at the current cell's start so the current cell isn't split. The upper bound is the
+// full day — FullCalendar clips background events to the visible grid, and the grid's lattice-aligned
+// top can sit below the working-hours bound, so covering to 24h avoids an ungrayed strip.
+function shadeFloorMinutes(date: string): number | null {
+  const today = dayISO(new Date(), 0);
+  if (date < today) return null;
+  if (date === today) return todayShadeFloor.value;
+  return 0;
+}
+const DAY_END_MINUTES = 24 * 60;
+
+// A cell is fully elapsed (not bookable) if its whole day has passed, or — today — it ENDS at or
+// before now. Compare the END, not the start, so the cell that currently contains "now" stays
+// bookable even though it began a few minutes ago. (Background shading still greys up to now.)
+function cellElapsed(date: string, endMin: number): boolean {
+  const now = new Date();
+  const today = dayISO(now, 0);
+  if (date < today) return true;
+  if (date === today) return endMin <= now.getHours() * 60 + now.getMinutes();
+  return false;
+}
+
 const resourceBgEvents = computed<EventInput[]>(() => {
   if (filters.value.resource_id == null || !currentViewType.value.startsWith('timeGrid')) return [];
-  const dayMin = hmsToMinutes(timeBounds.value.min);
-  const dayMax = hmsToMinutes(timeBounds.value.max);
   const out: EventInput[] = [];
   for (const [date, slots] of resourceFreeByDay.value) {
+    const floor = shadeFloorMinutes(date);
+    if (floor == null) continue;
     for (const w of mergeIntervals(slots)) {
-      out.push({ start: `${date}T${toHHMM(w.start)}:00`, end: `${date}T${toHHMM(w.end)}:00`, display: 'background', classNames: ['fc-res-free'] });
+      const start = Math.max(w.start, floor);
+      if (start < w.end) {
+        out.push({ start: `${date}T${toHHMM(start)}:00`, end: `${date}T${toHHMM(w.end)}:00`, display: 'background', classNames: ['fc-res-free'] });
+      }
     }
-    for (const g of complementIntervals(slots, dayMin, dayMax)) {
+    for (const g of complementIntervals(slots, floor, DAY_END_MINUTES)) {
       out.push({ start: `${date}T${toHHMM(g.start)}:00`, end: `${date}T${toHHMM(g.end)}:00`, display: 'background', classNames: ['fc-res-closed'] });
     }
   }
@@ -427,13 +477,37 @@ const resourceBgEvents = computed<EventInput[]>(() => {
 const professionalBgEvents = computed<EventInput[]>(() => {
   if (filters.value.resource_id != null) return [];
   if (filters.value.professional_user_id == null || !currentViewType.value.startsWith('timeGrid')) return [];
-  const dayMin = hmsToMinutes(timeBounds.value.min);
-  const dayMax = hmsToMinutes(timeBounds.value.max);
   const out: EventInput[] = [];
   for (const [date, slots] of professionalFreeByDay.value) {
-    for (const g of complementIntervals(slots, dayMin, dayMax)) {
+    const floor = shadeFloorMinutes(date);
+    if (floor == null) continue;
+    for (const g of complementIntervals(slots, floor, DAY_END_MINUTES)) {
       out.push({ start: `${date}T${toHHMM(g.start)}:00`, end: `${date}T${toHHMM(g.end)}:00`, display: 'background', classNames: ['fc-res-closed'] });
     }
+  }
+  return out;
+});
+
+// Grey past time with a FLAT wash — distinct from the striped availability overlay. Past can't be
+// booked, so it's de-emphasized rather than marked "closed": whole past days, and today up to the
+// START of the current cell (same transition as the availability shading, so the current cell isn't
+// split). Every timegrid view, independent of the professional/resource filter.
+const pastBgEvents = computed<EventInput[]>(() => {
+  if (!currentViewType.value.startsWith('timeGrid')) return [];
+  const today = dayISO(new Date(), 0);
+  const out: EventInput[] = [];
+  let d = new Date(`${visibleRange.value.from}T00:00:00`);
+  const end = new Date(`${visibleRange.value.to}T00:00:00`);
+  while (d < end) {
+    const date = dayISO(d, 0);
+    const blockedEnd =
+      date < today ? `${dayISO(d, 1)}T00:00:00`
+      : date === today ? `${date}T${toHHMM(todayShadeFloor.value)}:00`
+      : null;
+    if (blockedEnd) {
+      out.push({ start: `${date}T00:00:00`, end: blockedEnd, display: 'background', classNames: ['fc-slot-past'] });
+    }
+    d = new Date(d.getTime() + 86400000);
   }
   return out;
 });
@@ -450,6 +524,7 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
     // Appointment events, resource availability shading, the open-slot highlights, and the drag target.
     events: [
       ...((calendarOptions.value.events as EventInput[]) ?? []),
+      ...pastBgEvents.value,
       ...resourceBgEvents.value,
       ...professionalBgEvents.value,
       ...hoverEvents.value,
@@ -480,9 +555,17 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
 
 function handleSelect(arg: DateSelectArg) {
   const day = arg.startStr.slice(0, 10);
+  const hasTime = arg.startStr.length > 10;
+  // Can't book in the past: a timegrid selection that has fully elapsed (ends at/before now), or any
+  // day before today in month view. A selection covering the current moment stays allowed.
+  const past = hasTime ? new Date(arg.endStr).getTime() <= Date.now() : day < dayISO(new Date(), 0);
+  if (past) {
+    toast.info('pastNotBookable');
+    return;
+  }
   // Month view: block days the professional has no availability on (matches the graying).
   if (currentViewType.value === 'dayGridMonth' && monthAvailability.value.get(day) === false) {
-    toast.info('toast.noSlotsThatDay');
+    toast.info('noSlotsThatDay');
     return;
   }
   formPrefillDate.value = day;
@@ -535,7 +618,7 @@ function requestMove(
     resolved.duration_minutes != null &&
     exceedsEndOfDay(toMinutes(resolved.start), resolved.duration_minutes)
   ) {
-    toast.error('toast.crossesMidnight');
+    toast.error('crossesMidnight');
     revert();
     return;
   }
@@ -620,7 +703,7 @@ async function doReschedule(
 ) {
   const result = await rescheduleAppointment(id, { ...body, override });
   if (!result.ok) {
-    toast.error('toast.rescheduleFailed');
+    toast.error('rescheduleFailed');
     revertFn?.();
     return;
   }
@@ -639,7 +722,7 @@ async function doReschedule(
 async function handleApproveRequest(appt: Appointment, override = false) {
   const result = await approveAppointment(appt.id, override);
   if (!result.ok) {
-    toast.error('toast.genericError');
+    toast.error('genericError');
     return;
   }
   const payload = result.data;
@@ -754,10 +837,12 @@ function onFiltersUpdate(f: FilterState) {
     <DetailPanel
       :open="formOpen"
       :title="formAppt ? t('calendar.reschedule') : t('calendar.newAppointment')"
+      variant="side"
       @close="formOpen = false"
+      @after-leave="formMounted = false"
     >
       <AppointmentForm
-        v-if="formOpen"
+        v-if="formMounted"
         :appointment="formAppt"
         :prefill-date="formPrefillDate"
         :prefill-start="formPrefillStart"

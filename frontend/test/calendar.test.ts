@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ref } from 'vue';
+import { i18n } from '@/i18n';
 import { colorForProfessional, scopeProfessionalOptions, useAppointmentCalendar } from '@/composables/useFullCalendar';
 import type { DragTuning } from '@/composables/useFullCalendar';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
@@ -141,6 +142,45 @@ describe('useAppointmentCalendar editable flag', () => {
     const monthView = views?.['dayGridMonth'] as Record<string, unknown>;
     expect(monthView['dayMaxEvents']).toBe(3);
     expect(monthView['eventDisplay']).toBe('block');
+  });
+
+  it('duration is never resizable on the grid, even for an editable viewer', () => {
+    // Duration is changed only through the reschedule form's input — no drag-resize handles.
+    const viewer = ref<AuthUser | null>({
+      id: 2, username: 'admin', email: null, role: 'Admin',
+      business_id: '1', is_active: true, must_change_password: false,
+    });
+    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
+    expect(calendarOptions.value.editable).toBe(true);
+    expect(calendarOptions.value.eventDurationEditable).toBe(false);
+    expect(calendarOptions.value.eventStartEditable).toBe(false);
+  });
+});
+
+describe('useAppointmentCalendar locale follows the app language', () => {
+  const viewer = ref<AuthUser | null>(null);
+  const handlers = {
+    onSelect: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onSelect'],
+    onEventClick: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventClick'],
+    onEventDrop: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventDrop'],
+    onEventResize: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventResize'],
+  };
+
+  afterEach(() => {
+    i18n.global.locale.value = 'es';
+  });
+
+  it('uses the Spanish locale bundle when the app language is es', () => {
+    i18n.global.locale.value = 'es';
+    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
+    expect((calendarOptions.value.locale as { code: string }).code).toBe('es');
+  });
+
+  it('switches to en when the app language changes, without recreating the calendar', () => {
+    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
+    i18n.global.locale.value = 'en';
+    // FullCalendar's built-in default is English, addressed by the plain 'en' code.
+    expect(calendarOptions.value.locale).toBe('en');
   });
 });
 

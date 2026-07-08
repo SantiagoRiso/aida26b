@@ -13,6 +13,7 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useToast } from '@/composables/useToast';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
+import TypeaheadSelect from '@/components/shared/TypeaheadSelect.vue';
 import SlotPicker from './SlotPicker.vue';
 import type { TimeInterval } from '@shared/ssot/domain/scheduling';
 
@@ -23,6 +24,8 @@ const props = defineProps<{
   prefillStart?: string;
   prefillProfessionalId?: number;
   prefillResourceId?: number;
+  // Booking for a specific client (e.g. from the client detail page) — locks the client field.
+  prefillClientId?: number;
 }>();
 
 const emit = defineEmits<{
@@ -47,13 +50,25 @@ interface FormState {
   description: string;
 }
 
+// starts_at is stored UTC; the date/time inputs (and the backend) work in local wall-clock time,
+// so derive them from a Date rather than slicing the ISO string (which would leak the UTC offset).
+function localDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+    time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+  };
+}
+const apptStart = props.appointment ? localDateTime(props.appointment.starts_at) : null;
+
 const form = reactive<FormState>({
-  client_user_id: String(props.appointment?.client_user_id ?? ''),
+  client_user_id: String(props.prefillClientId ?? props.appointment?.client_user_id ?? ''),
   professional_user_id: String(props.prefillProfessionalId ?? props.appointment?.professional_user_id ?? ''),
   service_id: String(props.appointment?.service_id ?? ''),
   resource_id: String(props.prefillResourceId ?? props.appointment?.resource_id ?? ''),
-  date: props.prefillDate ?? (props.appointment ? props.appointment.starts_at.slice(0, 10) : ''),
-  start: props.prefillStart ?? '',
+  date: props.prefillDate ?? apptStart?.date ?? '',
+  start: props.prefillStart ?? apptStart?.time ?? '',
   duration_minutes: String(props.appointment?.duration_minutes ?? ''),
   name: props.appointment?.name ?? '',
   description: props.appointment?.description ?? '',
@@ -69,15 +84,17 @@ const saving = ref(false);
 // prefilled start no longer forces manual mode.
 const manualOpen = ref(!!props.appointment);
 
-const slotSummary = computed(() => {
-  if (!form.start || !form.duration_minutes) return null;
-  return `${form.start} · ${form.duration_minutes} min`;
-});
-
 const { options: clientOptions } = useForeignKeyOptions({
   table: 'clients',
   valueField: 'id',
   labelField: 'display_name',
+});
+
+// Locked when booking from a specific client's page — the client isn't a choice here.
+const clientLocked = computed(() => props.prefillClientId != null);
+const lockedClientLabel = computed(() => {
+  const opt = clientOptions.value.find((o) => String(o.value) === form.client_user_id);
+  return opt?.label ?? form.client_user_id;
 });
 const { options: professionalOptions } = useForeignKeyOptions({
   table: 'professionals',
@@ -112,6 +129,8 @@ const singleProfessional = computed(() =>
 watch(
   availableProfessionalOptions,
   (opts) => {
+    // Options load async; an empty list means "not loaded yet" — don't clobber a prefilled value.
+    if (opts.length === 0) return;
     if (opts.length === 1) form.professional_user_id = opts[0].value;
     else if (!opts.some((o) => o.value === form.professional_user_id)) form.professional_user_id = '';
   },
@@ -155,6 +174,8 @@ const singleService = computed(() =>
 watch(
   availableServiceOptions,
   (opts) => {
+    // Options load async; an empty list means "not loaded yet" — don't clobber a prefilled value.
+    if (opts.length === 0) return;
     if (opts.length === 1) form.service_id = opts[0].value;
     else if (!opts.some((o) => o.value === form.service_id)) form.service_id = '';
   },
@@ -166,6 +187,8 @@ function handleSlotSelected(slot: TimeInterval) {
   const [sh, sm] = slot.start.split(':').map(Number);
   const [eh, em] = slot.end.split(':').map(Number);
   form.duration_minutes = String((eh * 60 + em) - (sh * 60 + sm));
+  // Reflect the pick in the normal time/duration inputs rather than a separate summary control.
+  manualOpen.value = true;
 }
 
 function buildBody(override: boolean): ScheduleBody {
@@ -209,7 +232,7 @@ async function save(override = false): Promise<void> {
   saving.value = false;
 
   if (!result.ok) {
-    toast.error(props.appointment ? 'toast.rescheduleFailed' : 'toast.scheduleFailed');
+    toast.error(props.appointment ? 'rescheduleFailed' : 'scheduleFailed');
     if (result.fields) {
       fieldErrors.value = result.fields;
       if (result.fields.start || result.fields.duration_minutes) manualOpen.value = true;
@@ -245,14 +268,21 @@ function submit() {
   <form class="flex flex-col gap-4" @submit.prevent="submit">
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-client">{{ t('calendar.clientLabel') }} *</label>
-      <select
+      <input
+        v-if="clientLocked"
         id="appt-client"
-        v-model="form.client_user_id"
-        class="rounded border border-border px-3 py-2 text-sm"
-      >
-        <option value="">— Seleccionar cliente —</option>
-        <option v-for="opt in clientOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
+        :value="lockedClientLabel"
+        disabled
+        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
+      />
+      <TypeaheadSelect
+        v-else
+        id="appt-client"
+        :model-value="form.client_user_id || null"
+        :options="clientOptions"
+        placeholder="Buscar cliente…"
+        @update:model-value="form.client_user_id = $event ?? ''"
+      />
       <FieldError :message="fieldErrors.client_user_id" />
     </div>
 
@@ -265,16 +295,14 @@ function submit() {
         disabled
         class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
       />
-      <select
+      <TypeaheadSelect
         v-else
         id="appt-prof"
-        v-model="form.professional_user_id"
-        class="rounded border border-border px-3 py-2 text-sm"
-        required
-      >
-        <option value="">— Seleccionar profesional —</option>
-        <option v-for="opt in availableProfessionalOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
+        :model-value="form.professional_user_id || null"
+        :options="availableProfessionalOptions"
+        placeholder="Buscar profesional…"
+        @update:model-value="form.professional_user_id = $event ?? ''"
+      />
       <FieldError :message="fieldErrors.professional_user_id" />
     </div>
 
@@ -332,18 +360,8 @@ function submit() {
       @slot-selected="handleSlotSelected"
     />
 
-    <div
-      v-if="slotSummary && !manualOpen"
-      class="flex items-center justify-between rounded-md border border-accent/40 bg-accent/5 px-3 py-2 text-sm"
-    >
-      <span>Horario: <strong>{{ slotSummary }}</strong></span>
-      <button type="button" class="text-xs text-accent hover:underline" @click="manualOpen = true">
-        Editar manualmente
-      </button>
-    </div>
-
     <button
-      v-if="!slotSummary && !manualOpen"
+      v-if="!manualOpen"
       type="button"
       class="self-start text-xs text-accent hover:underline"
       @click="manualOpen = true"

@@ -5,11 +5,12 @@ import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listRows } from '@/api/crud';
 import { checkConflict } from '@/api/scheduling';
-import { requestAppointment } from '@/api/appointments';
+import { requestAppointment, listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { TableKey } from '@shared/types/types';
 import { useCurrency, todayLocalISO } from '@/composables/useCurrency';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
+import TypeaheadSelect from '@/components/shared/TypeaheadSelect.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 
@@ -25,7 +26,7 @@ const { formatARS, formatDate } = useCurrency();
 type Step = 1 | 2 | 3 | 4;
 const step = ref<Step>(1);
 
-interface ProfRow { id: number; display_name: string }
+interface ProfRow { id: number; display_name: string; bio?: string | null }
 interface ServiceRow {
   id: number;
   name: string;
@@ -33,9 +34,13 @@ interface ServiceRow {
   default_duration_minutes: number;
   default_price_ars: string;
 }
+interface ProfServiceRow { professional_user_id: string; service_id: string }
 
 const professionals = ref<ProfRow[]>([]);
 const services = ref<ServiceRow[]>([]);
+const profServices = ref<ProfServiceRow[]>([]);
+// The client's own appointment history — drives the recency ordering of professionals.
+const myAppointments = ref<Appointment[]>([]);
 const loadingOptions = ref(false);
 
 const selectedProfId = ref<number | null>(null);
@@ -43,17 +48,82 @@ const selectedService = ref<ServiceRow | null>(null);
 
 async function loadOptions() {
   loadingOptions.value = true;
-  // Services are readable by all roles — use the generic CRUD list endpoint.
-  const [profRes, svcRes] = await Promise.all([
+  // Services and the professional↔service map are readable by all roles; the appointments list
+  // is server-scoped to the calling client.
+  const [profRes, svcRes, psRes, apptRes] = await Promise.all([
     listRows<ProfRow>('professionals' as TableKey),
     listRows<ServiceRow>('services' as TableKey),
+    listRows<ProfServiceRow>('professional_services' as TableKey, { limit: 500 }),
+    listAppointments({ limit: 200 }),
   ]);
   loadingOptions.value = false;
   if (profRes.ok) professionals.value = profRes.data;
   if (svcRes.ok) services.value = svcRes.data;
+  if (psRes.ok) profServices.value = psRes.data;
+  if (apptRes.ok) myAppointments.value = apptRes.data;
 }
 
 loadOptions();
+
+const serviceNameById = computed(() => {
+  const m = new Map<string, string>();
+  for (const s of services.value) m.set(String(s.id), s.name);
+  return m;
+});
+
+// Names of the services each professional offers — shown in the option and matched by the search.
+const serviceNamesByProf = computed(() => {
+  const m = new Map<string, string[]>();
+  for (const ps of profServices.value) {
+    const name = serviceNameById.value.get(String(ps.service_id));
+    if (!name) continue;
+    const key = String(ps.professional_user_id);
+    const list = m.get(key);
+    if (list) list.push(name);
+    else m.set(key, [name]);
+  }
+  return m;
+});
+
+// Most-recent interaction (requested or attended) per professional within the last 365 days,
+// as an epoch timestamp — higher means more recent, used to rank the picker.
+const recencyByProf = computed(() => {
+  const cutoff = Date.now() - 365 * 86400000;
+  const m = new Map<string, number>();
+  for (const a of myAppointments.value) {
+    if (a.professional_user_id == null) continue;
+    const t = new Date(a.starts_at).getTime();
+    if (t < cutoff) continue;
+    const key = String(a.professional_user_id);
+    const prev = m.get(key);
+    if (prev == null || t > prev) m.set(key, t);
+  }
+  return m;
+});
+
+interface ProfOption { value: string; label: string; bio: string | null; services: string }
+
+// Professionals I've seen most recently first (within a year), then everyone else alphabetically.
+const professionalOptions = computed<ProfOption[]>(() => {
+  const recency = recencyByProf.value;
+  const ranked = professionals.value.map((p) => {
+    const key = String(p.id);
+    return {
+      value: key,
+      label: p.display_name,
+      bio: p.bio ?? null,
+      services: (serviceNamesByProf.value.get(key) ?? []).join(', '),
+      recency: recency.get(key) ?? null,
+    };
+  });
+  ranked.sort((a, b) => {
+    if (a.recency != null && b.recency != null) return b.recency - a.recency;
+    if (a.recency != null) return -1;
+    if (b.recency != null) return 1;
+    return a.label.localeCompare(b.label);
+  });
+  return ranked.map(({ recency: _r, ...rest }) => rest);
+});
 
 const selectedDate = ref<string>('');
 const selectedStart = ref<string | null>(null);
@@ -190,16 +260,22 @@ const today = todayLocalISO();
       <div v-else class="space-y-4">
         <div>
           <label class="mb-1 block text-sm font-medium" for="prof-select">Profesional</label>
-          <select
+          <TypeaheadSelect
             id="prof-select"
-            v-model="selectedProfId"
-            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            :model-value="selectedProfId != null ? String(selectedProfId) : null"
+            :options="professionalOptions"
+            :extra-search="(o) => `${o.services} ${o.bio ?? ''}`"
+            placeholder="Buscá por nombre, servicio o especialidad…"
+            @update:model-value="selectedProfId = $event ? Number($event) : null"
           >
-            <option :value="null" disabled>Seleccioná un profesional</option>
-            <option v-for="p in professionals" :key="p.id" :value="p.id">
-              {{ p.display_name }}
-            </option>
-          </select>
+            <template #option="{ option }">
+              <div class="flex items-baseline gap-2">
+                <span class="flex-shrink-0 font-medium">{{ option.label }}</span>
+                <span v-if="option.bio" class="min-w-0 truncate text-xs text-neutral">{{ option.bio }}</span>
+              </div>
+              <div v-if="option.services" class="truncate text-sm text-accent">{{ option.services }}</div>
+            </template>
+          </TypeaheadSelect>
         </div>
 
         <div>

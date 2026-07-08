@@ -1,5 +1,6 @@
 import { computed } from 'vue';
 import type { Ref } from 'vue';
+import { i18n } from '@/i18n';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
@@ -117,6 +118,11 @@ export function useAppointmentCalendar(
   // Only authenticated non-Client viewers may drag/resize — null viewer is read-only.
   const editable = computed(() => !!viewer.value && viewer.value.role !== 'Client');
 
+  // Follow the app language: es uses the imported locale bundle; en is FullCalendar's built-in default.
+  // Read the shared i18n instance's locale ref (the ui store's single source of truth) rather than
+  // useI18n() so the composable works outside a component setup context too.
+  const locale = i18n.global.locale;
+
   // Snap the live drag preview to the professional's slot lattice: grid rows ARE the slots
   // (row height + labels = the step) and slotMinTime aligns so rows sit on real slot starts,
   // so a drag jumps slot-to-slot. Sobreturno mode → 5-min sub-steps. No lattice (mixed
@@ -147,6 +153,19 @@ export function useAppointmentCalendar(
     return { min: `${pad(minHour)}:00:00`, max: `${pad(maxHour)}:00:00` };
   });
 
+  // Round the grid's bottom UP to the professional's slot lattice. Otherwise the last lattice row
+  // (e.g. 20:40–21:30 on a 50-min grid) is only partly valid time below a non-aligned slotMaxTime
+  // (21:00), leaving a dead sub-row the availability overlay can't cover.
+  const slotMaxTime = computed(() => {
+    const gran = hmsToMinutes(snap.value.slotDuration);
+    const origin = hmsToMinutes(snap.value.slotMinTime);
+    const rawMax = hmsToMinutes(timeBounds.value.max);
+    if (!gran || rawMax <= origin) return timeBounds.value.max;
+    const aligned = Math.min(origin + Math.ceil((rawMax - origin) / gran) * gran, 24 * 60);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(Math.floor(aligned / 60))}:${pad(aligned % 60)}:00`;
+  });
+
   const calendarOptions = computed<CalendarOptions>(() => ({
     plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
     initialView: 'timeGridWeek',
@@ -155,7 +174,7 @@ export function useAppointmentCalendar(
       center: 'title',
       right: 'timeGridDay,timeGridWeek,dayGridMonth',
     },
-    locale: esLocale,
+    locale: locale.value === 'en' ? 'en' : esLocale,
     firstDay: 1,
     allDaySlot: false,
     slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
@@ -164,7 +183,7 @@ export function useAppointmentCalendar(
     expandRows: true,
     nowIndicator: true,
     slotMinTime: snap.value.slotMinTime,
-    slotMaxTime: timeBounds.value.max,
+    slotMaxTime: slotMaxTime.value,
     slotDuration: snap.value.slotDuration,
     slotLabelInterval: snap.value.slotLabelInterval,
     // Day/week header dates and month day numbers link into the day view.
@@ -186,9 +205,10 @@ export function useAppointmentCalendar(
     selectable: editable.value,
     editable: editable.value,
     // The staff view drives event moves itself (useCustomDrag) so a sobreturno can snap onto real
-    // slots mid-drag — FC's delta-based move can't. Resize stays native.
+    // slots mid-drag — FC's delta-based move can't. Duration is changed through the reschedule
+    // form's input, never by dragging a resize handle on the grid.
     eventStartEditable: false,
-    eventDurationEditable: editable.value,
+    eventDurationEditable: false,
 
     events: appointments.value.map((a) => apptToEvent(a, decorators)),
 

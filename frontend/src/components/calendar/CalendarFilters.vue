@@ -74,7 +74,9 @@ function emitFilters() {
   <div class="flex flex-wrap items-center gap-2">
     <span class="text-sm font-semibold text-neutral">{{ t('calendar.filterBy') }}:</span>
 
+    <!-- "Todos" only makes sense when there is more than one professional to aggregate. -->
     <button
+      v-if="professionals.length > 1"
       type="button"
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === null

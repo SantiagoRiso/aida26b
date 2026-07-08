@@ -98,8 +98,14 @@ defineExpose({
   opacity: 1 !important;
 }
 
-/* Time/day cells read as actionable: pointer cursor + a clearer hover tint than FC's default. */
-:deep(.fc-timegrid-col-frame),
+/* Past time — a flat neutral wash (no stripes) so it reads as de-emphasized/unbookable. */
+:deep(.fc-slot-past) {
+  background: rgba(100, 116, 139, 0.18) !important;
+  opacity: 1 !important;
+}
+
+/* Month day cells read as actionable. The timegrid cursor is driven from JS (onGridPointerMove)
+   instead, so past slots don't show the actionable pointer. */
 :deep(.fc-daygrid-day-frame) {
   cursor: pointer;
 }
