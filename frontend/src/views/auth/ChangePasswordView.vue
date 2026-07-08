@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
@@ -13,20 +13,32 @@ const auth = useAuthStore();
 const currentPassword = ref('');
 const newPassword = ref('');
 const loading = ref(false);
-const fieldError = ref('');
+const serverError = ref('');
+
+// A new password that just repeats the current one is rejected — surface it as they type,
+// not only when they submit.
+const samePassword = computed(
+  () => newPassword.value !== '' && newPassword.value === currentPassword.value,
+);
+
+// A stale server error shouldn't linger once they start editing.
+watch([currentPassword, newPassword], () => {
+  serverError.value = '';
+});
+
+const errorMessage = computed(() =>
+  samePassword.value ? t('auth.samePasswordError') : serverError.value,
+);
 
 async function submit() {
-  fieldError.value = '';
-  if (newPassword.value === currentPassword.value) {
-    fieldError.value = t('auth.samePasswordError');
-    return;
-  }
+  if (samePassword.value) return; // warning already visible; nothing to submit
+  serverError.value = '';
   loading.value = true;
   try {
     const result = await auth.changePassword(currentPassword.value, newPassword.value);
     if (!result.ok) {
       // Never expose raw error codes to the user.
-      fieldError.value = result.message ?? t('toast.genericError');
+      serverError.value = result.message ?? t('toast.genericError');
       return;
     }
     if (auth.user?.role === 'Client') {
@@ -69,7 +81,7 @@ async function logout() {
             required
             :class="[
               'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-              fieldError ? 'border-destructive' : 'border-border',
+              errorMessage ? 'border-destructive' : 'border-border',
             ]"
           />
         </div>
@@ -86,13 +98,13 @@ async function logout() {
             required
             :class="[
               'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-              fieldError ? 'border-destructive' : 'border-border',
+              errorMessage ? 'border-destructive' : 'border-border',
             ]"
           />
-          <FieldError :message="fieldError" />
+          <FieldError :message="errorMessage" />
         </div>
 
-        <AppButton type="submit" variant="primary" :loading="loading" class="w-full">
+        <AppButton type="submit" variant="primary" :loading="loading" :disabled="samePassword" class="w-full">
           {{ t('actions.changePassword') }}
         </AppButton>
       </form>

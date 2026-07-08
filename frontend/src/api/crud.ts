@@ -40,11 +40,13 @@ export function listRows<T = Record<string, unknown>>(
   return apiFetch<T[]>(`/${table}${buildQuery(params)}`);
 }
 
+// Single-row read uses the `?id=` query convention (the generic GET route is /api/:table
+// only — there is no /api/:table/:id GET). Assumes a single 'id' primary key.
 export function getRow<T = Record<string, unknown>>(
   table: TableKey,
   id: string | number,
 ): Promise<ApiResult<T>> {
-  return apiFetch<T>(`/${table}/${id}`);
+  return apiFetch<T>(`/${table}?id=${encodeURIComponent(id)}`);
 }
 
 export function createRow<T = Record<string, unknown>>(

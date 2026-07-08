@@ -35,14 +35,14 @@ const fieldErrors = ref<Record<string, string>>({});
 const appointments = ref<Appointment[]>([]);
 const loadingAppointments = ref(false);
 
-// Receptionist can only create appointment-linked charges; Admin has broader access.
-// Professional is not in ledger roleRequired.create.
+// Only receptionists are restricted (appointment-linked charges). Admin and Professional — who
+// ranks above a receptionist — may post any entry type; the server scopes professionals to their
+// own clients.
 const role = computed(() => auth.user?.role);
-const isAdmin = computed(() => role.value === 'Admin');
+const isReceptionist = computed(() => role.value === 'Receptionist');
 
-// Mirrors the server write matrix: receptionists get charge only, admins get all types.
 const availableTypes = computed(() => {
-  if (!isAdmin.value) {
+  if (isReceptionist.value) {
     return LEDGER_ENTRY_TYPES.filter((t) => t.value === 'charge');
   }
   return LEDGER_ENTRY_TYPES;
@@ -50,8 +50,8 @@ const availableTypes = computed(() => {
 
 const showAppointmentPicker = computed(() => entryType.value === 'charge');
 
-// Non-Admin charges must be linked to an appointment (enforced server-side too).
-const appointmentRequired = computed(() => !isAdmin.value && entryType.value === 'charge');
+// A receptionist's charge must be linked to an appointment (enforced server-side too).
+const appointmentRequired = computed(() => isReceptionist.value && entryType.value === 'charge');
 
 watch(appointmentId, (id) => {
   if (id && entryType.value === 'charge') {

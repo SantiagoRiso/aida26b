@@ -5,12 +5,14 @@ import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import type { EventClickArg } from '@fullcalendar/core';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import DetailPanel from '@/components/shared/DetailPanel.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 
@@ -43,13 +45,21 @@ function professionalNameFor(appt: Appointment): string | null {
   return professionalOptions.value.find((o) => o.value === String(appt.professional_user_id))?.label ?? null;
 }
 
-// Clients cannot create, drag, or resize — read-only calendar, handlers are no-ops.
+// Clicking a calendar event opens a read-only detail (clients can't edit/drag/resize).
+const selectedAppt = ref<Appointment | null>(null);
+const detailOpen = ref(false);
 const { calendarOptions } = useAppointmentCalendar(
   appointments,
   computed(() => auth.user),
   {
     onSelect: () => {},
-    onEventClick: () => {},
+    onEventClick: (arg: EventClickArg) => {
+      const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
+      if (appt) {
+        selectedAppt.value = appt;
+        detailOpen.value = true;
+      }
+    },
     onEventDrop: () => {},
     onEventResize: () => {},
   },
@@ -226,6 +236,49 @@ const past = computed(() =>
       </section>
     </template>
   </div>
+
+  <DetailPanel
+    :open="detailOpen"
+    title="Detalle del turno"
+    variant="side"
+    @close="detailOpen = false"
+    @after-leave="selectedAppt = null"
+  >
+    <div v-if="selectedAppt" class="space-y-3 text-sm">
+      <StatusBadge :state="selectedAppt.state" />
+      <div>
+        <p class="text-xs text-neutral">Profesional</p>
+        <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? `Turno #${selectedAppt.id}` }}</p>
+      </div>
+      <div v-if="selectedAppt.state !== 'requested'">
+        <p class="text-xs text-neutral">Fecha y hora</p>
+        <p class="font-semibold">{{ formatDateTime(selectedAppt.starts_at) }} · {{ selectedAppt.duration_minutes }}min</p>
+      </div>
+      <div v-else>
+        <p class="text-xs text-neutral">Estado</p>
+        <p class="font-semibold">Pendiente de aprobación</p>
+      </div>
+      <div v-if="selectedAppt.name">
+        <p class="text-xs text-neutral">Detalle</p>
+        <p>{{ selectedAppt.name }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-neutral">Precio</p>
+        <p class="font-semibold">{{ formatARS(selectedAppt.price) }}</p>
+      </div>
+      <p v-if="cancelBlockedReason(selectedAppt)" class="text-xs text-destructive" role="alert">
+        {{ cancelBlockedReason(selectedAppt) }}
+      </p>
+      <button
+        v-if="['requested', 'scheduled'].includes(selectedAppt.state) && isCancelable(selectedAppt)"
+        type="button"
+        class="min-h-[36px] w-full rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
+        @click="() => { const a = selectedAppt!; detailOpen = false; requestCancel(a); }"
+      >
+        {{ selectedAppt.state === 'requested' ? 'Retirar solicitud' : 'Cancelar turno' }}
+      </button>
+    </div>
+  </DetailPanel>
 
   <ConfirmDialog
     :open="cancelTarget !== null"

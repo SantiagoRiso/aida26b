@@ -91,7 +91,7 @@ async function saveNote() {
     editingNote.value = false;
     emit('mutated', result.data);
   } else {
-    toast.error('toast.genericError');
+    toast.error('genericError');
   }
 }
 
@@ -104,7 +104,7 @@ async function doTransition(to: string) {
     emit('mutated', result.data);
   } else {
     // Defensive: the button guard should already exclude illegal transitions the server 422s.
-    toast.error('toast.genericError');
+    toast.error('genericError');
   }
 }
 
@@ -159,7 +159,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
 </script>
 
 <template>
-  <DetailPanel :open="open" :title="t('calendar.detailTitle')" @close="emit('close')">
+  <DetailPanel :open="open" :title="t('calendar.detailTitle')" variant="side" @close="emit('close')">
     <div v-if="appointment" class="flex flex-col gap-4">
       <div class="flex items-center gap-2">
         <span
