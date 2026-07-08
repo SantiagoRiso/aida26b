@@ -233,6 +233,7 @@ test('scheduler-schema: all required scheduler tables exist', async () => {
       'resources',
       'services',
       'client_professional_services',
+      'professional_services',
       'schedules',
       'schedule_exceptions',
       'appointments',
@@ -265,7 +266,6 @@ test('scheduler-schema: removed tables do not exist after migration', async () =
     const removedTables = [
       'availability_blocks',
       'availability_exceptions',
-      'professional_services',
       'appointment_resources',
     ];
 
@@ -433,6 +433,8 @@ test('scheduler-schema: FK constraints are valid — businesses and auth.users r
     assert.equal(await fkExists(pool, 'public', 'ledger_entries', 'client_user_id'),                  true, 'ledger_entries.client_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'client_professional_services', 'client_user_id'),    true, 'client_professional_services.client_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'client_professional_services', 'professional_user_id'), true, 'client_professional_services.professional_user_id FK must exist');
+    assert.equal(await fkExists(pool, 'public', 'professional_services', 'professional_user_id'),     true, 'professional_services.professional_user_id FK must exist');
+    assert.equal(await fkExists(pool, 'public', 'professional_services', 'service_id'),               true, 'professional_services.service_id FK must exist');
   } finally {
     await pool.end();
   }

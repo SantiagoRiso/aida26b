@@ -110,6 +110,39 @@ export function mountAuditRoutes(
   });
 
   // A mismatched :id is cross-tenant — returns 404 to hide existence.
+  app.get('/api/businesses/:id/settings', guards.auth, guards.passwordReady, async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+
+    if (user.role !== 'Admin') {
+      await guards.audit(req, 'permission_denied', 'denied', {
+        path: req.path,
+        method: req.method,
+      });
+      return sendError(res, 403, 'forbidden', 'Admin access required');
+    }
+
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'A business context is required');
+    }
+
+    const urlId = Number(req.params.id);
+    if (urlId !== user.business_id) {
+      return sendError(res, 404, 'not_found', 'Business not found');
+    }
+
+    const result = await pool.query<{ id: string; cancellation_cutoff_hours: number }>(
+      `SELECT id, cancellation_cutoff_hours FROM businesses WHERE id = $1`,
+      [user.business_id],
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 404, 'not_found', 'Business not found');
+    }
+
+    return sendData(res, result.rows[0]);
+  });
+
+  // A mismatched :id is cross-tenant — returns 404 to hide existence.
   // Only cancellation_cutoff_hours is writable here.
   app.patch('/api/businesses/:id/settings', guards.auth, guards.passwordReady, async (req, res) => {
     const user = (req as AuthedRequest).user!;

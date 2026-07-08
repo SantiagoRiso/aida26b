@@ -267,6 +267,18 @@ async function upsertGrant(
   );
 }
 
+async function upsertProfessionalService(
+  pool: PoolLike,
+  professionalUserId: string,
+  serviceId: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO professional_services (professional_user_id, service_id)
+     VALUES ($1, $2) ON CONFLICT (professional_user_id, service_id) DO NOTHING`,
+    [professionalUserId, serviceId],
+  );
+}
+
 async function upsertAppointment(
   pool: PoolLike,
   opts: {
@@ -419,7 +431,10 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro'] },  '2026-07-09', { isUnavailable: true, reason: '9 de julio — feriado nacional' });
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro2'] }, '2026-07-15', { isUnavailable: false, startTime: '14:00', endTime: '18:00', granularityMinutes: 30, reason: 'Turno modificado — tarde especial' });
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro3'] }, '2026-07-09', { isUnavailable: true, reason: 'Capacitación' });
-  await upsertScheduleException(pool, { resourceId: room1 }, '2026-07-10', { isUnavailable: true, reason: 'Mantenimiento de consultorio' });
+  // Two-day maintenance closure on Consultorio 3, on normally-open weekdays flanked by open days —
+  // demonstrates the resource-availability overlay (grey-blocked island against green availability).
+  await upsertScheduleException(pool, { resourceId: room3 }, '2026-07-08', { isUnavailable: true, reason: 'Mantenimiento de consultorio' });
+  await upsertScheduleException(pool, { resourceId: room3 }, '2026-07-09', { isUnavailable: true, reason: 'Mantenimiento de consultorio' });
 
   await upsertClientPrice(pool, uids['demo_client'],         uids['demo_pro'],  svcSesion, '6500.00');
   await upsertClientPrice(pool, uids['demo_client_overdue'], uids['demo_pro'],  svcSesion, '8000.00');
@@ -428,8 +443,16 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
 
   await upsertGrant(pool, uids['demo_pro'],  uids['demo_recep']);
   await upsertGrant(pool, uids['demo_pro2'], uids['demo_recep']);
-  // Professional-as-grantee: a professional holds a grant on another professional's calendar.
-  await upsertGrant(pool, uids['demo_pro'],  uids['demo_pro5']);
+
+  // Each professional offers only the service that matches their specialty (drives the booking
+  // form's service list). Covers every (professional, service) pair used by the seeded appointments.
+  await upsertProfessionalService(pool, uids['demo_pro'],   svcSesion);
+  await upsertProfessionalService(pool, uids['demo_pro2'],  svcSesion);
+  await upsertProfessionalService(pool, uids['demo_pro3'],  svcNutricion);
+  await upsertProfessionalService(pool, uids['demo_pro4'],  svcKineso);
+  await upsertProfessionalService(pool, uids['demo_pro5'],  svcSesion);
+  await upsertProfessionalService(pool, uids['demo_pro6'],  svcMedico);
+  await upsertProfessionalService(pool, uids['demo_reset'], svcSesion);
 
   const appt1 = await upsertAppointment(pool, {
     clientUserId: uids['demo_client'], professionalUserId: uids['demo_pro'],

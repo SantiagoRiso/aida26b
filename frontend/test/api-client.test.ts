@@ -156,6 +156,42 @@ describe('403 on any route', () => {
   });
 });
 
+describe('non-JSON (HTML) response guard', () => {
+  it('returns ok:false bad_response instead of throwing on an HTML body', async () => {
+    // A stale-cached app-shell or dev-proxy hiccup can serve HTML for an /api GET.
+    const res = new Response('<!doctype html><html><body>oops</body></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res));
+    const { apiFetch } = await importFresh();
+    const result = await apiFetch('/professionals?limit=200');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('bad_response');
+      expect(result.status).toBe(200);
+    }
+  });
+});
+
+describe('cache policy', () => {
+  it('requests API data with cache: no-store', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { apiFetch } = await importFresh();
+    await apiFetch('/professionals');
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/professionals'),
+      expect.objectContaining({ cache: 'no-store' }),
+    );
+  });
+});
+
 describe('204 No Content response', () => {
   it('returns ok:true with undefined data without throwing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));

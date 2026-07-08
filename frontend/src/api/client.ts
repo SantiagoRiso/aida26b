@@ -35,7 +35,9 @@ export async function apiFetch<T>(
     ? { 'Content-Type': 'application/json', ...(options.headers as Record<string, string> | undefined) }
     : (options.headers ?? {});
 
-  const response = await fetch(`/api${path}`, { ...options, headers, credentials: 'same-origin' });
+  // API responses carry live data and must never be served from the HTTP cache. A cached stale
+  // response (e.g. an index.html served during a dev-proxy hiccup) otherwise poisons GETs.
+  const response = await fetch(`/api${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
 
   if (response.status === 401) {
     if (authMode === 'authenticated') {
@@ -76,6 +78,11 @@ export async function apiFetch<T>(
   }
 
   const envelope = body as Envelope<T>;
+  // A non-enveloped body (e.g. an HTML error page) has no `success` field — fail cleanly rather
+  // than dereferencing envelope.error and throwing an opaque TypeError up through callers.
+  if (typeof envelope !== 'object' || envelope === null || !('success' in envelope)) {
+    return { ok: false, status: response.status, code: 'bad_response', message: `Unexpected response (${response.status})` };
+  }
   if (!envelope.success) {
     return {
       ok: false,

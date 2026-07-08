@@ -528,6 +528,29 @@ describe('POST /api/appointments/:id/reschedule', () => {
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
+
+  test('rejects a reschedule whose start + duration crosses midnight (422)', async () => {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, '${mondayAt('09:00')}', 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId],
+    );
+    const id = Number(r.rows[0].id);
+
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+      date: MONDAY,
+      start: '23:30',
+      duration_minutes: 60,
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+    expect(res.body.error.fields.duration_minutes).toBeTruthy();
+
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
+  });
 });
 
 describe('PATCH /api/appointments/:id — terminal freeze (D-12)', () => {

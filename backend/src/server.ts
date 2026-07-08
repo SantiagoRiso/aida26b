@@ -322,6 +322,18 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       return res.status(401).json({ error: 'Invalid current password' });
     }
 
+    // Reusing the current password defeats a forced reset, so reject it.
+    const sameAsCurrent = await auth.verifyPassword(
+      newPassword,
+      row.password_salt,
+      row.password_hash
+    );
+    if (sameAsCurrent) {
+      return res.status(400).json({
+        error: 'New password must be different from the current password',
+      });
+    }
+
     const { passwordHash, passwordSalt } = await auth.hashPassword(newPassword);
 
     const result = await pool.query(
@@ -454,6 +466,11 @@ app.post(
         });
       }
 
+      // An admin deactivating themselves would lock the business out of its own admin surface.
+      if (userId === sessionUser.id) {
+        return res.status(400).json({ error: 'You cannot deactivate your own account' });
+      }
+
       const result = await pool.query(
         `UPDATE auth.users
          SET is_active = false, deleted_at = now(), deleted_by_user_id = $1, updated_at = now()
@@ -498,6 +515,14 @@ app.post(
       if (sessionUser.business_id == null) {
         return res.status(400).json({
           error: 'A business context is required to manage users',
+        });
+      }
+
+      // A self-reset forces must_change_password on the admin and kills their sessions,
+      // locking them out; admins change their own password via /auth/change-password.
+      if (userId === sessionUser.id) {
+        return res.status(400).json({
+          error: 'You cannot reset your own password here; use change password instead',
         });
       }
 

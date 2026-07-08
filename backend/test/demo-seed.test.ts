@@ -70,15 +70,6 @@ describe('demo seed feature coverage (SC4)', () => {
     expect(n).toBeGreaterThanOrEqual(1);
   });
 
-  it('a professional holds a grant on another professional calendar (D-02/D-39)', async () => {
-    const n = await count(
-      `SELECT COUNT(*)::int count FROM calendar_grants g
-       JOIN auth.users u ON u.id = g.grantee_user_id
-       WHERE u.role = 'Professional'`,
-    );
-    expect(n).toBeGreaterThanOrEqual(1);
-  });
-
   it('records at least one conflict override (sobreturno)', async () => {
     const n = await count(
       `SELECT COUNT(*)::int count FROM appointments

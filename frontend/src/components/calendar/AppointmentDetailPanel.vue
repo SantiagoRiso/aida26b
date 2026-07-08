@@ -3,9 +3,10 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { TRANSITION_MAP, TERMINAL_STATES, assertValidTransition } from '@shared/ssot/domain/scheduling';
 import type { Appointment } from '@/api/appointments';
-import { transitionAppointment, patchAppointment, approveAppointment } from '@/api/appointments';
+import { transitionAppointment, patchAppointment } from '@/api/appointments';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 
@@ -30,6 +31,28 @@ const staffNoteEdit = ref('');
 const editingNote = ref(false);
 const saving = ref(false);
 
+// Names for the appointment's ids. Clients cannot list the clients table (and don't
+// need their own name repeated), so that lookup is staff-only.
+const isStaffViewer = auth.user?.role !== 'Client';
+const { options: professionalOptions } = useForeignKeyOptions({
+  table: 'professionals', valueField: 'id', labelField: 'display_name',
+});
+const { options: serviceOptions } = useForeignKeyOptions({
+  table: 'services', valueField: 'id', labelField: 'name',
+});
+const { options: clientOptions } = isStaffViewer
+  ? useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' })
+  : { options: ref([]) };
+
+function nameFor(options: { value: string; label: string }[], id: number | null): string | null {
+  if (id == null) return null;
+  return options.find((o) => o.value === String(id))?.label ?? null;
+}
+
+const clientName = computed(() => nameFor(clientOptions.value, props.appointment?.client_user_id ?? null));
+const professionalName = computed(() => nameFor(professionalOptions.value, props.appointment?.professional_user_id ?? null));
+const serviceName = computed(() => nameFor(serviceOptions.value, props.appointment?.service_id ?? null));
+
 const availableTransitions = computed((): string[] => {
   const appt = props.appointment;
   if (!appt) return [];
@@ -48,9 +71,6 @@ const isTerminal = computed(() =>
   props.appointment ? TERMINAL_STATES.has(props.appointment.state) : false,
 );
 
-const canEditCosmetic = computed(
-  () => auth.user?.role !== 'Client' && !isTerminal.value,
-);
 const canEditNote = computed(() => auth.user?.role !== 'Client');
 // requested→scheduled routes through the conflict-aware approve endpoint, not a plain transition.
 const showApprove = computed(
@@ -156,6 +176,21 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
       </div>
 
       <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+        <template v-if="clientName">
+          <dt class="font-semibold text-neutral">{{ t('calendar.clientLabel') }}</dt>
+          <dd>{{ clientName }}</dd>
+        </template>
+
+        <template v-if="professionalName">
+          <dt class="font-semibold text-neutral">{{ t('calendar.professionalLabel') }}</dt>
+          <dd>{{ professionalName }}</dd>
+        </template>
+
+        <template v-if="serviceName">
+          <dt class="font-semibold text-neutral">{{ t('calendar.serviceLabel') }}</dt>
+          <dd>{{ serviceName }}</dd>
+        </template>
+
         <dt class="font-semibold text-neutral">{{ t('calendar.dateLabel') }}</dt>
         <dd>{{ fmtDate(appointment.starts_at) }}</dd>
 

@@ -120,18 +120,33 @@ async function submitReset() {
 
 <template>
   <div>
-    <div class="mb-4 flex items-center justify-between">
-      <h1 class="text-2xl font-semibold">{{ label({ es: 'Usuarios', en: 'Users' }) }}</h1>
-      <AppButton @click="openCreate">
-        {{ label({ es: 'Agregar usuario', en: 'Add user' }) }}
-      </AppButton>
-    </div>
-
     <GenericTable
       :key="reloadKey"
       :table-key="TABLE_KEY"
-      @edit="openReset"
-    />
+    >
+      <template #header-actions>
+        <AppButton @click="openCreate">
+          {{ label({ es: 'Agregar usuario', en: 'Add user' }) }}
+        </AppButton>
+      </template>
+      <template #row-actions="{ row }">
+        <button
+          type="button"
+          class="mr-3 text-accent hover:underline text-xs"
+          @click.stop="openReset(row)"
+        >
+          {{ label({ es: 'Resetear contraseña', en: 'Reset password' }) }}
+        </button>
+        <button
+          v-if="row.is_active"
+          type="button"
+          class="mr-2 text-destructive hover:underline text-xs"
+          @click.stop="requestDeactivate(row)"
+        >
+          {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
+        </button>
+      </template>
+    </GenericTable>
 
     <DetailPanel
       :open="createPanelOpen"

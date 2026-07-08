@@ -6,6 +6,12 @@ export interface BusinessSettings {
   cancellation_cutoff_hours: number;
 }
 
+export function getSettings(
+  businessId: string | number,
+): Promise<ApiResult<BusinessSettings>> {
+  return apiFetch<BusinessSettings>(`/businesses/${businessId}/settings`);
+}
+
 export function updateSettings(
   businessId: string | number,
   body: { cancellation_cutoff_hours: number },

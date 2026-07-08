@@ -430,6 +430,77 @@ describe('change-password session invalidation', () => {
     const meOther = await request('/api/auth/me', { cookie: otherCookie });
     expect(meOther.status).toBe(401);
   });
+
+  test('rejects a new password identical to the current one (400)', async () => {
+    const createRes = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'reuse1', password: 'reusepass1', role: 'Receptionist' },
+    });
+    expect(createRes.status).toBe(201);
+    const userId = (createRes.body as { id: number }).id;
+
+    await testPool.query(
+      `UPDATE auth.users SET must_change_password = false WHERE id = $1`,
+      [userId]
+    );
+    const cookie = await login('reuse1', 'reusepass1');
+
+    const res = await request('/api/auth/change-password', {
+      method: 'POST',
+      cookie,
+      body: { current_password: 'reusepass1', new_password: 'reusepass1' },
+    });
+    expect(res.status).toBe(400);
+
+    // The original password must remain valid — a no-op change is rejected, not applied.
+    const stillValid = await request('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'reuse1', password: 'reusepass1' },
+    });
+    expect(stillValid.status).toBe(200);
+  });
+});
+
+describe('self-protection', () => {
+  test('admin cannot deactivate their own account (400) and stays active', async () => {
+    const idRow = await testPool.query<{ id: string }>(
+      `SELECT id FROM auth.users WHERE username = 'testadmin'`
+    );
+    const adminId = idRow.rows[0].id;
+
+    const res = await request(`/api/admin/users/${adminId}/deactivate`, {
+      method: 'POST',
+      cookie: adminCookie,
+    });
+    expect(res.status).toBe(400);
+
+    const row = await testPool.query<{ is_active: boolean }>(
+      `SELECT is_active FROM auth.users WHERE id = $1`,
+      [adminId]
+    );
+    expect(row.rows[0].is_active).toBe(true);
+  });
+
+  test('admin cannot reset their own password (400); original password still works', async () => {
+    const idRow = await testPool.query<{ id: string }>(
+      `SELECT id FROM auth.users WHERE username = 'testadmin'`
+    );
+    const adminId = idRow.rows[0].id;
+
+    const res = await request(`/api/admin/users/${adminId}/reset-password`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { password: 'whatever12' },
+    });
+    expect(res.status).toBe(400);
+
+    const stillValid = await request('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'testadmin', password: 'adminpass1' },
+    });
+    expect(stillValid.status).toBe(200);
+  });
 });
 
 describe('role immutability', () => {

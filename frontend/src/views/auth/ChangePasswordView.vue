@@ -17,6 +17,10 @@ const fieldError = ref('');
 
 async function submit() {
   fieldError.value = '';
+  if (newPassword.value === currentPassword.value) {
+    fieldError.value = t('auth.samePasswordError');
+    return;
+  }
   loading.value = true;
   try {
     const result = await auth.changePassword(currentPassword.value, newPassword.value);
@@ -33,6 +37,12 @@ async function submit() {
   } finally {
     loading.value = false;
   }
+}
+
+// A user forced to change their password is otherwise trapped on this screen; give them a way out.
+async function logout() {
+  await auth.logout();
+  await router.push({ name: 'login' });
 }
 </script>
 
@@ -86,6 +96,14 @@ async function submit() {
           {{ t('actions.changePassword') }}
         </AppButton>
       </form>
+
+      <button
+        type="button"
+        class="mt-4 w-full text-center text-sm text-neutral hover:underline"
+        @click="logout"
+      >
+        {{ t('nav.logout') }}
+      </button>
     </div>
   </div>
 </template>

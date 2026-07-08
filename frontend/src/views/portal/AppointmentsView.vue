@@ -7,6 +7,7 @@ import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
@@ -33,6 +34,15 @@ async function load() {
 
 onMounted(load);
 
+// For a client, the professional's name is the informative default — their own name
+// (or "Turno #id") says nothing.
+const { options: professionalOptions } = useForeignKeyOptions({
+  table: 'professionals', valueField: 'id', labelField: 'display_name',
+});
+function professionalNameFor(appt: Appointment): string | null {
+  return professionalOptions.value.find((o) => o.value === String(appt.professional_user_id))?.label ?? null;
+}
+
 // Clients cannot create, drag, or resize — read-only calendar, handlers are no-ops.
 const { calendarOptions } = useAppointmentCalendar(
   appointments,
@@ -42,6 +52,11 @@ const { calendarOptions } = useAppointmentCalendar(
     onEventClick: () => {},
     onEventDrop: () => {},
     onEventResize: () => {},
+  },
+  {
+    fallbackTitle: professionalNameFor,
+    tooltip: (appt) =>
+      [professionalNameFor(appt), t(`status.${appt.state}`)].filter(Boolean).join(' · '),
   },
 );
 
@@ -91,7 +106,7 @@ async function confirmCancel() {
     await load();
   } else {
     const msg =
-      res.error?.code === 'outside_cutoff'
+      res.code === 'outside_cutoff'
         ? 'No se puede cancelar: el turno ya está dentro del plazo de cancelación.'
         : t('toast.genericError');
     ui.toast('error', 'genericError');
@@ -127,11 +142,6 @@ const past = computed(() =>
     />
 
     <template v-else>
-      <section aria-label="Calendario de mis turnos">
-        <h2 class="mb-3 text-lg font-semibold">Calendario</h2>
-        <CalendarView :options="calendarOptions" />
-      </section>
-
       <section v-if="upcoming.length > 0" aria-label="Próximos turnos">
         <h2 class="mb-3 text-lg font-semibold">Próximos turnos</h2>
         <ul class="space-y-3">
@@ -152,7 +162,7 @@ const past = computed(() =>
                   {{ formatDateTime(appt.starts_at) }} · {{ appt.duration_minutes }}min
                 </p>
                 <p class="text-sm">
-                  Turno #{{ appt.id }}
+                  {{ professionalNameFor(appt) ?? `Turno #${appt.id}` }}
                   <span v-if="appt.name"> · {{ appt.name }}</span>
                 </p>
                 <p class="text-xs text-neutral">Precio: {{ formatARS(appt.price) }}</p>
@@ -192,6 +202,11 @@ const past = computed(() =>
         </ul>
       </section>
 
+      <section aria-label="Calendario de mis turnos">
+        <h2 class="mb-3 text-lg font-semibold">Calendario</h2>
+        <CalendarView :options="calendarOptions" />
+      </section>
+
       <section v-if="past.length > 0" aria-label="Historial de turnos">
         <h2 class="mb-3 text-lg font-semibold">Historial</h2>
         <ul class="space-y-2">
@@ -203,7 +218,7 @@ const past = computed(() =>
             <div class="flex items-center gap-3 flex-wrap">
               <StatusBadge :state="appt.state" />
               <span class="text-sm">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="text-sm text-neutral">Turno #{{ appt.id }}</span>
+              <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? `Turno #${appt.id}` }}</span>
               <span class="text-sm text-neutral">{{ formatARS(appt.price) }}</span>
             </div>
           </li>

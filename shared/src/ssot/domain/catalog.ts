@@ -115,6 +115,48 @@ export const catalogTables = {
       delete: [],
     },
   } satisfies TableStructure,
+
+  // Which services a professional offers. A pure link table; business derived via the professional.
+  // No update (change = remove + add), so generic update is withheld.
+  professional_services: {
+    columns: {
+      id: pkColumn,
+      professional_user_id: {
+        type: 'string',
+        label: { es: 'Profesional', en: 'Professional' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Professional',
+      },
+      service_id: {
+        type: 'string',
+        label: { es: 'Servicio', en: 'Service' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'services', valueField: 'id', labelField: 'name' },
+      },
+    },
+    pk: 'id',
+    uiName: { es: 'Servicio del Profesional', en: 'Professional Service' },
+    title: { es: 'Servicios del Profesional', en: 'Professional Services' },
+    addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    crud: { create: true, read: true, update: false, delete: true },
+    // Business is derived via the professional's auth.users record.
+    businessJoin: {
+      paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
+    },
+    roleRequired: {
+      create: ['Admin'],
+      read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
+      update: [],
+      delete: ['Admin'],
+    },
+  } satisfies TableStructure,
 };
 
 // Resolves the booking's captured price and duration. Price = per-client override else the

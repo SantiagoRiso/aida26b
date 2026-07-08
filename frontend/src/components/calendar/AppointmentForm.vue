@@ -2,12 +2,15 @@
 // Staff create/edit form. Conflict check happens ON SAVE only — no live preview.
 // On requires_override the parent receives the verdict and handles the override dialog.
 
-import { reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { scheduleAppointment, rescheduleAppointment } from '@/api/appointments';
 import type { Appointment, ScheduleBody } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import { listRows } from '@/api/crud';
+import { useAuthStore } from '@/stores/auth';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { useToast } from '@/composables/useToast';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import SlotPicker from './SlotPicker.vue';
@@ -19,6 +22,7 @@ const props = defineProps<{
   prefillDate?: string;
   prefillStart?: string;
   prefillProfessionalId?: number;
+  prefillResourceId?: number;
 }>();
 
 const emit = defineEmits<{
@@ -28,6 +32,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const toast = useToast();
+const auth = useAuthStore();
 
 interface FormState {
   client_user_id: string;
@@ -45,7 +51,7 @@ const form = reactive<FormState>({
   client_user_id: String(props.appointment?.client_user_id ?? ''),
   professional_user_id: String(props.prefillProfessionalId ?? props.appointment?.professional_user_id ?? ''),
   service_id: String(props.appointment?.service_id ?? ''),
-  resource_id: String(props.appointment?.resource_id ?? ''),
+  resource_id: String(props.prefillResourceId ?? props.appointment?.resource_id ?? ''),
   date: props.prefillDate ?? (props.appointment ? props.appointment.starts_at.slice(0, 10) : ''),
   start: props.prefillStart ?? '',
   duration_minutes: String(props.appointment?.duration_minutes ?? ''),
@@ -55,6 +61,18 @@ const form = reactive<FormState>({
 
 const fieldErrors = ref<Record<string, string>>({});
 const saving = ref(false);
+
+// Hora/duración are normally derived from the picked slot; manual entry is the
+// sobreturno path (booking outside published availability) and stays collapsed.
+// Open it upfront when values arrive without a slot pick (reschedule, drag-select prefill).
+// Reschedule opens manual entry; a clicked cell auto-selects its slot (see SlotPicker), so a bare
+// prefilled start no longer forces manual mode.
+const manualOpen = ref(!!props.appointment);
+
+const slotSummary = computed(() => {
+  if (!form.start || !form.duration_minutes) return null;
+  return `${form.start} · ${form.duration_minutes} min`;
+});
 
 const { options: clientOptions } = useForeignKeyOptions({
   table: 'clients',
@@ -79,6 +97,69 @@ const { options: resourceOptions } = useForeignKeyOptions({
 
 // No client-side duration prefill on service change: server-side resolveBooking is authoritative.
 watch(() => form.service_id, () => {});
+
+// A professional may only book on their own calendar (the backend enforces own-only for
+// professionals — grants are a receptionist mechanism). Other roles pick from all professionals.
+const availableProfessionalOptions = computed(() => {
+  if (auth.user?.role === 'Professional') {
+    return professionalOptions.value.filter((o) => String(o.value) === String(auth.user!.id));
+  }
+  return professionalOptions.value;
+});
+const singleProfessional = computed(() =>
+  availableProfessionalOptions.value.length === 1 ? availableProfessionalOptions.value[0] : null,
+);
+watch(
+  availableProfessionalOptions,
+  (opts) => {
+    if (opts.length === 1) form.professional_user_id = opts[0].value;
+    else if (!opts.some((o) => o.value === form.professional_user_id)) form.professional_user_id = '';
+  },
+  { immediate: true },
+);
+
+// Which services each professional offers (professional_user_id → service_ids). No entry / no
+// professional selected → fall back to all services.
+const profServiceMap = ref<Map<string, string[]>>(new Map());
+onMounted(async () => {
+  const result = await listRows<{ professional_user_id: string; service_id: string }>(
+    'professional_services',
+    { limit: 500 },
+  );
+  if (!result.ok) return;
+  const map = new Map<string, string[]>();
+  for (const row of result.data as { professional_user_id: string; service_id: string }[]) {
+    const key = String(row.professional_user_id);
+    const list = map.get(key);
+    if (list) list.push(String(row.service_id));
+    else map.set(key, [String(row.service_id)]);
+  }
+  profServiceMap.value = map;
+});
+
+const availableServiceOptions = computed(() => {
+  const offered = form.professional_user_id
+    ? profServiceMap.value.get(String(form.professional_user_id))
+    : undefined;
+  if (!offered || offered.length === 0) return serviceOptions.value;
+  const set = new Set(offered);
+  return serviceOptions.value.filter((o) => set.has(String(o.value)));
+});
+
+// A single offered service isn't a choice — auto-select it and render it read-only.
+const singleService = computed(() =>
+  availableServiceOptions.value.length === 1 ? availableServiceOptions.value[0] : null,
+);
+
+// Keep the selected service consistent with the professional's offerings (auto-pick the only one).
+watch(
+  availableServiceOptions,
+  (opts) => {
+    if (opts.length === 1) form.service_id = opts[0].value;
+    else if (!opts.some((o) => o.value === form.service_id)) form.service_id = '';
+  },
+  { immediate: true },
+);
 
 function handleSlotSelected(slot: TimeInterval) {
   form.start = slot.start;
@@ -128,7 +209,11 @@ async function save(override = false): Promise<void> {
   saving.value = false;
 
   if (!result.ok) {
-    if (result.fields) fieldErrors.value = result.fields;
+    toast.error(props.appointment ? 'toast.rescheduleFailed' : 'toast.scheduleFailed');
+    if (result.fields) {
+      fieldErrors.value = result.fields;
+      if (result.fields.start || result.fields.duration_minutes) manualOpen.value = true;
+    }
     return;
   }
 
@@ -142,6 +227,16 @@ async function save(override = false): Promise<void> {
 }
 
 function submit() {
+  // A time is required either via slot pick or manual entry — surface the manual
+  // section instead of letting a hidden required input silently block submission.
+  if (!form.start || !form.duration_minutes) {
+    manualOpen.value = true;
+    fieldErrors.value = {
+      ...(!form.start ? { start: 'Elegí un horario o cargalo manualmente' } : {}),
+      ...(!form.duration_minutes ? { duration_minutes: 'Requerido' } : {}),
+    };
+    return;
+  }
   void save(false);
 }
 </script>
@@ -163,28 +258,44 @@ function submit() {
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-prof">{{ t('calendar.professionalLabel') }} *</label>
+      <input
+        v-if="singleProfessional"
+        id="appt-prof"
+        :value="singleProfessional.label"
+        disabled
+        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
+      />
       <select
+        v-else
         id="appt-prof"
         v-model="form.professional_user_id"
         class="rounded border border-border px-3 py-2 text-sm"
         required
       >
         <option value="">— Seleccionar profesional —</option>
-        <option v-for="opt in professionalOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        <option v-for="opt in availableProfessionalOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <FieldError :message="fieldErrors.professional_user_id" />
     </div>
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-service">{{ t('calendar.serviceLabel') }} *</label>
+      <input
+        v-if="singleService"
+        id="appt-service"
+        :value="singleService.label"
+        disabled
+        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
+      />
       <select
+        v-else
         id="appt-service"
         v-model="form.service_id"
         class="rounded border border-border px-3 py-2 text-sm"
         required
       >
         <option value="">— Seleccionar servicio —</option>
-        <option v-for="opt in serviceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        <option v-for="opt in availableServiceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <FieldError :message="fieldErrors.service_id" />
     </div>
@@ -221,7 +332,26 @@ function submit() {
       @slot-selected="handleSlotSelected"
     />
 
-    <div class="flex gap-3">
+    <div
+      v-if="slotSummary && !manualOpen"
+      class="flex items-center justify-between rounded-md border border-accent/40 bg-accent/5 px-3 py-2 text-sm"
+    >
+      <span>Horario: <strong>{{ slotSummary }}</strong></span>
+      <button type="button" class="text-xs text-accent hover:underline" @click="manualOpen = true">
+        Editar manualmente
+      </button>
+    </div>
+
+    <button
+      v-if="!slotSummary && !manualOpen"
+      type="button"
+      class="self-start text-xs text-accent hover:underline"
+      @click="manualOpen = true"
+    >
+      Cargar horario manualmente (sobreturno)
+    </button>
+
+    <div v-if="manualOpen" class="flex gap-3">
       <div class="flex flex-col gap-1 flex-1">
         <label class="text-sm font-semibold" for="appt-start">Hora *</label>
         <input
@@ -229,7 +359,6 @@ function submit() {
           v-model="form.start"
           type="time"
           class="rounded border border-border px-3 py-2 text-sm"
-          required
         />
         <FieldError :message="fieldErrors.start" />
       </div>
@@ -241,7 +370,6 @@ function submit() {
           type="number"
           min="1"
           class="rounded border border-border px-3 py-2 text-sm"
-          required
         />
         <FieldError :message="fieldErrors.duration_minutes" />
       </div>

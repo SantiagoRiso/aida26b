@@ -1,0 +1,172 @@
+// Pure geometry for the calendar drag grid. No Vue / FullCalendar deps so it unit-tests in isolation.
+
+export function gcd(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b !== 0) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+export function gcdAll(values: number[]): number {
+  return values.reduce((g, v) => gcd(g, v), 0);
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// Largest snap step that lands FullCalendar's uniform grid (origin + n·step) on every real slot
+// start AND cleanly subdivides the visual row (slotMinutes). Empty slots → the row size itself.
+export function computeSnapMinutes(
+  slotStartsMinutes: number[],
+  originMinutes: number,
+  slotMinutes: number,
+): number {
+  const offsets = slotStartsMinutes.map((s) => Math.abs(s - originMinutes));
+  const g = gcdAll([...offsets, slotMinutes]);
+  return g > 0 ? g : slotMinutes;
+}
+
+export function mergeIntervals(
+  intervals: { start: number; end: number }[],
+): { start: number; end: number }[] {
+  const sorted = [...intervals].filter((i) => i.end > i.start).sort((a, b) => a.start - b.start);
+  const out: { start: number; end: number }[] = [];
+  for (const cur of sorted) {
+    const last = out[out.length - 1];
+    if (last && cur.start <= last.end) {
+      last.end = Math.max(last.end, cur.end);
+    } else {
+      out.push({ ...cur });
+    }
+  }
+  return out;
+}
+
+// Gaps within [min, max] not covered by the given intervals — the "closed/blocked" spans
+// complementary to a resource's free availability windows. Input need not be pre-merged.
+export function complementIntervals(
+  intervals: { start: number; end: number }[],
+  min: number,
+  max: number,
+): { start: number; end: number }[] {
+  const merged = mergeIntervals(intervals);
+  const out: { start: number; end: number }[] = [];
+  let cursor = min;
+  for (const w of merged) {
+    const s = Math.max(w.start, min);
+    if (s > cursor) out.push({ start: cursor, end: s });
+    cursor = Math.max(cursor, Math.min(w.end, max));
+  }
+  if (cursor < max) out.push({ start: cursor, end: max });
+  return out;
+}
+
+// Slot starts where the appointment's FULL duration fits inside one contiguous free window.
+export function computeValidStarts(
+  freeSlots: { start: string; end: string }[],
+  durationMinutes: number,
+): string[] {
+  const windows = mergeIntervals(
+    freeSlots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })),
+  );
+  return freeSlots
+    .map((s) => s.start)
+    .filter((start) => {
+      const s = toMinutes(start);
+      return windows.some((w) => w.start <= s && s + durationMinutes <= w.end);
+    });
+}
+
+function minutesToHms(min: number): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const clamped = Math.max(0, Math.min(min, 24 * 60));
+  return `${pad(Math.floor(clamped / 60))}:${pad(clamped % 60)}:00`;
+}
+
+export interface SnapConfig {
+  slotMinTime: string;
+  slotDuration: string;
+  slotLabelInterval: string;
+  snapDuration: string;
+}
+
+// FullCalendar timegrid options that make the drag snap onto a professional's real slots. With
+// slot starts, the origin is phase-aligned to their lattice and the snap is the GCD step (so grid
+// rows and snap both land on real slots). `fine` (sobreturno mode) forces a 5-min snap. Without
+// slots (mixed view), a generic 30-min grid with 5-min snapping. Shared by the reactive options
+// path and the synchronous pointerdown path so both produce identical geometry.
+export function snapConfig(
+  slotStartsMinutes: number[] | null,
+  slotMinutes: number | null,
+  floorMinutes: number,
+  fine: boolean,
+): SnapConfig {
+  if (!(slotStartsMinutes && slotStartsMinutes.length > 0)) {
+    return { slotMinTime: minutesToHms(floorMinutes), slotDuration: '00:30:00', slotLabelInterval: '01:00:00', snapDuration: '00:05:00' };
+  }
+  const gran = slotMinutes ?? 30;
+  const anchor = Math.min(...slotStartsMinutes);
+  const rem = (((floorMinutes - anchor) % gran) + gran) % gran;
+  const origin = floorMinutes - rem;
+  const snap = fine ? 5 : computeSnapMinutes(slotStartsMinutes, origin, gran);
+  return {
+    slotMinTime: minutesToHms(origin),
+    slotDuration: minutesToHms(gran),
+    // Label every row: a 60-min interval doesn't divide a 50-min lattice, leaving most rows blank.
+    slotLabelInterval: minutesToHms(gran),
+    snapDuration: minutesToHms(snap),
+  };
+}
+
+// Where a live drag should land. Coarse (default) snaps onto the professional's real slot starts —
+// any distance, so a block dragged from off the lattice (an existing sobreturno) is pulled back onto
+// it. Fine (sobreturno mode) rounds to the nearest 5 min, off the lattice. With no slots to snap to,
+// coarse also falls back to 5-min so the drag stays usable.
+export function snapDragMinutes(
+  targetMinutes: number,
+  validStartsMinutes: number[],
+  fine: boolean,
+): number {
+  if (fine || validStartsMinutes.length === 0) {
+    return Math.round(targetMinutes / 5) * 5;
+  }
+  let best = validStartsMinutes[0];
+  let bestDist = Infinity;
+  for (const v of validStartsMinutes) {
+    const d = Math.abs(v - targetMinutes);
+    if (d < bestDist) {
+      bestDist = d;
+      best = v;
+    }
+  }
+  return best;
+}
+
+// Same-day rule: an appointment must start and finish on the same calendar day. Midnight (24:00)
+// is the inclusive edge, so only a total strictly past 24:00 overflows the day. Also treats a
+// non-positive duration as invalid (e.g. a resize whose end wrapped to the next day).
+export function exceedsEndOfDay(startMinutes: number, durationMinutes: number): boolean {
+  return durationMinutes <= 0 || startMinutes + durationMinutes > 24 * 60;
+}
+
+// Nearest valid start within threshold, or null to refuse the drop (no silent teleport).
+export function resolveDrop(
+  validStartsMinutes: number[],
+  droppedMinutes: number,
+  thresholdMinutes: number,
+): number | null {
+  let best: number | null = null;
+  let bestDist = Infinity;
+  for (const v of validStartsMinutes) {
+    const d = Math.abs(v - droppedMinutes);
+    if (d < bestDist) {
+      bestDist = d;
+      best = v;
+    }
+  }
+  return best !== null && bestDist <= thresholdMinutes ? best : null;
+}

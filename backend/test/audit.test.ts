@@ -314,6 +314,29 @@ describe('GET /api/audit — pagination', () => {
 
 // ── Business settings endpoint (D-15) ─────────────────────────────────────────
 
+describe('GET /api/businesses/:id/settings — admin-only read', () => {
+  test('non-admin → 403', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await auditReq('GET', `/api/businesses/${bizId}/settings`);
+    expect(res.status).toBe(403);
+  });
+
+  test('admin reads current cutoff', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', `/api/businesses/${bizId}/settings`);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveProperty('id');
+    expect(res.body.data).toHaveProperty('cancellation_cutoff_hours');
+    expect(res.body.data).not.toHaveProperty('name');
+  });
+
+  test('cross-tenant :id → 404 (hides existence)', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', `/api/businesses/${biz2Id}/settings`);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-19, T-04-20)', () => {
   test('non-admin → 403', async () => {
     currentUser = asUser(proId, 'Professional');

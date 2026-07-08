@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
-import { updateSettings } from '@/api/business';
+import { getSettings, updateSettings } from '@/api/business';
 import { useLabel } from '@/composables/useLabel';
 import LanguageToggle from '@/components/settings/LanguageToggle.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -21,6 +21,18 @@ const cutoffHours = ref<number | null>(null);
 const savingCutoff = ref(false);
 const cutoffError = ref('');
 const cutoffSaved = ref(false);
+const loadingCutoff = ref(false);
+
+// Show the current policy — saving blind would silently overwrite it.
+onMounted(async () => {
+  if (!isAdmin.value || !businessId.value) return;
+  loadingCutoff.value = true;
+  const result = await getSettings(businessId.value);
+  loadingCutoff.value = false;
+  if (result.ok) {
+    cutoffHours.value = result.data.cancellation_cutoff_hours;
+  }
+});
 
 async function saveCutoff() {
   cutoffError.value = '';

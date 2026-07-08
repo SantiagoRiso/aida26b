@@ -108,6 +108,7 @@ describe('scheduler entity set (academic surface removed)', () => {
     'resources',
     'services',
     'client_professional_services',
+    'professional_services',
     'schedules',
     'schedule_exceptions',
     'appointments',
@@ -123,7 +124,6 @@ describe('scheduler entity set (academic surface removed)', () => {
   it('does not declare dropped redesign entities', () => {
     for (const dropped of [
       'schedulables',
-      'professional_services',
       'availability_blocks',
       'availability_exceptions',
       'appointment_resources',

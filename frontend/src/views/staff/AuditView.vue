@@ -137,19 +137,29 @@ if (isAdmin.value) {
           :placeholder="label({ es: 'Tipo de evento', en: 'Event type' })"
         />
 
-        <input
-          v-model="filterDateFrom"
-          type="date"
-          class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :aria-label="label({ es: 'Desde', en: 'Date from' })"
-        />
+        <div class="flex items-center gap-2">
+          <label for="audit-date-from" class="text-xs font-semibold text-neutral shrink-0">
+            {{ label({ es: 'Desde', en: 'From' }) }}
+          </label>
+          <input
+            id="audit-date-from"
+            v-model="filterDateFrom"
+            type="date"
+            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
 
-        <input
-          v-model="filterDateTo"
-          type="date"
-          class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :aria-label="label({ es: 'Hasta', en: 'Date to' })"
-        />
+        <div class="flex items-center gap-2">
+          <label for="audit-date-to" class="text-xs font-semibold text-neutral shrink-0">
+            {{ label({ es: 'Hasta', en: 'To' }) }}
+          </label>
+          <input
+            id="audit-date-to"
+            v-model="filterDateTo"
+            type="date"
+            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
 
         <select
           v-model="filterOutcome"

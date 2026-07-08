@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, useSlots } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
 import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, ColumnDef } from '@shared/types/types';
+import type { TableKey, ColumnDef, TableStructure } from '@shared/types/types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import GenericFilters from '@/components/generic/GenericFilters.vue';
@@ -23,7 +23,9 @@ const emit = defineEmits<{
 const auth = useAuthStore();
 const { label } = useLabel();
 
-const tableSpec = computed(() => structure.tables[props.tableKey]);
+// Widened to TableStructure: the per-table literal union makes optional members
+// like crud/roleRequired inaccessible on tables that omit them.
+const tableSpec = computed<TableStructure>(() => structure.tables[props.tableKey]);
 
 const columns = computed(() => {
   const cols = tableSpec.value.columns as Record<string, ColumnDef>;
@@ -132,20 +134,32 @@ const tableTitle = computed(() => {
     ? label(tbl.title as { es: string; en: string })
     : label(tbl.uiName);
 });
+
+const slots = useSlots();
+const hasActionsColumn = computed(() => canUpdate() || canDelete() || !!slots['row-actions']);
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? label({ es: 'Sí', en: 'Yes' }) : label({ es: 'No', en: 'No' });
+  return String(value);
+}
 </script>
 
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">{{ tableTitle }}</h1>
-      <button
-        v-if="canCreate()"
-        type="button"
-        class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-        @click="emit('create')"
-      >
-        {{ addLabel }}
-      </button>
+      <div class="flex items-center gap-2">
+        <slot name="header-actions" />
+        <button
+          v-if="canCreate()"
+          type="button"
+          class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+          @click="emit('create')"
+        >
+          {{ addLabel }}
+        </button>
+      </div>
     </div>
 
     <GenericFilters :table-key="tableKey" @change="onFiltersChange" />
@@ -166,7 +180,7 @@ const tableTitle = computed(() => {
                 {{ sortDir === 'asc' ? '↑' : '↓' }}
               </span>
             </th>
-            <th v-if="canUpdate() || canDelete()" class="px-4 py-3 font-semibold text-right">
+            <th v-if="hasActionsColumn" class="px-4 py-3 font-semibold text-right">
               {{ label({ es: 'Acciones', en: 'Actions' }) }}
             </th>
           </tr>
@@ -174,14 +188,14 @@ const tableTitle = computed(() => {
         <tbody>
           <template v-if="loading">
             <tr>
-              <td :colspan="columns.length + (canUpdate() || canDelete() ? 1 : 0)" class="p-4">
+              <td :colspan="columns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <Skeleton variant="row" :rows="4" />
               </td>
             </tr>
           </template>
           <template v-else-if="rows.length === 0">
             <tr>
-              <td :colspan="columns.length + (canUpdate() || canDelete() ? 1 : 0)" class="p-4">
+              <td :colspan="columns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <EmptyState
                   :heading="label({ es: `No hay ${tableTitle} para mostrar`, en: `No ${tableTitle} to show` })"
                   :body="label({ es: 'Probá ajustar los filtros o creá el primero.', en: 'Try adjusting the filters, or create the first one.' })"
@@ -198,9 +212,10 @@ const tableTitle = computed(() => {
               @click="canUpdate() ? emit('edit', row) : undefined"
             >
               <td v-for="{ key } in columns" :key="key" class="px-4 py-3">
-                {{ row[key] ?? '—' }}
+                {{ formatCell(row[key]) }}
               </td>
-              <td v-if="canUpdate() || canDelete()" class="px-4 py-3 text-right">
+              <td v-if="hasActionsColumn" class="px-4 py-3 text-right whitespace-nowrap">
+                <slot name="row-actions" :row="row" />
                 <button
                   v-if="canUpdate()"
                   type="button"

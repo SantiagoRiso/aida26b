@@ -198,4 +198,31 @@ describe('GET /api/availability', () => {
     const res = await request(`/api/availability?owner=bogus&date=${MONDAY}`);
     expect(res.status).toBe(422);
   });
+
+  test('exclude=<id> frees the excluded appointment\'s own slot', async () => {
+    currentUser = staffUser();
+
+    const appt = await pool.query<{ id: string }>(
+      `SELECT id FROM appointments
+       WHERE professional_user_id = $1 AND (starts_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $2::date
+       ORDER BY starts_at LIMIT 1`,
+      [proId, MONDAY]
+    );
+    const excludeId = appt.rows[0].id;
+
+    const without = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    expect(without.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
+
+    const withExclude = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&exclude=${excludeId}`);
+    const slots = withExclude.body.data.slots as Array<{ start: string; end: string }>;
+    expect(slots.find((s) => s.start === '10:00' && s.end === '10:15')).toBeTruthy();
+    expect(slots.length).toBe(12); // full grid, nothing booked once the only appt is excluded
+  });
+
+  test('a non-numeric exclude is ignored (no 422)', async () => {
+    currentUser = staffUser();
+    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&exclude=nope`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
+  });
 });

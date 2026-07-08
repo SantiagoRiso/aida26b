@@ -33,10 +33,14 @@ export interface AvailabilityResult {
   slots: TimeInterval[];
 }
 
-// owner = 'prof:<id>' or 'res:<id>'
+// owner = 'prof:<id>' or 'res:<id>'. exclude drops that appointment from "booked" so a dragged
+// block's own span reads as free.
 export async function getAvailability(
   owner: string,
   date: string,
+  exclude?: number,
 ): Promise<ApiResult<AvailabilityResult>> {
-  return apiFetch<AvailabilityResult>(`/availability?owner=${encodeURIComponent(owner)}&date=${encodeURIComponent(date)}`);
+  const params = new URLSearchParams({ owner, date });
+  if (exclude !== undefined) params.set('exclude', String(exclude));
+  return apiFetch<AvailabilityResult>(`/availability?${params.toString()}`);
 }

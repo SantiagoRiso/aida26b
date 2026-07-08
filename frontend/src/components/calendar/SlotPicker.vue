@@ -32,6 +32,10 @@ watch(
     loading.value = false;
     if (result.ok) {
       slots.value = result.data.slots;
+      // Auto-select the slot matching a preset start (e.g. the calendar cell the user clicked) so
+      // its duration flows to the parent without a second click.
+      const preset = slots.value.find((s) => s.start === props.modelValue);
+      if (preset) emit('slotSelected', preset);
     }
   },
   { immediate: true },

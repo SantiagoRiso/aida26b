@@ -23,6 +23,24 @@ const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour12: false,
 });
 
+// Date-only strings must parse as LOCAL dates: new Date('YYYY-MM-DD') is UTC midnight,
+// which renders as the previous day in Argentina (UTC-3).
+function toLocalDate(iso: string | Date): Date {
+  if (typeof iso === 'string') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(iso);
+  }
+  return iso;
+}
+
+// Today as 'YYYY-MM-DD' in the user's timezone (toISOString would give the UTC day).
+export function todayLocalISO(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function useCurrency() {
   function formatARS(amount: string | number): string {
     const n = typeof amount === 'string' ? parseFloat(amount) : amount;
@@ -31,13 +49,11 @@ export function useCurrency() {
   }
 
   function formatDate(iso: string | Date): string {
-    const d = typeof iso === 'string' ? new Date(iso) : iso;
-    return DATE_FORMATTER.format(d);
+    return DATE_FORMATTER.format(toLocalDate(iso));
   }
 
   function formatDateTime(iso: string | Date): string {
-    const d = typeof iso === 'string' ? new Date(iso) : iso;
-    return DATETIME_FORMATTER.format(d);
+    return DATETIME_FORMATTER.format(toLocalDate(iso));
   }
 
   return { formatARS, formatDate, formatDateTime };

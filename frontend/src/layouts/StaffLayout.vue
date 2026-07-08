@@ -45,7 +45,7 @@ async function logout() {
         <div class="flex items-center gap-4">
           <span class="text-sm text-neutral">
             {{ auth.user?.username }}
-            <span class="ml-1 text-xs">({{ auth.user?.role }})</span>
+            <span v-if="auth.user" class="ml-1 text-xs">({{ t(`roles.${auth.user.role}`) }})</span>
           </span>
           <button
             type="button"

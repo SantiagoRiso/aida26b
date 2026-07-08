@@ -549,6 +549,12 @@ export function mountAppointmentRoutes(
     if (!HHMM_RE.test(start)) fields.start = 'must be HH:MM';
     if (!Number.isInteger(durationMinutes) || durationMinutes <= 0)
       fields.duration_minutes = 'must be a positive integer';
+    // Parity with create: an appointment starts and ends on the same day.
+    if (!fields.start && !fields.duration_minutes) {
+      const startMin = Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5));
+      if (startMin + durationMinutes > 24 * 60)
+        fields.duration_minutes = 'start + duration must not cross midnight';
+    }
     if (Object.keys(fields).length > 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
     }

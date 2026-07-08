@@ -8,7 +8,7 @@ import { checkConflict } from '@/api/scheduling';
 import { requestAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { TableKey } from '@shared/types/types';
-import { useCurrency } from '@/composables/useCurrency';
+import { useCurrency, todayLocalISO } from '@/composables/useCurrency';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
@@ -165,7 +165,7 @@ function goStep4() {
   step.value = 4;
 }
 
-const today = new Date().toISOString().slice(0, 10);
+const today = todayLocalISO();
 </script>
 
 <template>

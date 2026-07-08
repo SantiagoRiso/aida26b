@@ -9,6 +9,7 @@ import type { Appointment } from '@/api/appointments';
 import type { AuditEvent } from '@/api/audit';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -105,6 +106,18 @@ onMounted(() => {
   else if (role.value === 'Receptionist') loadReceptionist();
   else if (role.value === 'Admin') loadAdmin();
 });
+
+// Untitled appointments read as the client's name, not an opaque "Turno #id".
+const { options: clientOptions } = useForeignKeyOptions({
+  table: 'clients', valueField: 'id', labelField: 'display_name',
+});
+function apptLabel(appt: Appointment): string {
+  if (appt.name) return appt.name;
+  const clientName = appt.client_user_id != null
+    ? clientOptions.value.find((o) => o.value === String(appt.client_user_id))?.label
+    : undefined;
+  return clientName ?? `Turno #${appt.id}`;
+}
 </script>
 
 <template>
@@ -129,7 +142,7 @@ onMounted(() => {
               class="text-sm text-neutral border-b border-border pb-2 last:border-0 last:pb-0"
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="ml-2">{{ appt.name || '—' }}</span>
+              <span class="ml-2">{{ apptLabel(appt) }}</span>
             </li>
           </ul>
           <EmptyState
@@ -150,7 +163,7 @@ onMounted(() => {
               class="text-sm text-neutral border-b border-border pb-2 last:border-0 last:pb-0"
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="ml-2">{{ appt.name || '—' }}</span>
+              <span class="ml-2">{{ apptLabel(appt) }}</span>
             </li>
           </ul>
           <EmptyState
@@ -179,7 +192,7 @@ onMounted(() => {
               class="text-sm text-neutral border-b border-border pb-2 last:border-0 last:pb-0"
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="ml-2">{{ appt.name || '—' }}</span>
+              <span class="ml-2">{{ apptLabel(appt) }}</span>
             </li>
           </ul>
           <EmptyState v-else :heading="label({ es: 'Sin turnos hoy', en: 'No appointments today' })" body="" />
@@ -197,7 +210,7 @@ onMounted(() => {
               class="text-sm text-neutral border-b border-border pb-2 last:border-0 last:pb-0"
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="ml-2">{{ appt.name || '—' }}</span>
+              <span class="ml-2">{{ apptLabel(appt) }}</span>
             </li>
           </ul>
           <EmptyState v-else :heading="label({ es: 'Sin solicitudes pendientes', en: 'No pending requests' })" body="" />

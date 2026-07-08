@@ -56,7 +56,8 @@ async function loadOwnerState(
   q: Queryable,
   businessId: number,
   ref: { kind: 'professional' | 'resource'; id: number },
-  date: string
+  date: string,
+  excludeAppointmentId?: number
 ): Promise<OwnerState | null> {
   let name: string;
   if (ref.kind === 'professional') {
@@ -119,12 +120,14 @@ async function loadOwnerState(
        AND (starts_at AT TIME ZONE $2)::date = $3::date`,
     [ref.id, BUSINESS_TZ, date]
   );
-  const booked: BookedAppointment[] = appts.rows.map((a) => ({
-    id: Number(a.id),
-    start: a.start,
-    end: a.end,
-    state: a.state,
-  }));
+  const booked: BookedAppointment[] = appts.rows
+    .filter((a) => excludeAppointmentId === undefined || Number(a.id) !== excludeAppointmentId)
+    .map((a) => ({
+      id: Number(a.id),
+      start: a.start,
+      end: a.end,
+      state: a.state,
+    }));
 
   const gridSlots = computeDailySlots({ date, weekly, exceptions });
   const freeSlots = computeDailySlots({
@@ -328,7 +331,9 @@ export function mountSchedulingRoutes(
     }
 
     const kind = owner![1] === 'prof' ? 'professional' : 'resource';
-    const state = await loadOwnerState(pool, user.business_id, { kind, id: Number(owner![2]) }, date);
+    const excludeRaw = typeof req.query.exclude === 'string' ? Number(req.query.exclude) : NaN;
+    const exclude = Number.isInteger(excludeRaw) && excludeRaw > 0 ? excludeRaw : undefined;
+    const state = await loadOwnerState(pool, user.business_id, { kind, id: Number(owner![2]) }, date, exclude);
     if (!state) return sendError(res, 404, 'not_found', 'Owner not found in this business');
 
     return sendData(res, { date, slots: state.freeSlots });

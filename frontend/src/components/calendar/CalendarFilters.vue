@@ -2,8 +2,11 @@
 import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listRows } from '@/api/crud';
+import { colorForProfessional, scopeProfessionalOptions } from '@/composables/useFullCalendar';
+import { useAuthStore } from '@/stores/auth';
 
 const { t } = useI18n();
+const auth = useAuthStore();
 
 export interface FilterState {
   professional_user_id: number | null;
@@ -30,10 +33,16 @@ onMounted(async () => {
     listRows<{ id: number; name: string }>('resources', { limit: 200 }),
   ]);
   if (profResult.ok) {
-    professionals.value = (profResult.data as { id: number; display_name: string }[]).map((p) => ({
+    const options = (profResult.data as { id: number; display_name: string }[]).map((p) => ({
       id: p.id,
       label: p.display_name,
     }));
+    professionals.value = scopeProfessionalOptions(options, auth.user);
+    // A professional views only their own calendar — default the filter to themselves so the grid
+    // reflects their own slot granularity instead of the generic mixed ("Todos") view.
+    if (auth.user?.role === 'Professional' && professionals.value.length === 1) {
+      selectProfessional(professionals.value[0].id);
+    }
   }
   if (resResult.ok) {
     resources.value = (resResult.data as { id: number; name: string }[]).map((r) => ({
@@ -80,12 +89,18 @@ function emitFilters() {
       v-for="prof in professionals"
       :key="prof.id"
       type="button"
-      class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
+      class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === prof.id
         ? 'bg-accent text-white border-accent'
         : 'bg-surface border-border text-current hover:bg-slate-100'"
       @click="selectProfessional(prof.id)"
     >
+      <!-- Same hue the professional's blocks use on the calendar. -->
+      <span
+        class="h-2.5 w-2.5 rounded-full shrink-0"
+        :style="{ backgroundColor: colorForProfessional(prof.id).bg }"
+        aria-hidden="true"
+      />
       {{ prof.label }}
     </button>
 
