@@ -834,3 +834,48 @@ describe('POST /api/appointments/schedule — foreign resource_id (WR-02)', () =
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /api/appointments?state= — state filter', () => {
+  const REQ_TS = new Date(Date.now() + 370 * 24 * 3600 * 1000).toISOString();
+  const SCHED_TS = new Date(Date.now() + 371 * 24 * 3600 * 1000).toISOString();
+  let reqId: number;
+  let schedId: number;
+
+  beforeAll(async () => {
+    const req = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'requested', '1500.00', false) RETURNING id`,
+      [clientId, proId, svcId, REQ_TS],
+    );
+    reqId = Number(req.rows[0].id);
+    const sched = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false) RETURNING id`,
+      [clientId, proId, svcId, SCHED_TS],
+    );
+    schedId = Number(sched.rows[0].id);
+  });
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM appointments WHERE id IN ($1, $2)`, [reqId, schedId]);
+  });
+
+  test('state=requested returns only requested rows (includes the requested, excludes the scheduled)', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments?state=requested&limit=200');
+    expect(res.status).toBe(200);
+    const rows = res.body.data as { id: number | string; state: string }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.state === 'requested')).toBe(true);
+    expect(rows.some((r) => Number(r.id) === reqId)).toBe(true);
+    expect(rows.some((r) => Number(r.id) === schedId)).toBe(false);
+  });
+
+  test('unknown state → 422', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments?state=bogus');
+    expect(res.status).toBe(422);
+  });
+});

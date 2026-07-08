@@ -21,6 +21,7 @@ export {
   detectOverlap,
   TERMINAL_STATES,
   TRANSITION_MAP,
+  APPOINTMENT_STATE_VALUES,
   assertValidTransition,
 } from './scheduling';
 export type { Weekday, TimeInterval, WeeklySchedule, ScheduleExceptionInput } from './scheduling';

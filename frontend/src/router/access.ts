@@ -22,12 +22,12 @@ export function canAccessRoute(user: { role: Role } | null, meta: { roles?: Role
 export const SCREEN_ROLES: Record<string, Role[]> = {
   'staff-dashboard': ['Admin', 'Professional', 'Receptionist'],
   'staff-calendar': ['Admin', 'Professional', 'Receptionist'],
+  'staff-requests': ['Admin', 'Professional', 'Receptionist'],
   'staff-clients': ['Admin', 'Professional', 'Receptionist'],
   'staff-professionals': ['Admin', 'Professional', 'Receptionist'],
   'staff-services': ['Admin', 'Professional', 'Receptionist'],
   'staff-resources': ['Admin', 'Professional', 'Receptionist'],
   'staff-users': ['Admin'],
-  'staff-ledger': ['Admin', 'Receptionist', 'Professional'],
   'staff-audit': ['Admin'],
   'staff-settings': ['Admin', 'Professional', 'Receptionist'],
   'portal-appointments': ['Client'],

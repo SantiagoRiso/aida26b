@@ -35,6 +35,9 @@ const APPOINTMENT_STATES = [
   { value: 'rejected', label: { es: 'Rechazado', en: 'Rejected' } },
 ] as const;
 
+// Valid nodes of the appointment state machine — the SSOT set for validating a state filter/value.
+export const APPOINTMENT_STATE_VALUES = new Set<string>(APPOINTMENT_STATES.map((s) => s.value));
+
 export const schedulingTables = {
   // Weekly pattern for exactly one owner (professional XOR resource, DB-enforced). business_id
   // is derived via the owner. No DELETE grant, so delete is withheld.

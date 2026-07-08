@@ -16,12 +16,12 @@ const userRole = computed(() => auth.user?.role);
 const navItems = [
   { name: 'staff-dashboard',     labelKey: 'nav.dashboard',     roles: SCREEN_ROLES['staff-dashboard'] },
   { name: 'staff-calendar',      labelKey: 'nav.calendar',       roles: SCREEN_ROLES['staff-calendar'] },
+  { name: 'staff-requests',      labelKey: 'nav.requests',       roles: SCREEN_ROLES['staff-requests'] },
   { name: 'staff-clients',       labelKey: 'nav.clients',        roles: SCREEN_ROLES['staff-clients'] },
   { name: 'staff-professionals', labelKey: 'nav.professionals',  roles: SCREEN_ROLES['staff-professionals'] },
   { name: 'staff-services',      labelKey: 'nav.services',       roles: SCREEN_ROLES['staff-services'] },
   { name: 'staff-resources',     labelKey: 'nav.resources',      roles: SCREEN_ROLES['staff-resources'] },
   { name: 'staff-users',         labelKey: 'nav.users',          roles: SCREEN_ROLES['staff-users'] },
-  { name: 'staff-ledger',        labelKey: 'nav.ledger',         roles: SCREEN_ROLES['staff-ledger'] },
   { name: 'staff-audit',         labelKey: 'nav.audit',          roles: SCREEN_ROLES['staff-audit'] },
   { name: 'staff-settings',      labelKey: 'nav.settings',       roles: SCREEN_ROLES['staff-settings'] },
 ] as const;

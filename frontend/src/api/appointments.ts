@@ -25,6 +25,7 @@ export interface AppointmentListFilters {
   date_to?: string;
   professional_user_id?: number;
   resource_id?: number;
+  state?: string;
   page?: number;
   limit?: number;
 }
@@ -49,6 +50,7 @@ export async function listAppointments(
   if (filters.date_to) params.set('date_to', filters.date_to);
   if (filters.professional_user_id) params.set('professional_user_id', String(filters.professional_user_id));
   if (filters.resource_id) params.set('resource_id', String(filters.resource_id));
+  if (filters.state) params.set('state', filters.state);
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();

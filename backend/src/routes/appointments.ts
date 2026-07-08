@@ -6,6 +6,7 @@ import type { AuthUser } from '../auth';
 import {
   resolveBooking,
   TERMINAL_STATES,
+  APPOINTMENT_STATE_VALUES,
   assertValidTransition,
 } from '../../../shared/src/ssot/domain';
 import { recheckConflictsInTx } from './scheduling';
@@ -916,6 +917,15 @@ export function mountAppointmentRoutes(
     if (req.query.resource_id) {
       conditions.push(`a.resource_id = $${p++}`);
       params.push(Number(req.query.resource_id));
+    }
+    if (req.query.state) {
+      // Requests span the whole future, so the Solicitudes screen filters by state rather than
+      // paging through every earlier appointment.
+      if (!APPOINTMENT_STATE_VALUES.has(String(req.query.state))) {
+        return sendError(res, 422, 'invalid_request', 'Unknown appointment state');
+      }
+      conditions.push(`a.state = $${p++}`);
+      params.push(req.query.state);
     }
 
     const where = conditions.join(' AND ');
