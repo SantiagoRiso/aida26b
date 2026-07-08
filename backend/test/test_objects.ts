@@ -2,6 +2,7 @@ export function clientFor(_userId: string) {
   return {
     display_name: 'Homero Simpson',
     phone: '1144440000',
+    dni: '20111111',
     notes: 'VIP',
   };
 }
@@ -10,6 +11,7 @@ export function clientModifiedFor(_userId: string) {
   return {
     display_name: 'Homero J. Simpson',
     phone: '1155550000',
+    dni: '20222222',
     notes: 'Regular',
   };
 }

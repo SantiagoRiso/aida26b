@@ -45,12 +45,13 @@ function weeklyMorning40() {
   };
 }
 
-function weeklyAfternoon45() {
+// 60-min afternoon slots — matches the kinesiología service duration so appointments tile the grid.
+function weeklyAfternoon60() {
   return {
-    mon: [{ start: '14:00', end: '18:30', granularity_minutes: 45 }],
-    tue: [{ start: '14:00', end: '18:30', granularity_minutes: 45 }],
-    wed: [{ start: '14:00', end: '18:30', granularity_minutes: 45 }],
-    thu: [{ start: '14:00', end: '18:30', granularity_minutes: 45 }],
+    mon: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
+    tue: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
+    wed: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
+    thu: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
   };
 }
 
@@ -62,6 +63,48 @@ function weeklyRoom() {
     thu: [{ start: '08:00', end: '20:00', granularity_minutes: 30 }],
     fri: [{ start: '08:00', end: '17:00', granularity_minutes: 30 }],
   };
+}
+
+// Dense appointment seeding covers SEED_DAYS from the anchor Monday, so the calendar stays
+// populated well past the current week. Anchored to July 2026 to line up with the hardcoded
+// schedules and the 9-de-Julio holiday exception; deterministic regardless of when the seed runs.
+const SEED_START = '2026-07-06'; // Monday of the demo "current" week
+const SEED_DAYS = 45;
+
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+// Expands the seeding window into concrete dates tagged with their weekday key.
+function seedDays(): { date: string; key: string }[] {
+  const [y, m, d] = SEED_START.split('-').map(Number);
+  const out: { date: string; key: string }[] = [];
+  for (let i = 0; i < SEED_DAYS; i++) {
+    const dt = new Date(y, m - 1, d + i);
+    out.push({
+      date: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
+      key: WEEKDAY_KEYS[dt.getDay()],
+    });
+  }
+  return out;
+}
+
+type WeeklyBlock = { start: string; end: string; granularity_minutes: number };
+
+function hmToMin(hm: string): number {
+  const [h, m] = hm.split(':').map(Number);
+  return h * 60 + m;
+}
+function minToHm(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+// Fixed slot starts for a block, stepping by its granularity (mirrors the availability engine).
+function slotStartTimes(block: WeeklyBlock): string[] {
+  const out: string[] = [];
+  const end = hmToMin(block.end);
+  for (let t = hmToMin(block.start); t + block.granularity_minutes <= end; t += block.granularity_minutes) {
+    out.push(minToHm(t));
+  }
+  return out;
 }
 
 // All professional + resource usernames/emails live here so the README and helpers.ts
@@ -111,7 +154,20 @@ const CLIENT_USERS = [
   { username: 'demo_client28',       email: 'client28@demo.test',      displayName: 'Lionel Hutz',         phone: '1144440028', notes: null },
   { username: 'demo_client29',       email: 'client29@demo.test',      displayName: 'Gil Gunderson',       phone: '1144440029', notes: null },
   { username: 'demo_client30',       email: 'client30@demo.test',      displayName: 'Bleeding Gums Murphy', phone: '1144440030', notes: null },
+  // No-relation clients: never assigned an appointment, so they don't show under a professional's
+  // "my clients" list until the "include clients with no prior relationship" box is ticked.
+  { username: 'demo_client31',       email: 'client31@demo.test',      displayName: 'Ruth Powers',         phone: '1144440031', notes: null },
+  { username: 'demo_client32',       email: 'client32@demo.test',      displayName: 'Luann Van Houten',    phone: '1144440032', notes: null },
+  { username: 'demo_client33',       email: 'client33@demo.test',      displayName: 'Agnes Skinner',       phone: '1144440033', notes: null },
+  { username: 'demo_client34',       email: 'client34@demo.test',      displayName: 'Jimbo Jones',         phone: '1144440034', notes: null },
 ] as const;
+
+// Clients with NO relationship to demo_pro (Marge): excluded from her rotation so they demonstrate
+// the "no prior relationship" filter on her clients tab. They still get appointments with the OTHER
+// professionals, so they're real clients with history elsewhere — just not seen by Marge.
+const NO_RELATION_TO_MARGE_USERNAMES: readonly string[] = [
+  'demo_client31', 'demo_client32', 'demo_client33', 'demo_client34',
+];
 
 type PoolLike = Pick<Pool, 'query'>;
 
@@ -140,6 +196,7 @@ async function upsertUser(
     displayName: string;
     bio?: string | null;
     phone?: string | null;
+    dni?: string | null;
     notes?: string | null;
     mustChangePassword?: boolean;
   },
@@ -147,13 +204,14 @@ async function upsertUser(
   const { passwordHash, passwordSalt } = await hashPassword(DEMO_PASSWORD);
   const r = await pool.query<{ id: string }>(
     `INSERT INTO auth.users
-       (username, email, display_name, phone, bio, notes,
+       (username, email, display_name, phone, dni, bio, notes,
         password_hash, password_salt, role, business_id, is_active, must_change_password)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12)
      ON CONFLICT (username) DO UPDATE
        SET email               = EXCLUDED.email,
            display_name        = EXCLUDED.display_name,
            phone               = EXCLUDED.phone,
+           dni                 = EXCLUDED.dni,
            bio                 = EXCLUDED.bio,
            notes               = EXCLUDED.notes,
            role                = EXCLUDED.role,
@@ -163,7 +221,7 @@ async function upsertUser(
      RETURNING id`,
     [
       opts.username, opts.email, opts.displayName,
-      opts.phone ?? null, opts.bio ?? null, opts.notes ?? null,
+      opts.phone ?? null, opts.dni ?? null, opts.bio ?? null, opts.notes ?? null,
       passwordHash, passwordSalt, opts.role, businessId,
       opts.mustChangePassword ?? false,
     ],
@@ -322,6 +380,80 @@ async function upsertAppointment(
   return r.rows[0].id;
 }
 
+// All appointment start instants (epoch ms) already booked for a professional. Preloaded once per
+// professional so the fill can skip taken slots in memory instead of a query per slot.
+async function existingStarts(pool: PoolLike, professionalUserId: string): Promise<Set<number>> {
+  const r = await pool.query<{ starts_at: string }>(
+    `SELECT starts_at FROM appointments WHERE professional_user_id = $1`,
+    [professionalUserId],
+  );
+  return new Set(r.rows.map((x) => new Date(x.starts_at).getTime()));
+}
+
+async function unavailableDates(pool: PoolLike, professionalUserId: string): Promise<Set<string>> {
+  const r = await pool.query<{ d: string }>(
+    `SELECT to_char(exception_date, 'YYYY-MM-DD') d FROM schedule_exceptions
+     WHERE professional_user_id = $1 AND is_unavailable = true`,
+    [professionalUserId],
+  );
+  return new Set(r.rows.map((x) => x.d));
+}
+
+// Fills ~80% of a professional's slots across the whole seeding window so the demo calendar looks
+// busy for the next several weeks. Deterministic (no randomness) → idempotent: slot→client is a pure
+// function of position, upsertAppointment dedups by (professional, client, service, start), and the
+// preloaded start set skips anything already booked (curated appointments, requests, prior runs).
+// Skips any day the professional is unavailable. Duration = the slot granularity so appointments
+// tile the grid without overlapping. Some professionals get a resource, some don't (a null resource
+// is a valid appointment).
+async function fillProfessionalDays(
+  pool: PoolLike,
+  opts: {
+    professionalUserId: string;
+    serviceId: string;
+    weekly: Record<string, WeeklyBlock[]>;
+    price: string;
+    resourceId?: string | null;
+    clientUserIds: string[];
+    clientOffset: number;
+    nowMs: number;
+  },
+): Promise<number> {
+  const unavailable = await unavailableDates(pool, opts.professionalUserId);
+  const taken = await existingStarts(pool, opts.professionalUserId);
+  let slotIndex = 0;
+  let filled = 0;
+  for (const day of seedDays()) {
+    for (const block of opts.weekly[day.key] ?? []) {
+      for (const hm of slotStartTimes(block)) {
+        const idx = slotIndex++;
+        if (idx % 5 === 4) continue; // leave one slot in five open → ~80% density
+        if (unavailable.has(day.date)) continue;
+        const startsAt = `${day.date}T${hm}:00-03:00`;
+        const ms = new Date(startsAt).getTime();
+        if (taken.has(ms)) continue;
+        // Index the client by placements made, NOT the raw slot index: the density skip drops every
+        // 5th slot, and a pool size that shares a factor with 5 would otherwise starve whole client
+        // residues. Round-robin over actual placements keeps coverage uniform for any pool size.
+        const clientUserId = opts.clientUserIds[(filled + opts.clientOffset) % opts.clientUserIds.length];
+        await upsertAppointment(pool, {
+          clientUserId,
+          professionalUserId: opts.professionalUserId,
+          resourceId: opts.resourceId ?? null,
+          serviceId: opts.serviceId,
+          startsAt,
+          durationMinutes: block.granularity_minutes,
+          state: ms < opts.nowMs ? 'completed' : 'scheduled',
+          price: opts.price,
+        });
+        taken.add(ms);
+        filled++;
+      }
+    }
+  }
+  return filled;
+}
+
 // Append-only guard: insert only if no row with the same deterministic natural key exists.
 // Uses a CTE with explicit casts to avoid "inconsistent types" for parameters reused across
 // INSERT + WHERE NOT EXISTS in a single statement.
@@ -405,6 +537,8 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     uids[c.username] = await upsertUser(pool, businessId, {
       ...c,
       role: 'Client',
+      // Distinct 8-digit demo DNIs derived from the phone tail, so client search by DNI is testable.
+      dni: `30${c.phone.slice(-6)}`,
     });
   }
 
@@ -416,17 +550,21 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   const room1 = await upsertResource(pool, businessId, 'Consultorio 1');
   const room2 = await upsertResource(pool, businessId, 'Consultorio 2');
   const room3 = await upsertResource(pool, businessId, 'Consultorio 3');
+  const room4 = await upsertResource(pool, businessId, 'Consultorio 4');
+  const room5 = await upsertResource(pool, businessId, 'Consultorio 5');
 
   await upsertSchedule(pool, { professionalUserId: uids['demo_pro'] },   weeklyFullTime50());
   await upsertSchedule(pool, { professionalUserId: uids['demo_pro2'] },  weeklyFullTime50());
   await upsertSchedule(pool, { professionalUserId: uids['demo_pro3'] },  weeklyMorning40());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro4'] },  weeklyAfternoon45());
+  await upsertSchedule(pool, { professionalUserId: uids['demo_pro4'] },  weeklyAfternoon60());
   await upsertSchedule(pool, { professionalUserId: uids['demo_pro5'] },  weeklyFullTime50());
   await upsertSchedule(pool, { professionalUserId: uids['demo_pro6'] },  weeklyMorning30());
   await upsertSchedule(pool, { professionalUserId: uids['demo_reset'] }, weeklyFullTime50());
   await upsertSchedule(pool, { resourceId: room1 }, weeklyRoom());
   await upsertSchedule(pool, { resourceId: room2 }, weeklyRoom());
   await upsertSchedule(pool, { resourceId: room3 }, weeklyRoom());
+  await upsertSchedule(pool, { resourceId: room4 }, weeklyRoom());
+  await upsertSchedule(pool, { resourceId: room5 }, weeklyRoom());
 
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro'] },  '2026-07-09', { isUnavailable: true, reason: '9 de julio — feriado nacional' });
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro2'] }, '2026-07-15', { isUnavailable: false, startTime: '14:00', endTime: '18:00', granularityMinutes: 30, reason: 'Turno modificado — tarde especial' });
@@ -519,25 +657,25 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     clientUserId: uids['demo_client'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: '2026-07-07T10:00:00-03:00', durationMinutes: 50,
-    state: 'scheduled', price: '6500.00', name: 'Sesión - Homero (esta semana)',
+    state: 'scheduled', price: '6500.00', name: 'Sesión - Homero',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client_overdue'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: '2026-07-07T11:00:00-03:00', durationMinutes: 50,
-    state: 'scheduled', price: '8000.00', name: 'Sesión - Bart (esta semana)',
+    state: 'scheduled', price: '8000.00', name: 'Sesión - Bart',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client2'], professionalUserId: uids['demo_pro3'],
     resourceId: room2, serviceId: svcNutricion,
     startsAt: '2026-07-07T09:00:00-03:00', durationMinutes: 40,
-    state: 'scheduled', price: '5500.00', name: 'Nutrición - Marge (esta semana)',
+    state: 'scheduled', price: '5500.00', name: 'Nutrición - Marge',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client10'], professionalUserId: uids['demo_pro4'],
     resourceId: room3, serviceId: svcKineso,
     startsAt: '2026-07-07T14:00:00-03:00', durationMinutes: 60,
-    state: 'scheduled', price: '9000.00', name: 'Kinesiología - Milhouse (esta semana)',
+    state: 'scheduled', price: '9000.00', name: 'Kinesiología - Milhouse',
   });
   // Sobreturno: intentionally overlaps an existing slot; requires admin conflict override.
   const apptSobreturno = await upsertAppointment(pool, {
@@ -578,6 +716,95 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     startsAt: '2026-07-23T11:00:00-03:00', durationMinutes: 50,
     state: 'requested', price: '8000.00', name: 'Solicitud - Bob',
   });
+
+  const nowMs = Date.now();
+  // The portal login client (Homero) is kept OUT of the auto-rotation so his "Mis turnos" stays a
+  // realistic handful (seeded explicitly below) instead of an appointment with every professional.
+  const ROTATION_EXCLUDED = new Set<string>(['demo_client']);
+  const clientIds = CLIENT_USERS
+    .filter((c) => !ROTATION_EXCLUDED.has(c.username))
+    .map((c) => uids[c.username]);
+  // Marge's rotation also drops the no-relation clients so they never appear on her calendar; every
+  // other professional uses the full pool, so those clients still build history elsewhere.
+  const margeClientIds = CLIENT_USERS
+    .filter((c) => !ROTATION_EXCLUDED.has(c.username) && !NO_RELATION_TO_MARGE_USERNAMES.includes(c.username))
+    .map((c) => uids[c.username]);
+
+  // Homero (portal demo login): a small, realistic agenda — a couple upcoming plus the curated
+  // history already seeded above. Dates are relative to the demo "current" week (2026-07-08).
+  const homeroUpcoming = [
+    { pro: 'demo_pro',  service: svcSesion, price: '6500.00', date: '2026-07-13', start: '14:00', state: 'scheduled' },
+    { pro: 'demo_pro3', service: svcNutricion, price: '7000.00', date: '2026-07-16', start: '09:00', state: 'scheduled' },
+    { pro: 'demo_pro',  service: svcSesion, price: '6500.00', date: '2026-07-20', start: '11:30', state: 'requested' },
+  ];
+  for (const h of homeroUpcoming) {
+    await upsertAppointment(pool, {
+      clientUserId: uids['demo_client'], professionalUserId: uids[h.pro],
+      resourceId: null, serviceId: h.service,
+      startsAt: `${h.date}T${h.start}:00-03:00`, durationMinutes: h.service === svcNutricion ? 40 : 50,
+      state: h.state, price: h.price,
+    });
+  }
+
+  // Pending client requests on Marge's future agenda (state 'requested' → awaiting staff approval).
+  // Seeded BEFORE the dense fill so those slots are reserved and the fill routes around them.
+  const margeRequests = [
+    { client: 'demo_client11', date: '2026-07-13', start: '09:00' },
+    { client: 'demo_client16', date: '2026-07-15', start: '10:40' },
+    { client: 'demo_client19', date: '2026-07-20', start: '13:10' },
+    { client: 'demo_client24', date: '2026-07-28', start: '09:50' },
+    { client: 'demo_client27', date: '2026-08-04', start: '11:30' },
+  ];
+  for (const req of margeRequests) {
+    await upsertAppointment(pool, {
+      clientUserId: uids[req.client], professionalUserId: uids['demo_pro'],
+      resourceId: null, serviceId: svcSesion,
+      startsAt: `${req.date}T${req.start}:00-03:00`, durationMinutes: 50,
+      state: 'requested', price: '8000.00', name: 'Solicitud de turno',
+    });
+  }
+
+  // Dense fill: ~80% of each professional's slots across the seeding window, so the calendar looks
+  // realistic. Runs AFTER the curated appointments and requests above so it skips their slots.
+  const denseConfig: {
+    pro: string; service: string; price: string; resource: string | null;
+    weekly: Record<string, WeeklyBlock[]>; offset: number;
+  }[] = [
+    { pro: 'demo_pro',  service: svcSesion,    price: '8000.00',  resource: room1, weekly: weeklyFullTime50(),  offset: 0 },
+    { pro: 'demo_pro2', service: svcSesion,    price: '8000.00',  resource: room2, weekly: weeklyFullTime50(),  offset: 5 },
+    { pro: 'demo_pro3', service: svcNutricion, price: '7000.00',  resource: null,  weekly: weeklyMorning40(),   offset: 10 },
+    { pro: 'demo_pro4', service: svcKineso,    price: '9000.00',  resource: room4, weekly: weeklyAfternoon60(),  offset: 15 },
+    { pro: 'demo_pro5', service: svcSesion,    price: '8000.00',  resource: room5, weekly: weeklyFullTime50(),  offset: 20 },
+    { pro: 'demo_pro6', service: svcMedico,    price: '5000.00',  resource: null,  weekly: weeklyMorning30(),   offset: 25 },
+  ];
+
+  // Marge (demo_pro) skips the no-relation clients; every other professional draws from the full pool.
+  const clientsFor = (pro: string) => (pro === 'demo_pro' ? margeClientIds : clientIds);
+
+  for (const cfg of denseConfig) {
+    await fillProfessionalDays(pool, {
+      professionalUserId: uids[cfg.pro], serviceId: cfg.service, weekly: cfg.weekly,
+      price: cfg.price, resourceId: cfg.resource, clientUserIds: clientsFor(cfg.pro),
+      clientOffset: cfg.offset, nowMs,
+    });
+  }
+
+  // One sobreturno per professional: an extra appointment overlapping their first Monday slot,
+  // authorized by admin (override_conflict). Resource-less so it never collides on a room.
+  for (const cfg of denseConfig) {
+    const monBlock = cfg.weekly.mon?.[0];
+    if (!monBlock) continue;
+    const startsAt = `2026-07-06T${slotStartTimes(monBlock)[0]}:00-03:00`;
+    const clients = clientsFor(cfg.pro);
+    await upsertAppointment(pool, {
+      clientUserId: clients[(cfg.offset + 3) % clients.length],
+      professionalUserId: uids[cfg.pro], resourceId: null, serviceId: cfg.service,
+      startsAt, durationMinutes: monBlock.granularity_minutes,
+      state: 'scheduled', price: cfg.price, name: 'Sobreturno',
+      overrideConflict: true, overrideActorId: uids['demo_admin'],
+      description: 'Sobreturno autorizado por admin (se superpone con el turno regular)',
+    });
+  }
 
   // Homero: charged + paid in full → zero balance
   await guardedLedgerInsert(pool, {

@@ -22,6 +22,12 @@ export function getSqlTable(table: TableKey): string {
   return (meta as { sqlTable?: string }).sqlTable ?? table;
 }
 
+// Reads may target a secret-free view instead of the write table (see SSOT sqlReadTable).
+export function getSqlReadTable(table: TableKey): string {
+  const meta = tableOf(table);
+  return (meta as { sqlReadTable?: string }).sqlReadTable ?? getSqlTable(table);
+}
+
 export function getRoleDiscriminatorFragment(table: TableKey): { sql: string; value: string } | null {
   const meta = tableOf(table);
   const disc = (meta as { roleDiscriminator?: RoleDiscriminator }).roleDiscriminator;
@@ -56,7 +62,8 @@ export type CrudCheck =
   | {
       ok: true;
       table: TableKey;
-      sqlTable: string;                // schema-qualified SQL table for use in queries
+      sqlTable: string;                // schema-qualified SQL table for writes
+      sqlReadTable: string;            // schema-qualified source for reads (may be a secret-free view)
       businessWhere: string;
       businessParams: unknown[];
       ownerWhere?: string;
@@ -176,11 +183,13 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
   const discriminatorParams = disc ? [disc.value] : undefined;
 
   const sqlTable = getSqlTable(name as TableKey);
+  const sqlReadTable = getSqlReadTable(name as TableKey);
 
   return {
     ok: true,
     table: name as TableKey,
     sqlTable,
+    sqlReadTable,
     businessWhere,
     businessParams,
     ownerWhere,

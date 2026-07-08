@@ -58,9 +58,10 @@ export async function getHandler(
   const tableName = allowed.table;
   const entityName = getEntityName(tableName);
 
+  // Reads use the (possibly secret-free) read source; writes elsewhere use allowed.sqlTable.
   if (isListRequest(req.query)) {
     return getListOfTable(pool, res, tableName, req.query, {
-      sqlTable: allowed.sqlTable,
+      sqlTable: allowed.sqlReadTable,
       businessWhere: allowed.businessWhere,
       businessParams: allowed.businessParams,
       ownerWhere: allowed.ownerWhere,
@@ -71,7 +72,7 @@ export async function getHandler(
   }
 
   return getRowOfTable(pool, res, tableName, req.query, entityName, {
-    sqlTable: allowed.sqlTable,
+    sqlTable: allowed.sqlReadTable,
     businessWhere: allowed.businessWhere,
     businessParams: allowed.businessParams,
     ownerWhere: allowed.ownerWhere,

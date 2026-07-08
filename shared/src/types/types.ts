@@ -160,6 +160,10 @@ type TableStructure = {
   businessJoin?:  BusinessJoinDescriptor
   // When set, generic SQL targets this schema-qualified table instead of the SSOT key name.
   sqlTable?:          string
+  // When set, GENERIC READS (GET) target this table/view instead of sqlTable; writes still use
+  // sqlTable. Used to read through a secret-free view (e.g. auth.users_directory) so a "SELECT *"
+  // never projects password columns, while updates/deletes keep hitting the real table.
+  sqlReadTable?:      string
   // When set, every generic SQL operation ANDs this column = value to constrain the entity type.
   roleDiscriminator?: RoleDiscriminator
 }

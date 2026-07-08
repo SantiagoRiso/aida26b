@@ -756,3 +756,23 @@ describe('appointments SSOT: staff_note column metadata (Phase 4)', () => {
     expect(typeof cols.staff_note.label?.en).toBe('string');
   });
 });
+
+describe('clients SSOT: DNI column and secret-free read source', () => {
+  it('clients declares a nullable, filterable, sortable dni column with {es,en} labels', () => {
+    const cols = structure.tables.clients.columns as Record<string, any>;
+    expect(cols.dni).toBeDefined();
+    expect(cols.dni.type).toBe('string');
+    expect(cols.dni.validator?.nullable).toBe(true);
+    expect(cols.dni.filterable).toBe(true);
+    expect(cols.dni.sortable).toBe(true);
+    expect(typeof cols.dni.label?.es).toBe('string');
+    expect(typeof cols.dni.label?.en).toBe('string');
+  });
+
+  it('clients and professionals read through the secret-free directory view', () => {
+    // Writes stay on auth.users; reads must project the view so password columns never leak.
+    expect((structure.tables.clients as any).sqlReadTable).toBe('auth.users_directory');
+    expect((structure.tables.professionals as any).sqlReadTable).toBe('auth.users_directory');
+    expect((structure.tables.clients as any).sqlTable).toBe('auth.users');
+  });
+});

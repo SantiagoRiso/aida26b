@@ -136,6 +136,37 @@ describe('users carves out a read-only exception for the admin Usuarios screen',
   });
 });
 
+describe('discriminated person reads never leak auth secrets', () => {
+  test('GET clients excludes password columns and projects dni', async () => {
+    const res = await api('/clients');
+    expect(res.status).toBe(200);
+    const row = res.body.data[0];
+    expect(row).toBeDefined();
+    // Reads go through auth.users_directory, so password material never reaches the response.
+    expect(row).not.toHaveProperty('password_hash');
+    expect(row).not.toHaveProperty('password_salt');
+    expect(row).toHaveProperty('dni');
+  });
+
+  test('GET professionals excludes password columns', async () => {
+    const res = await api('/professionals');
+    expect(res.status).toBe(200);
+    const row = res.body.data[0];
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty('password_hash');
+    expect(row).not.toHaveProperty('password_salt');
+  });
+
+  test('clients can be filtered by dni', async () => {
+    await testsPool.query(`UPDATE auth.users SET dni = '44556677' WHERE id = $1`, [clientUserId]);
+    const res = await api('/clients?filter_dni=44556677');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(String(res.body.data[0].id)).toBe(String(clientUserId));
+    expect(res.body.data[0].dni).toBe('44556677');
+  });
+});
+
 describe('unknown entities are rejected', () => {
   test('GET on an unknown entity is not_found', async () => {
     const res = await api('/widgets');

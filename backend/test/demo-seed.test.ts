@@ -151,5 +151,7 @@ describe('demo seed idempotency', () => {
       const after = await count(`SELECT COUNT(*)::int count FROM ${t}`);
       expect(after, `${t} must be stable after a re-run`).toBe(before[t]);
     }
-  });
+    // A full re-seed re-hashes ~42 passwords (scrypt) and re-scans the seeded window, which
+    // exceeds the 5s default; widen it like the beforeAll hook above.
+  }, 30_000);
 });

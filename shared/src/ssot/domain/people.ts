@@ -5,7 +5,7 @@ import { pkColumn, businessIdColumn } from './business';
 // password_hash, password_salt, and username are deliberately excluded from the exposed set.
 // username stays out of the generic layer because it is auth-sensitive (login identity).
 const authUsersAllowedColumns = [
-  'id', 'business_id', 'role', 'display_name', 'email', 'phone', 'bio', 'notes',
+  'id', 'business_id', 'role', 'display_name', 'email', 'phone', 'dni', 'bio', 'notes',
   'is_active', 'must_change_password', 'deleted_at', 'deleted_by_user_id',
   'created_at', 'updated_at',
 ] as const;
@@ -141,8 +141,10 @@ export const peopleTables = {
 
   // Logical entity backed by auth.users WHERE role='Client'.
   // No separate table exists; sqlTable + roleDiscriminator redirect all generic SQL to auth.users.
+  // Reads go through auth.users_directory (secret-free view) so a generic SELECT never projects
+  // password columns; writes still hit auth.users via sqlTable.
   // Create is disabled — clients are created only via POST /api/admin/users.
-  // Update is limited to profile fields (display_name, phone, notes); see updateAllowedColumns.
+  // Update is limited to profile fields (display_name, phone, dni, notes); email is read-only.
   clients: {
     columns: {
       id: pkColumn,
@@ -167,6 +169,13 @@ export const peopleTables = {
         // email (login identity) is readable but not updatable through generic PUT
         editable: false,
       },
+      dni: {
+        type: 'string',
+        label: { es: 'DNI', en: 'DNI' },
+        validator: { nullable: true },
+        filterable: true,
+        sortable: true,
+      },
       phone: {
         type: 'string',
         label: { es: 'Teléfono', en: 'Phone' },
@@ -189,6 +198,8 @@ export const peopleTables = {
     addButtonLabel: { es: 'Agregar Cliente', en: 'Add Client' },
     // Physical table is auth.users; role discriminator limits reads/writes to Client rows.
     sqlTable: 'auth.users',
+    // Reads project the secret-free view (no password_hash/password_salt).
+    sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Client' },
     // Business is on auth.users directly; the discriminated table carries business_id.
     businessScoped: true,
@@ -234,6 +245,8 @@ export const peopleTables = {
     addButtonLabel: { es: 'Agregar Profesional', en: 'Add Professional' },
     // Physical table is auth.users; role discriminator limits reads/writes to Professional rows.
     sqlTable: 'auth.users',
+    // Reads project the secret-free view (no password_hash/password_salt).
+    sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Professional' },
     // Business is on auth.users directly; the discriminated table carries business_id.
     businessScoped: true,

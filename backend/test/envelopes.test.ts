@@ -132,6 +132,7 @@ describe('validation adapter', () => {
     const result = validateFullObject('clients', {
       display_name: 'Ana',
       phone: '123',
+      dni: '12345678',
       notes: 'x',
     });
     const stopped = sendErrorsIfInvalid(res as unknown as Response, result);
