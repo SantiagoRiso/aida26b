@@ -12,12 +12,6 @@ const portalRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: SCREEN_ROLES['portal-appointments'] as Role[] },
   },
   {
-    path: '/portal/request',
-    name: 'portal-request',
-    component: () => import('@/views/portal/RequestView.vue'),
-    meta: { requiresAuth: true, roles: SCREEN_ROLES['portal-request'] as Role[] },
-  },
-  {
     path: '/portal/balance',
     name: 'portal-balance',
     component: () => import('@/views/portal/BalanceView.vue'),

@@ -22,8 +22,9 @@ async function submit() {
   try {
     const result = await auth.login(username.value, password.value);
     if (!result.ok) {
-      // Login 401 is invalid credentials, not a session expiry (entry auth-mode in store).
-      credError.value = t('toast.invalidCredentials');
+      // Only a 401 is bad credentials; a 500/other means the server (or its DB) is unavailable —
+      // don't blame the user's password for a server-side failure.
+      credError.value = result.status === 401 ? t('toast.invalidCredentials') : t('toast.serverUnavailable');
       return;
     }
     // Route by role. If must_change_password is set, the guard will bounce to change-password.
@@ -32,6 +33,9 @@ async function submit() {
     } else {
       await router.push({ name: 'staff-dashboard' });
     }
+  } catch {
+    // The backend was unreachable (fetch rejected before any response) — same server-down message.
+    credError.value = t('toast.serverUnavailable');
   } finally {
     loading.value = false;
   }

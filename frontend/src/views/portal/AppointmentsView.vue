@@ -6,13 +6,16 @@ import { useUiStore } from '@/stores/ui';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { EventClickArg } from '@fullcalendar/core';
+import { PlusIcon } from '@heroicons/vue/24/outline';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
+import RequestFlow from '@/components/portal/RequestFlow.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
+import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 
@@ -35,6 +38,16 @@ async function load() {
 }
 
 onMounted(load);
+
+// Requesting an appointment is a modal launched from here; the panel unmounts on close,
+// so each open starts a fresh flow.
+const requestOpen = ref(false);
+
+async function onRequestSuccess() {
+  requestOpen.value = false;
+  ui.toast('success', 'requestSubmitted');
+  await load();
+}
 
 // For a client, the professional's name is the informative default — their own name
 // (or "Turno #id") says nothing.
@@ -139,7 +152,13 @@ const past = computed(() =>
 
 <template>
   <div class="space-y-8">
-    <h1 class="text-2xl font-bold">{{ t('nav.myAppointments') }}</h1>
+    <div class="space-y-4">
+      <h1 class="text-2xl font-bold">{{ t('nav.myAppointments') }}</h1>
+      <AppButton size="lg" class="w-full shadow-md" @click="requestOpen = true">
+        <PlusIcon class="mr-2 h-5 w-5" aria-hidden="true" />
+        {{ t('actions.requestAppointment') }}
+      </AppButton>
+    </div>
 
     <div v-if="loading">
       <Skeleton variant="row" :rows="4" />
@@ -236,6 +255,16 @@ const past = computed(() =>
       </section>
     </template>
   </div>
+
+  <DetailPanel
+    :open="requestOpen"
+    :title="t('actions.requestAppointment')"
+    variant="modal"
+    size="2xl"
+    @close="requestOpen = false"
+  >
+    <RequestFlow @success="onRequestSuccess" />
+  </DetailPanel>
 
   <DetailPanel
     :open="detailOpen"

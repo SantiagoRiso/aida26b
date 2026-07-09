@@ -743,6 +743,24 @@ export function mountAppointmentRoutes(
 
       await auditInTx(pgClient, user, `appointment_${to}`, 'success', id);
 
+      // Marking a session attended (completed) bills it: post the session charge once. A no_show
+      // never charges, and the NOT EXISTS guard keeps it idempotent if a charge was already posted.
+      if (to === 'completed' && row.price != null && row.client_user_id != null) {
+        const charge = await pgClient.query<{ id: string }>(
+          `INSERT INTO ledger_entries
+             (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
+           SELECT $1, $2, 'charge', $3, NULL, $4
+           WHERE NOT EXISTS (
+             SELECT 1 FROM ledger_entries WHERE appointment_id = $2 AND entry_type = 'charge'
+           )
+           RETURNING id`,
+          [row.client_user_id, id, row.price, user.id],
+        );
+        if (charge.rows[0]) {
+          await auditInTx(pgClient, user, 'ledger_charge_created', 'success', Number(charge.rows[0].id), 'ledger_entries');
+        }
+      }
+
       await pgClient.query('COMMIT');
 
       if (user.role === 'Client') {

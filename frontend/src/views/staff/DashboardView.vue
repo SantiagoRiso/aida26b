@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import { listAppointments } from '@/api/appointments';
+import { listAppointments, transitionAppointment } from '@/api/appointments';
+import { createEntry } from '@/api/ledger';
 import { listAudit } from '@/api/audit';
 import type { Appointment } from '@/api/appointments';
 import type { AuditEvent } from '@/api/audit';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -17,8 +19,9 @@ import AppButton from '@/components/shared/AppButton.vue';
 const { t } = useI18n();
 const auth = useAuthStore();
 const router = useRouter();
-const { formatDateTime } = useCurrency();
+const { formatDateTime, formatARS } = useCurrency();
 const { label } = useLabel();
+const toast = useToast();
 
 const role = computed(() => auth.user?.role);
 const userId = computed(() => auth.user?.id);
@@ -105,6 +108,15 @@ onMounted(() => {
   if (role.value === 'Professional') loadProfessional();
   else if (role.value === 'Receptionist') loadReceptionist();
   else if (role.value === 'Admin') loadAdmin();
+  if (showsCard.value) {
+    void loadCurrent();
+    // Re-evaluate the ±5-min window as time passes so the card appears/clears on its own.
+    nowTimer = window.setInterval(() => { now.value = new Date(); }, 30_000);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (nowTimer !== undefined) window.clearInterval(nowTimer);
 });
 
 // Untitled appointments read as the client's name, not an opaque "Turno #id".
@@ -118,6 +130,97 @@ function apptLabel(appt: Appointment): string {
     : undefined;
   return clientName ?? `Turno #${appt.id}`;
 }
+
+// Current-appointment payment card. Scoped to Admin/Professional — the roles that may register a
+// payment (a receptionist can only post appointment charges, which completion already handles).
+const { options: serviceOptions } = useForeignKeyOptions({
+  table: 'services', valueField: 'id', labelField: 'name',
+});
+const showsCard = computed(() => role.value === 'Admin' || role.value === 'Professional');
+
+const todays = ref<Appointment[]>([]);
+const now = ref(new Date());
+let nowTimer: number | undefined;
+// Per-card editable payment amount and in-flight flag, keyed by appointment id.
+const amounts = ref<Record<number, string>>({});
+const processing = ref<Record<number, boolean>>({});
+
+// The turno is "current" from 5 min before it starts until 5 min after it ends.
+const WINDOW_MS = 5 * 60 * 1000;
+function isCurrent(appt: Appointment, at: Date): boolean {
+  if (appt.state !== 'scheduled') return false;
+  const start = new Date(appt.starts_at).getTime();
+  const end = new Date(appt.ends_at).getTime();
+  const t = at.getTime();
+  return t >= start - WINDOW_MS && t <= end + WINDOW_MS;
+}
+const currentAppointments = computed(() =>
+  todays.value
+    .filter((a) => isCurrent(a, now.value))
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
+);
+
+// Attendance can't be marked before the turno starts (backend rejects it), so actions stay
+// disabled during the pre-start part of the window.
+function canSettle(appt: Appointment): boolean {
+  return now.value.getTime() >= new Date(appt.starts_at).getTime();
+}
+
+async function loadCurrent() {
+  // Full local day as ISO bounds — a bare date as date_to resolves to that day's midnight and
+  // would exclude the whole day (the filter compares starts_at directly).
+  const res = await listAppointments({
+    date_from: todayStart.toISOString(),
+    date_to: todayEnd.toISOString(),
+    limit: 100,
+  });
+  if (!res.ok) return;
+  todays.value = res.data;
+  for (const a of todays.value) {
+    if (!(a.id in amounts.value)) amounts.value[a.id] = a.price ?? '';
+  }
+}
+
+function serviceNameFor(appt: Appointment): string | null {
+  return serviceOptions.value.find((o) => o.value === String(appt.service_id))?.label ?? null;
+}
+
+// Registering attendance completes the turno (the backend posts the session charge once);
+// "paid" additionally records the payment. "absent" marks a no_show and never charges.
+async function settle(appt: Appointment, action: 'paid' | 'unpaid' | 'absent') {
+  processing.value[appt.id] = true;
+  try {
+    const to = action === 'absent' ? 'no_show' : 'completed';
+    const res = await transitionAppointment(appt.id, to);
+    if (!res.ok) {
+      toast.error('genericError');
+      return;
+    }
+
+    if (action === 'paid' && appt.client_user_id != null) {
+      const amount = (amounts.value[appt.id] ?? appt.price ?? '').trim();
+      const paid = await createEntry({
+        client_user_id: appt.client_user_id,
+        entry_type: 'payment',
+        amount_ars: amount,
+        appointment_id: appt.id,
+      });
+      if (!paid.ok) {
+        // The turno is already completed/charged; surface the payment failure and refresh.
+        toast.error('genericError');
+        await loadCurrent();
+        return;
+      }
+    }
+
+    toast.success(
+      action === 'paid' ? 'paymentRegistered' : action === 'unpaid' ? 'attendanceRegistered' : 'absenceRegistered',
+    );
+    await loadCurrent();
+  } finally {
+    processing.value[appt.id] = false;
+  }
+}
 </script>
 
 <template>
@@ -125,6 +228,59 @@ function apptLabel(appt: Appointment): string {
     <h1 class="text-[28px] font-semibold leading-tight text-heading mb-6">
       {{ label({ es: 'Inicio', en: 'Dashboard' }) }}
     </h1>
+
+    <div v-if="showsCard && currentAppointments.length" class="mb-6 space-y-4">
+      <div
+        v-for="appt in currentAppointments"
+        :key="appt.id"
+        class="rounded-lg border-2 border-accent bg-card p-5"
+      >
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-xs font-semibold uppercase tracking-wide text-accent">
+              {{ label({ es: 'Turno actual', en: 'Current appointment' }) }}
+            </div>
+            <h2 class="mt-1 text-lg font-semibold text-heading">{{ apptLabel(appt) }}</h2>
+            <p class="text-sm text-neutral">
+              {{ formatDateTime(appt.starts_at) }}
+              <span v-if="serviceNameFor(appt)"> · {{ serviceNameFor(appt) }}</span>
+            </p>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-neutral">{{ label({ es: 'Precio', en: 'Price' }) }}</div>
+            <div class="text-lg font-semibold tabular-nums">{{ appt.price ? formatARS(appt.price) : '—' }}</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <div class="flex flex-col gap-1">
+            <label class="text-xs font-semibold text-neutral" :for="`pay-${appt.id}`">
+              {{ label({ es: 'Pago (ARS)', en: 'Payment (ARS)' }) }}
+            </label>
+            <input
+              :id="`pay-${appt.id}`"
+              v-model="amounts[appt.id]"
+              type="text"
+              inputmode="decimal"
+              :disabled="!canSettle(appt)"
+              class="w-36 rounded-md border border-border bg-card px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent disabled:bg-surface disabled:text-neutral"
+            />
+          </div>
+          <AppButton variant="primary" :loading="processing[appt.id]" :disabled="!canSettle(appt)" @click="settle(appt, 'paid')">
+            {{ label({ es: 'Pagó', en: 'Paid' }) }}
+          </AppButton>
+          <AppButton variant="neutral" :disabled="processing[appt.id] || !canSettle(appt)" @click="settle(appt, 'unpaid')">
+            {{ label({ es: 'No pagó', en: 'Not paid' }) }}
+          </AppButton>
+          <AppButton variant="neutral" :disabled="processing[appt.id] || !canSettle(appt)" @click="settle(appt, 'absent')">
+            {{ label({ es: 'No asistió', en: 'No-show' }) }}
+          </AppButton>
+          <p v-if="!canSettle(appt)" class="text-xs text-neutral">
+            {{ label({ es: 'El turno todavía no empezó.', en: 'The appointment hasn’t started yet.' }) }}
+          </p>
+        </div>
+      </div>
+    </div>
 
     <template v-if="role === 'Professional'">
       <div v-if="loadingPro">

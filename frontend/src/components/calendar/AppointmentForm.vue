@@ -13,7 +13,7 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useToast } from '@/composables/useToast';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
-import TypeaheadSelect from '@/components/shared/TypeaheadSelect.vue';
+import Selector from '@/components/shared/Selector.vue';
 import SlotPicker from './SlotPicker.vue';
 import type { TimeInterval } from '@shared/ssot/domain/scheduling';
 
@@ -92,10 +92,6 @@ const { options: clientOptions } = useForeignKeyOptions({
 
 // Locked when booking from a specific client's page — the client isn't a choice here.
 const clientLocked = computed(() => props.prefillClientId != null);
-const lockedClientLabel = computed(() => {
-  const opt = clientOptions.value.find((o) => String(o.value) === form.client_user_id);
-  return opt?.label ?? form.client_user_id;
-});
 const { options: professionalOptions } = useForeignKeyOptions({
   table: 'professionals',
   valueField: 'id',
@@ -123,9 +119,6 @@ const availableProfessionalOptions = computed(() => {
   }
   return professionalOptions.value;
 });
-const singleProfessional = computed(() =>
-  availableProfessionalOptions.value.length === 1 ? availableProfessionalOptions.value[0] : null,
-);
 watch(
   availableProfessionalOptions,
   (opts) => {
@@ -164,11 +157,6 @@ const availableServiceOptions = computed(() => {
   const set = new Set(offered);
   return serviceOptions.value.filter((o) => set.has(String(o.value)));
 });
-
-// A single offered service isn't a choice — auto-select it and render it read-only.
-const singleService = computed(() =>
-  availableServiceOptions.value.length === 1 ? availableServiceOptions.value[0] : null,
-);
 
 // Keep the selected service consistent with the professional's offerings (auto-pick the only one).
 watch(
@@ -268,16 +256,10 @@ function submit() {
   <form class="flex flex-col gap-4" @submit.prevent="submit">
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-client">{{ t('calendar.clientLabel') }} *</label>
-      <input
-        v-if="clientLocked"
+      <Selector
         id="appt-client"
-        :value="lockedClientLabel"
-        disabled
-        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
-      />
-      <TypeaheadSelect
-        v-else
-        id="appt-client"
+        searchable
+        :readonly="clientLocked"
         :model-value="form.client_user_id || null"
         :options="clientOptions"
         placeholder="Buscar cliente…"
@@ -288,16 +270,9 @@ function submit() {
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-prof">{{ t('calendar.professionalLabel') }} *</label>
-      <input
-        v-if="singleProfessional"
+      <Selector
         id="appt-prof"
-        :value="singleProfessional.label"
-        disabled
-        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
-      />
-      <TypeaheadSelect
-        v-else
-        id="appt-prof"
+        searchable
         :model-value="form.professional_user_id || null"
         :options="availableProfessionalOptions"
         placeholder="Buscar profesional…"
@@ -308,23 +283,13 @@ function submit() {
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-service">{{ t('calendar.serviceLabel') }} *</label>
-      <input
-        v-if="singleService"
+      <Selector
         id="appt-service"
-        :value="singleService.label"
-        disabled
-        class="rounded border border-border px-3 py-2 text-sm bg-surface text-neutral"
+        :model-value="form.service_id || null"
+        :options="availableServiceOptions"
+        placeholder="— Seleccionar servicio —"
+        @update:model-value="form.service_id = $event ?? ''"
       />
-      <select
-        v-else
-        id="appt-service"
-        v-model="form.service_id"
-        class="rounded border border-border px-3 py-2 text-sm"
-        required
-      >
-        <option value="">— Seleccionar servicio —</option>
-        <option v-for="opt in availableServiceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
       <FieldError :message="fieldErrors.service_id" />
     </div>
 

@@ -1,3 +1,7 @@
+# Groups every container for this site under one Compose project (aida26_*),
+# independent of the folder name.
+name: aida26
+
 services:
   database:
     image: postgres:18-alpine
@@ -72,7 +76,16 @@ services:
     networks:
       - aida26_network
     environment:
-      - API_URL=http://backend:3000
+      # Vite proxies /api to the backend service over the compose network.
+      - API_PROXY_TARGET=http://backend:3000
+    volumes:
+      - ./frontend/src:/app/frontend/src
+      - ./frontend/styles:/app/frontend/styles
+      - ./frontend/index.html:/app/frontend/index.html
+      - ./frontend/tsconfig.json:/app/frontend/tsconfig.json
+      - ./frontend/vite.config.ts:/app/frontend/vite.config.ts
+      - ./tsconfig.base.json:/app/tsconfig.base.json
+      - ./shared/src:/app/shared/src
 
 volumes:
   postgres_data:

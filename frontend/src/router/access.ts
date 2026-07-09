@@ -31,7 +31,6 @@ export const SCREEN_ROLES: Record<string, Role[]> = {
   'staff-audit': ['Admin'],
   'staff-settings': ['Admin', 'Professional', 'Receptionist'],
   'portal-appointments': ['Client'],
-  'portal-request': ['Client'],
   'portal-balance': ['Client'],
   'portal-preferences': ['Client'],
 };

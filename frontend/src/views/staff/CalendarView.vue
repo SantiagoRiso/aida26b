@@ -518,6 +518,8 @@ const pastBgEvents = computed<EventInput[]>(() => {
 const fullOptions = computed<typeof calendarOptions.value>(() => {
   // Read here so the computed re-runs (and FC re-renders the graying) when the map is replaced.
   const monthAvail = monthAvailability.value;
+  // Sobreturno mode makes full days bookable, so they must not read as disabled/greyed either.
+  const fine = fineDrag.value;
   const baseViews = (calendarOptions.value.views ?? {}) as Record<string, Record<string, unknown>>;
   return {
     ...calendarOptions.value,
@@ -535,9 +537,10 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
       ...baseViews,
       dayGridMonth: {
         ...(baseViews.dayGridMonth ?? {}),
-        // Dim days the selected professional has no free slots on (loaded → explicitly false).
+        // Dim days the selected professional has no free slots on (loaded → explicitly false),
+        // except in sobreturno mode where those days stay bookable.
         dayCellClassNames: (arg: { date: Date }) =>
-          monthAvail.get(dayISO(arg.date, 0)) === false ? ['fc-day-unavailable'] : [],
+          !fine && monthAvail.get(dayISO(arg.date, 0)) === false ? ['fc-day-unavailable'] : [],
       },
     },
     datesSet: (info: { startStr: string; endStr: string; view: { type: string } }) => {
@@ -563,8 +566,9 @@ function handleSelect(arg: DateSelectArg) {
     toast.info('pastNotBookable');
     return;
   }
-  // Month view: block days the professional has no availability on (matches the graying).
-  if (currentViewType.value === 'dayGridMonth' && monthAvailability.value.get(day) === false) {
+  // Month view: block days the professional has no availability on (matches the graying) —
+  // unless sobreturno is on, which deliberately books outside published availability.
+  if (!fineDrag.value && currentViewType.value === 'dayGridMonth' && monthAvailability.value.get(day) === false) {
     toast.info('noSlotsThatDay');
     return;
   }

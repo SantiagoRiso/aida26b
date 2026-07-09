@@ -18,7 +18,6 @@ function makeRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/portal/appointments', name: 'portal-appointments', component: { template: '<div/>' } },
-      { path: '/portal/request', name: 'portal-request', component: { template: '<div/>' } },
       { path: '/portal/balance', name: 'portal-balance', component: { template: '<div/>' } },
       { path: '/portal/preferences', name: 'portal-preferences', component: { template: '<div/>' } },
     ],
@@ -88,7 +87,7 @@ describe('PortalNav', () => {
     setActivePinia(createPinia());
   });
 
-  it('renders four nav links', async () => {
+  it('renders three nav links', async () => {
     const router = makeRouter();
     const i18n = makeI18n();
     await router.push('/portal/appointments');
@@ -98,7 +97,7 @@ describe('PortalNav', () => {
     });
 
     const links = wrapper.findAll('a');
-    expect(links.length).toBe(4);
+    expect(links.length).toBe(3);
   });
 
   it('includes Mis turnos link', async () => {
@@ -113,7 +112,8 @@ describe('PortalNav', () => {
     expect(wrapper.html()).toContain('Mis turnos');
   });
 
-  it('includes Solicitar turno link', async () => {
+  // "Solicitar turno" is no longer a nav tab — it's a button on the appointments dashboard.
+  it('does not include a Solicitar turno nav link', async () => {
     const router = makeRouter();
     const i18n = makeI18n();
     await router.push('/portal/appointments');
@@ -122,7 +122,7 @@ describe('PortalNav', () => {
       global: { plugins: [router, i18n] },
     });
 
-    expect(wrapper.html()).toContain('Solicitar turno');
+    expect(wrapper.html()).not.toContain('Solicitar turno');
   });
 });
 
@@ -175,9 +175,9 @@ describe('isCancelable logic', () => {
 });
 
 describe('Portal route configuration', () => {
-  it('portal-routes exports four routes', async () => {
+  it('portal-routes exports three routes', async () => {
     const { default: portalRoutes } = await import('@/router/portal-routes');
-    expect(portalRoutes.length).toBe(4);
+    expect(portalRoutes.length).toBe(3);
   });
 
   it('all portal routes require authentication', async () => {

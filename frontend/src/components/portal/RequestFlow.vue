@@ -10,7 +10,7 @@ import type { Appointment } from '@/api/appointments';
 import type { TableKey } from '@shared/types/types';
 import { useCurrency, todayLocalISO } from '@/composables/useCurrency';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
-import TypeaheadSelect from '@/components/shared/TypeaheadSelect.vue';
+import Selector from '@/components/shared/Selector.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 
@@ -44,7 +44,13 @@ const myAppointments = ref<Appointment[]>([]);
 const loadingOptions = ref(false);
 
 const selectedProfId = ref<number | null>(null);
-const selectedService = ref<ServiceRow | null>(null);
+const selectedServiceId = ref<string | null>(null);
+// The full row for the chosen service id — the rest of the flow reads its price/duration.
+const selectedService = computed<ServiceRow | null>(() =>
+  selectedServiceId.value == null
+    ? null
+    : services.value.find((s) => String(s.id) === selectedServiceId.value) ?? null,
+);
 
 async function loadOptions() {
   loadingOptions.value = true;
@@ -123,6 +129,35 @@ const professionalOptions = computed<ProfOption[]>(() => {
     return a.label.localeCompare(b.label);
   });
   return ranked.map(({ recency: _r, ...rest }) => rest);
+});
+
+// The service list is scoped to what the chosen professional offers (mirrors the staff form);
+// with no professional selected, or a professional with no mapping, fall back to every service.
+const availableServices = computed<ServiceRow[]>(() => {
+  const profId = selectedProfId.value;
+  if (profId == null) return services.value;
+  const offered = new Set(
+    profServices.value
+      .filter((ps) => String(ps.professional_user_id) === String(profId))
+      .map((ps) => String(ps.service_id)),
+  );
+  if (offered.size === 0) return services.value;
+  return services.value.filter((s) => offered.has(String(s.id)));
+});
+
+// Options for the Selector; the component renders a lone service as a read-only label and auto-picks it.
+const serviceSelectOptions = computed(() =>
+  availableServices.value.map((s) => ({
+    value: String(s.id),
+    label: `${s.name} (${s.default_duration_minutes}min)`,
+  })),
+);
+
+// Drop a chosen service the newly picked professional doesn't offer (Selector auto-picks a lone one).
+watch(availableServices, (opts) => {
+  if (selectedServiceId.value && !opts.some((s) => String(s.id) === selectedServiceId.value)) {
+    selectedServiceId.value = null;
+  }
 });
 
 const selectedDate = ref<string>('');
@@ -260,8 +295,9 @@ const today = todayLocalISO();
       <div v-else class="space-y-4">
         <div>
           <label class="mb-1 block text-sm font-medium" for="prof-select">Profesional</label>
-          <TypeaheadSelect
+          <Selector
             id="prof-select"
+            searchable
             :model-value="selectedProfId != null ? String(selectedProfId) : null"
             :options="professionalOptions"
             :extra-search="(o) => `${o.services} ${o.bio ?? ''}`"
@@ -275,21 +311,18 @@ const today = todayLocalISO();
               </div>
               <div v-if="option.services" class="truncate text-sm text-accent">{{ option.services }}</div>
             </template>
-          </TypeaheadSelect>
+          </Selector>
         </div>
 
         <div>
           <label class="mb-1 block text-sm font-medium" for="svc-select">Servicio</label>
-          <select
+          <Selector
             id="svc-select"
-            v-model="selectedService"
-            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option :value="null" disabled>Seleccioná un servicio</option>
-            <option v-for="s in services" :key="s.id" :value="s">
-              {{ s.name }} ({{ s.default_duration_minutes }}min)
-            </option>
-          </select>
+            :model-value="selectedServiceId"
+            :options="serviceSelectOptions"
+            placeholder="Seleccioná un servicio"
+            @update:model-value="selectedServiceId = $event"
+          />
         </div>
 
         <AppButton :disabled="!canGoStep2" @click="goStep2">

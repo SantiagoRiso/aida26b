@@ -12,9 +12,16 @@ export default defineConfig({
     },
   },
   server: {
+    // host:true binds 0.0.0.0 so the dev server is reachable from outside the container.
+    host: true,
+    port: 8080,
     proxy: {
-      // Dev-only: Express runs on :3000; Vite dev server proxies /api so cookies stay same-site.
-      '/api': { target: 'http://localhost:3000', changeOrigin: true },
+      // Dev-only: Express serves the API; Vite proxies /api so cookies stay same-site.
+      // Target is the backend host — 'backend' inside Docker, localhost for bare-metal dev.
+      '/api': {
+        target: process.env.API_PROXY_TARGET || 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
   build: {

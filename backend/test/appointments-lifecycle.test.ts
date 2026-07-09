@@ -441,6 +441,64 @@ describe('POST /api/appointments/:id/transition — timing guard (D-13)', () => 
   });
 });
 
+describe('POST /api/appointments/:id/transition — charge on completion', () => {
+  // A past start so the completion timing guard is satisfied.
+  const PAST_TS = new Date(Date.now() - 3600 * 1000).toISOString();
+
+  async function insertPastScheduled(): Promise<number> {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId, PAST_TS],
+    );
+    return Number(r.rows[0].id);
+  }
+
+  async function chargesFor(apptId: number): Promise<{ amount_ars: string }[]> {
+    const r = await pool.query<{ amount_ars: string }>(
+      `SELECT amount_ars FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'`,
+      [apptId],
+    );
+    return r.rows;
+  }
+
+  test('completing (attended) posts a single charge for the session price', async () => {
+    const id = await insertPastScheduled();
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    expect(res.status).toBe(200);
+    const charges = await chargesFor(id);
+    expect(charges).toHaveLength(1);
+    expect(charges[0].amount_ars).toBe('1500.00');
+    // No cleanup: ledger_entries are append-only and the appointment FK would block deletion;
+    // the DB is reset per file and later tests query by their own appointment id.
+  });
+
+  test('does not double-charge when a charge already exists', async () => {
+    const id = await insertPastScheduled();
+    await pool.query(
+      `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, actor_user_id)
+       VALUES ($1, $2, 'charge', '1500.00', $3)`,
+      [clientId, id, proId],
+    );
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    expect(res.status).toBe(200);
+    expect(await chargesFor(id)).toHaveLength(1);
+  });
+
+  test('no_show posts no charge', async () => {
+    const id = await insertPastScheduled();
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'no_show' });
+    expect(res.status).toBe(200);
+    expect(await chargesFor(id)).toHaveLength(0);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
+  });
+});
+
 describe('Client cancellation cutoff (D-16/D-17)', () => {
   test('cutoff=0: client can cancel a scheduled appointment any time before starts_at', async () => {
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 0 WHERE id = $1`, [bizId]);
