@@ -30,17 +30,19 @@ function currentLevel(): Level {
   return env && env in LEVELS ? (env as Level) : 'info';
 }
 
-function emit(level: Exclude<Level, 'silent'>, fields: Record<string, unknown>) {
+type LogFields = Record<string, string | number>;
+
+function emit(level: Exclude<Level, 'silent'>, fields: LogFields) {
   if (LEVELS[level] < LEVELS[currentLevel()]) return;
   const entry = { level, time: new Date().toISOString(), version: VERSION, ...fields };
   process.stdout.write(`${JSON.stringify(entry)}\n`);
 }
 
 export const logger = {
-  debug: (fields: Record<string, unknown>) => emit('debug', fields),
-  info: (fields: Record<string, unknown>) => emit('info', fields),
-  warn: (fields: Record<string, unknown>) => emit('warn', fields),
-  error: (fields: Record<string, unknown>) => emit('error', fields),
+  debug: (fields: LogFields) => emit('debug', fields),
+  info: (fields: LogFields) => emit('info', fields),
+  warn: (fields: LogFields) => emit('warn', fields),
+  error: (fields: LogFields) => emit('error', fields),
 };
 
 // Per-request log on completion. Never logs the request body.

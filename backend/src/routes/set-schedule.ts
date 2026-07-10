@@ -2,9 +2,12 @@ import express from 'express';
 import type { Request, RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
+import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import { assertOwnScheduleAllowed } from './crud-policy';
 import { validateWeeklySchedule } from '../../../shared/src/ssot/domain';
+import type { WeeklySchedule } from '../../../shared/src/ssot/domain';
+import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
 
@@ -12,7 +15,7 @@ type AuditFn = (
   req: Request,
   eventType: string,
   outcome: string,
-  details?: Record<string, unknown>
+  details?: Record<string, ColumnValue>
 ) => Promise<void>;
 
 // Dedicated set-weekly-schedule endpoint (D-14): validates the per-block-granularity weekly JSON
@@ -23,7 +26,7 @@ export function mountSetScheduleRoutes(
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
 ) {
-  app.post('/api/schedule', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/schedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     const body = req.body ?? {};
@@ -61,7 +64,7 @@ export function mountSetScheduleRoutes(
     const ownerCol = target.professional_user_id != null ? 'professional_user_id' : 'resource_id';
     const ownerId = target.professional_user_id != null ? target.professional_user_id : target.resource_id;
 
-    const result = await pool.query<{ id: string; weekly: unknown }>(
+    const result = await pool.query<{ id: string; weekly: WeeklySchedule }>(
       `INSERT INTO schedules (${ownerCol}, weekly)
        VALUES ($1, $2)
        ON CONFLICT (${ownerCol}) DO UPDATE SET weekly = EXCLUDED.weekly, updated_at = now()
@@ -76,5 +79,5 @@ export function mountSetScheduleRoutes(
     });
 
     return sendData(res, result.rows[0]);
-  });
+  }));
 }

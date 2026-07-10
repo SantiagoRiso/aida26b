@@ -1,7 +1,39 @@
-import type { TableKey, Response, ColumnDef, TableStructure }  from '../../shared/src/types/types';
+import type { TableKey, Response, ColumnDef, TableStructure, SqlParam }  from '../../shared/src/types/types';
 import      { structure } from '../../shared/src/ssot/structure';
 import      { getPkFields, getSoftDeletePolicy } from '../../shared/src/utils/utils';
 import type { Pool }      from 'pg';
+import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction, RequestHandler } from 'express';
+import { sendError } from './status_messages';
+
+// Express 4 does not catch rejected async handlers — one uncaught rejection kills the whole
+// process. These wrappers are the crash net; structured error handling stays in the handlers.
+function guardRoute(
+  fn: (req: ExpressRequest, res: ExpressResponse) => Promise<ExpressResponse | void>,
+): RequestHandler {
+  return async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (error) {
+      console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
+      if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
+    }
+  };
+}
+
+// For async middleware. On rejection the request ends here (no next()): a failed
+// auth/authz guard must never let the request fall through to the protected handler.
+function guardMiddleware(
+  fn: (req: ExpressRequest, res: ExpressResponse, next: NextFunction) => Promise<ExpressResponse | void>,
+): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      await fn(req, res, next);
+    } catch (error) {
+      console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
+      if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
+    }
+  };
+}
 
 function getEntityName(table: TableKey): string {
   return String(structure.tables[table].uiName.en);
@@ -29,14 +61,13 @@ function getSortableColumns(table: TableKey): string[] {
   return Array.from(new Set([...getPkFields(table), ...sortable]));
 }
 
-async function tryQuery(pool: Pool, queryStatement: string, queryArguments?: any): Promise<Response>{
+async function tryQuery(pool: Pool, queryStatement: string, queryArguments?: SqlParam[]): Promise<Response>{
   try {
     return {success: true , data: await pool.query(queryStatement, queryArguments), message: ''};
   } catch (error) {
     console.error(error);
-    const code = typeof (error as { code?: unknown }).code === 'string'
-      ? (error as { code: string }).code
-      : undefined;
+    const e = error as { code?: string };
+    const code = typeof e.code === 'string' ? e.code : undefined;
     return {success: false, data: error, message: 'Internal server error', code};
   }
 }
@@ -90,4 +121,4 @@ function formatTableColumnsForQuery(fieldsNames: string[], from: number = 1): st
   return [tupleContent, tupleWithReplaceParameters];
 }
 
-export { getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause, getRoleCheckedColumns };
+export { guardRoute, guardMiddleware, getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause, getRoleCheckedColumns };

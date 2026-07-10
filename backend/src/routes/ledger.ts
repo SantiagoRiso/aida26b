@@ -2,6 +2,7 @@ import express from 'express';
 import type { Request, RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
+import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import { LEDGER_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
 import {
@@ -9,6 +10,7 @@ import {
   assertLedgerReadAllowed,
   auditInTx,
 } from './appointment-authz';
+import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
 
@@ -16,7 +18,7 @@ type AuditFn = (
   req: Request,
   eventType: string,
   outcome: string,
-  details?: Record<string, unknown>,
+  details?: Record<string, ColumnValue>,
 ) => Promise<void>;
 
 // Amount must be non-negative with at most two decimal places (mirrors amount_ars CHECK in DB).
@@ -31,7 +33,7 @@ export function mountLedgerRoutes(
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
 ) {
   // The authz check runs inside the transaction so the grant check and INSERT are atomic.
-  app.post('/api/ledger', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/ledger', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.business_id == null) {
@@ -142,10 +144,10 @@ export function mountLedgerRoutes(
     } finally {
       client.release();
     }
-  });
+  }));
 
   // Read authz runs on the pool — no write follows, so TOCTOU is not a concern here.
-  app.get('/api/clients/:id/balance', guards.auth, guards.passwordReady, async (req, res) => {
+  app.get('/api/clients/:id/balance', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     const clientUserId = Number(req.params.id);
@@ -173,9 +175,9 @@ export function mountLedgerRoutes(
       client_user_id: clientUserId,
       balance_ars: result.rows[0].balance_ars,
     });
-  });
+  }));
 
-  app.get('/api/clients/:id/ledger', guards.auth, guards.passwordReady, async (req, res) => {
+  app.get('/api/clients/:id/ledger', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     const clientUserId = Number(req.params.id);
@@ -207,5 +209,5 @@ export function mountLedgerRoutes(
     ]);
 
     return sendList(res, rows.rows, { page, limit, total: Number(count.rows[0].n) });
-  });
+  }));
 }

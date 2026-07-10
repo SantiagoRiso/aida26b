@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import { createOwnerPool } from './db';
 import { hashPassword } from './auth';
+import type { SqlParam } from '../../shared/src/types/types';
 
 dotenv.config();
 
@@ -30,7 +31,7 @@ const DEMO_PASSWORD = 'demo-pass-123';
 async function pickId(
   pool: Pick<Pool, 'query'>,
   sql: string,
-  params: unknown[]
+  params: SqlParam[]
 ): Promise<string | null> {
   const result = await pool.query<{ id: string }>(sql, params);
   return result.rows[0]?.id ?? null;
@@ -137,7 +138,7 @@ async function upsertSchedule(
   owner: { professionalUserId?: string; resourceId?: string }
 ): Promise<void> {
   const column = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
-  const ownerId = owner.professionalUserId ?? owner.resourceId;
+  const ownerId = owner.professionalUserId ?? owner.resourceId ?? null;
   const existing = await pickId(pool, `SELECT id FROM schedules WHERE ${column} = $1 LIMIT 1`, [ownerId]);
   if (existing) return;
   await pool.query(

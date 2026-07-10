@@ -2,11 +2,11 @@ import express from 'express';
 
 export type ListMeta = { page: number; limit: number; total: number };
 
-export function sendList(res: express.Response, data: unknown[], meta: ListMeta) {
+export function sendList<T>(res: express.Response, data: T[], meta: ListMeta) {
   return res.status(200).json({ success: true, data, meta });
 }
 
-export function sendData(res: express.Response, data: unknown, status: number = 200) {
+export function sendData<T>(res: express.Response, data: T, status: number = 200) {
   return res.status(status).json({ success: true, data });
 }
 

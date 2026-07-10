@@ -1,6 +1,6 @@
 import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
-import type { ColumnDef, ColumnValidator, TableKey, TableRecordMap } from '../types/types';
+import type { ColumnDef, ColumnValidator, ColumnValue, TableKey, TableRecordMap } from '../types/types';
 
 export type FieldErrors = Record<string, string>;
 
@@ -33,7 +33,7 @@ function argentinaDay(ms: number): number {
   return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
 }
 
-function checkDate(key: string, v: ColumnValidator, value: unknown): string | undefined {
+function checkDate(key: string, v: ColumnValidator, value: ColumnValue | undefined): string | undefined {
   const parsed = new Date(value as string);
   if (isNaN(parsed.getTime())) return `${key} must be a valid date`;
 
@@ -54,7 +54,7 @@ function checkDate(key: string, v: ColumnValidator, value: unknown): string | un
   return undefined;
 }
 
-function checkValue(key: string, col: ColumnDef, value: unknown): string | undefined {
+function checkValue(key: string, col: ColumnDef, value: ColumnValue | undefined): string | undefined {
   const v = col.validator ?? {};
 
   switch (col.type) {
@@ -95,7 +95,7 @@ function checkValue(key: string, col: ColumnDef, value: unknown): string | undef
   return undefined;
 }
 
-function normalizeValue(col: ColumnDef, value: unknown): unknown {
+function normalizeValue(col: ColumnDef, value: ColumnValue | undefined): ColumnValue | undefined {
   const norm = col.validator?.normalize;
   return norm && typeof value === 'string'
     ? value.replace(getRegex(norm.pattern), norm.replacement)
@@ -108,11 +108,11 @@ function editableColumns(table: TableKey): string[] {
     .map(([key]) => key);
 }
 
-function isEmpty(col: ColumnDef, value: unknown): boolean {
+function isEmpty(col: ColumnDef, value: ColumnValue | undefined): boolean {
   return value === null || value === undefined || (col.type === 'string' && value === '');
 }
 
-export function validateField(table: TableKey, column: string, value: unknown): string | undefined {
+export function validateField(table: TableKey, column: string, value: ColumnValue | undefined): string | undefined {
   const col = (structure.tables[table].columns as Record<string, ColumnDef>)[column];
   if (!col) return `${column} is not a valid field`;
   if (isEmpty(col, value)) return col.validator?.required ? `${column} is required` : undefined;
@@ -120,12 +120,14 @@ export function validateField(table: TableKey, column: string, value: unknown): 
 }
 
 // `data` must hold exactly `fields` - nothing missing, nothing extra - with every value valid.
-function validate<T extends TableKey>(table: T, data: unknown, fields: string[]): ParseResult<T> {
+// The declared class states intent; HTTP callers hand us unverified bodies, so every field is
+// still checked at runtime.
+function validate<T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>, fields: string[]): ParseResult<T> {
   const columns = structure.tables[table].columns as Record<string, ColumnDef>;
-  const obj = (data != null && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const obj = (data != null && typeof data === 'object' && !Array.isArray(data) ? data : {}) as Record<string, ColumnValue | undefined>;
   const allowed = new Set(fields);
   const fieldErrors: FieldErrors = {};
-  const out: Record<string, unknown> = {};
+  const out: Record<string, ColumnValue> = {};
 
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) fieldErrors[key] = `${key} is not an allowed field`;
@@ -139,7 +141,8 @@ function validate<T extends TableKey>(table: T, data: unknown, fields: string[])
     const raw = obj[key];
     const error = validateField(table, key, raw);
     if (error) { fieldErrors[key] = error; continue; }
-    out[key] = isEmpty(col, raw) ? null : normalizeValue(col, raw);
+    // checkValue already enforced the column's primitive type; safe to narrow.
+    out[key] = isEmpty(col, raw) ? null : (normalizeValue(col, raw) as ColumnValue);
   }
 
   return Object.keys(fieldErrors).length > 0
@@ -147,8 +150,8 @@ function validate<T extends TableKey>(table: T, data: unknown, fields: string[])
     : { data: out as TableRecordMap[T] };
 }
 
-export const validateFullObject = <T extends TableKey>(table: T, data: unknown): ParseResult<T> =>
+export const validateFullObject = <T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>): ParseResult<T> =>
   validate(table, data, editableColumns(table));
 
-export const validateOnlyPk = <T extends TableKey>(table: T, data: unknown): ParseResult<T> =>
+export const validateOnlyPk = <T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>): ParseResult<T> =>
   validate(table, data, getPkFields(table));

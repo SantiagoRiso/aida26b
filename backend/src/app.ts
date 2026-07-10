@@ -9,6 +9,7 @@ import { postHandler } from './routes/post';
 import { deleteHandler } from './routes/delete';
 import { requestLogger } from './logger';
 import { registerHealthRoute } from './health';
+import { guardRoute } from './helpers';
 import type { AuthUser } from './auth';
 
 export type GenericRouteGuards = {
@@ -33,11 +34,11 @@ export function mountGenericRoutes(
   const read = guards.read ?? [];
   const write = guards.write ?? [];
 
-  app.get('/api/:tableName', ...read, (req, res) => getHandler(req, res, pool));
-  app.post('/api/:tableName', ...write, (req, res) => postHandler(req, res, pool));
+  app.get('/api/:tableName', ...read, guardRoute((req, res) => getHandler(req, res, pool)));
+  app.post('/api/:tableName', ...write, guardRoute((req, res) => postHandler(req, res, pool)));
   // Frontend calls PUT/DELETE with the row id as a path segment (crud.ts updateRow/deleteRow).
-  app.put('/api/:tableName/:id', ...write, (req, res) => putHandler(req, res, pool));
-  app.delete('/api/:tableName/:id', ...write, (req, res) => deleteHandler(req, res, pool));
+  app.put('/api/:tableName/:id', ...write, guardRoute((req, res) => putHandler(req, res, pool)));
+  app.delete('/api/:tableName/:id', ...write, guardRoute((req, res) => deleteHandler(req, res, pool)));
 }
 
 export function mountObservability(app: express.Express, pool: Pool) {

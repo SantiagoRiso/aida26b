@@ -27,6 +27,15 @@ type OwnershipDescriptor = {
   ops?: Array<'create' | 'read' | 'update' | 'delete'>;  // defaults to every op when omitted
 };
 
+// Rows visible/writable for this role are limited to those a grant row names —
+// e.g. a receptionist acts only on professionals whose calendars they hold a grant on.
+type GrantScopeDescriptor = {
+  role: Role;
+  grantTable: string;      // e.g. 'calendar_grants'
+  grantRowColumn: string;  // grantTable column naming this table's pk, e.g. 'professional_user_id'
+  granteeColumn: string;   // grantTable column naming the caller, e.g. 'grantee_user_id'
+};
+
 // Single join step used to derive business_id for tables without a direct business_id column.
 type BusinessJoinPath = {
   parentTable: string;  // may be schema-qualified, e.g. 'auth.users'
@@ -54,6 +63,12 @@ type TypeMap = {
 };
 
 type MyTypeNames = keyof TypeMap;
+
+// What node-pg can serialize as a query parameter.
+type SqlParam = string | number | boolean | Date | null | SqlParam[];
+
+// Any runtime value an SSOT column can hold.
+type ColumnValue = TypeMap[MyTypeNames] | null;
 
 type ColumnValidator = {
   required?: boolean;
@@ -157,6 +172,7 @@ type TableStructure = {
   schedulable?: SchedulableCapability
   roleRequired?:  RoleRequired
   ownership?:     OwnershipDescriptor
+  grantScope?:    GrantScopeDescriptor
   businessJoin?:  BusinessJoinDescriptor
   // When set, generic SQL targets this schema-qualified table instead of the SSOT key name.
   sqlTable?:          string
@@ -188,4 +204,4 @@ type RendererProps<K extends TableKey> = {
 
 type RendererFunc = <K extends TableKey>(props: RendererProps<K>) => HTMLElement;
 
-export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc};
+export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc, SqlParam, ColumnValue, GrantScopeDescriptor};

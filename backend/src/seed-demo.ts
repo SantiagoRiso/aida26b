@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import { createOwnerPool } from './db';
 import { hashPassword } from './auth';
 import { validateWeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
+import type { WeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
+import type { SqlParam } from '../../shared/src/types/types';
 
 dotenv.config();
 
@@ -171,7 +173,7 @@ const NO_RELATION_TO_MARGE_USERNAMES: readonly string[] = [
 
 type PoolLike = Pick<Pool, 'query'>;
 
-async function pickId(pool: PoolLike, sql: string, params: unknown[]): Promise<string | null> {
+async function pickId(pool: PoolLike, sql: string, params: SqlParam[]): Promise<string | null> {
   const r = await pool.query<{ id: string }>(sql, params);
   return r.rows[0]?.id ?? null;
 }
@@ -263,12 +265,12 @@ async function upsertResource(
 async function upsertSchedule(
   pool: PoolLike,
   owner: { professionalUserId?: string; resourceId?: string },
-  weekly: object,
+  weekly: WeeklySchedule,
 ): Promise<void> {
   const valid = validateWeeklySchedule(weekly);
   if (!valid.ok) throw new Error(`Invalid weekly schedule: ${valid.errors.join(', ')}`);
   const col = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
-  const id  = owner.professionalUserId ?? owner.resourceId;
+  const id  = owner.professionalUserId ?? owner.resourceId ?? null;
   const existing = await pickId(pool, `SELECT id FROM schedules WHERE ${col} = $1`, [id]);
   if (existing) {
     await pool.query(`UPDATE schedules SET weekly = $1 WHERE ${col} = $2`, [JSON.stringify(weekly), id]);
@@ -284,7 +286,7 @@ async function upsertScheduleException(
   opts: { isUnavailable: boolean; reason?: string; startTime?: string; endTime?: string; granularityMinutes?: number },
 ): Promise<void> {
   const col = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
-  const id  = owner.professionalUserId ?? owner.resourceId;
+  const id  = owner.professionalUserId ?? owner.resourceId ?? null;
   const existing = await pickId(
     pool,
     `SELECT id FROM schedule_exceptions WHERE ${col} = $1 AND exception_date = $2`,

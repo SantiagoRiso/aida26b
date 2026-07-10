@@ -2,7 +2,9 @@ import express from 'express';
 import type { Request, RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
+import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
+import type { ColumnValue, SqlParam } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
 
@@ -11,7 +13,7 @@ type AuditFn = (
   req: Request,
   eventType: string,
   outcome: string,
-  details?: Record<string, unknown>
+  details?: Record<string, ColumnValue>
 ) => Promise<void>;
 
 export function mountGrantRoutes(
@@ -20,7 +22,7 @@ export function mountGrantRoutes(
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
 ) {
   // Binary grant creation: presence of a row = access. No permission columns.
-  app.post('/api/calendar-grants', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/calendar-grants', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     // Receptionists and clients cannot manage grants.
@@ -98,22 +100,18 @@ export function mountGrantRoutes(
       });
 
       return sendData(res, grant, 201);
-    } catch (error: unknown) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        (error as { code?: unknown }).code === '23505'
-      ) {
+    } catch (error) {
+      const e = error as { code?: string } | null;
+      if (typeof e === 'object' && e !== null && e.code === '23505') {
         return sendError(res, 409, 'conflict', 'Grant already exists');
       }
       console.error('Error creating calendar grant:', error);
       return sendError(res, 500, 'internal_error', 'Internal server error');
     }
-  });
+  }));
 
   // Revoke = delete the row; no soft-delete for grants.
-  app.delete('/api/calendar-grants/:id', guards.auth, guards.passwordReady, async (req, res) => {
+  app.delete('/api/calendar-grants/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
@@ -174,16 +172,24 @@ export function mountGrantRoutes(
     });
 
     return sendData(res, { id: grant.id, revoked: true });
-  });
+  }));
 
   // List grants scoped to the session business; Professional sees only their own.
-  app.get('/api/calendar-grants', guards.auth, guards.passwordReady, async (req, res) => {
+  app.get('/api/calendar-grants', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
+
+    // Staff-internal data: clients have no business seeing who can manage which calendar.
+    if (user.role === 'Client') {
+      return sendError(res, 403, 'forbidden', 'Staff access required');
+    }
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'A business context is required');
+    }
 
     const conditions: string[] = [
       `u.business_id = $1`,
     ];
-    const params: unknown[] = [user.business_id];
+    const params: SqlParam[] = [user.business_id];
     let paramIdx = 2;
 
     // Professional sees only their own calendar's grants.
@@ -197,7 +203,7 @@ export function mountGrantRoutes(
     const filterProfId = req.query.professional_user_id;
     if (filterProfId && user.role !== 'Professional') {
       conditions.push(`g.professional_user_id = $${paramIdx}`);
-      params.push(filterProfId);
+      params.push(String(filterProfId));
       paramIdx++;
     }
 
@@ -226,5 +232,5 @@ export function mountGrantRoutes(
       limit: result.rows.length,
       total: result.rows.length,
     });
-  });
+  }));
 }

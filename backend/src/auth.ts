@@ -17,7 +17,7 @@ export type AuthUser = {
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
 
-export function isRole(value: unknown): value is Role {
+export function isRole(value: string): value is Role {
   return (
     value === 'Admin' ||
     value === 'Professional' ||
@@ -81,12 +81,23 @@ export function clearSessionCookie(secure: boolean) {
   ].filter(Boolean).join('; ');
 }
 
-export function publicUser(row: Record<string, unknown>): AuthUser {
+// auth.users wire row as node-pg returns it: BIGINT columns arrive as strings.
+export type UsersWireRow = {
+  id: string;
+  username: string;
+  email: string | null;
+  role: Role;
+  business_id: string | null;
+  is_active: boolean;
+  must_change_password: boolean;
+};
+
+export function publicUser(row: UsersWireRow): AuthUser {
   return {
     id: Number(row.id),
     username: String(row.username),
     email: row.email === null || row.email === undefined ? null : String(row.email),
-    role: row.role as Role,
+    role: row.role,
     business_id: row.business_id == null ? null : Number(row.business_id),
     is_active: Boolean(row.is_active),
     must_change_password: Boolean(row.must_change_password),
