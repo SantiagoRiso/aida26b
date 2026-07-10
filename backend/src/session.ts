@@ -2,6 +2,7 @@ import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from './auth';
 import { guardMiddleware } from './helpers';
+import { sendError } from './status_messages';
 import { loadSessionUser } from './db/auth';
 import { getUserBusinessId } from './db/users';
 import { insertAuditEvent } from './db/audit';
@@ -84,7 +85,7 @@ export function createAuthGuards(pool: Pool, audit: AuditWriter): AuthGuards {
   const requireAuth: RequestHandler = guardMiddleware(async (req, res, next) => {
     const user = await loadSession(pool, req);
     if (!user) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return sendError(res, 401, 'unauthorized', 'Authentication required');
     }
     (req as AuthedRequest).user = user;
     next();
@@ -92,7 +93,7 @@ export function createAuthGuards(pool: Pool, audit: AuditWriter): AuthGuards {
 
   const requirePasswordReady: RequestHandler = (req, res, next) => {
     if ((req as AuthedRequest).user?.must_change_password) {
-      return res.status(403).json({ error: 'Password change required' });
+      return sendError(res, 403, 'password_change_required', 'Password change required');
     }
     next();
   };
@@ -102,7 +103,7 @@ export function createAuthGuards(pool: Pool, audit: AuditWriter): AuthGuards {
       return next();
     }
     await audit(req, 'permission_denied', 'denied', { path: req.path, method: req.method });
-    return res.status(403).json({ error: 'Forbidden' });
+    return sendError(res, 403, 'forbidden', 'Forbidden');
   });
 
   return { requireAuth, requirePasswordReady, requireAdmin };

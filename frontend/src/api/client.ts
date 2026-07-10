@@ -1,20 +1,10 @@
 import { useUiStore } from '@/stores/ui';
 
-// Backend uses two distinct response shapes (verified in server.ts + status_messages.ts):
-//   /api/auth/* and /api/admin/users*  → raw JSON: { user } | { error: string }, HTTP status is verdict
-//   All other routes                   → enveloped: { success, data, meta? } | { success:false, error:{code,message,fields?} }
-const RAW_JSON_PREFIXES = ['/auth/', '/admin/users'];
-
-function isRawRoute(path: string): boolean {
-  return RAW_JSON_PREFIXES.some((p) => path.startsWith(p));
-}
-
+// Every backend route speaks one response shape (status_messages.ts):
+//   { success, data, meta? } | { success:false, error:{ code, message, fields? } }
 type Envelope<T> =
   | { success: true; data: T; meta?: { page: number; limit: number; total: number } }
   | { success: false; error: { code: string; message: string; fields?: Record<string, string> } };
-
-// Raw routes report failures as { error: string }; the parse fallback is an empty body.
-type RawErrorBody = { error?: string };
 
 export type ApiResult<T> =
   | { ok: true; data: T; meta?: { page: number; limit: number; total: number } }
@@ -56,49 +46,27 @@ export async function apiFetch<T>(
     return { ok: true, data: undefined as T };
   }
 
-  const body: Envelope<T> | RawErrorBody = await response.json().catch(() => ({}));
-  const rawError = (body as RawErrorBody).error;
+  const body = (await response.json().catch(() => ({}))) as Envelope<T>;
 
-  if (response.status === 403) {
-    ui.toast('error', 'notPermitted');
-    return {
-      ok: false,
-      status: 403,
-      code: 'forbidden',
-      message: typeof rawError === 'string' ? rawError : 'Forbidden',
-    };
-  }
-
-  if (isRawRoute(path)) {
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        code: 'error',
-        message: typeof rawError === 'string' ? rawError : `Error ${response.status}`,
-      };
-    }
-    return { ok: true, data: body as T };
-  }
-
-  const envelope = body as Envelope<T>;
   // A non-enveloped body (e.g. an HTML error page) has no `success` field — fail cleanly rather
-  // than dereferencing envelope.error and throwing an opaque TypeError up through callers.
-  if (typeof envelope !== 'object' || envelope === null || !('success' in envelope)) {
+  // than dereferencing body.error and throwing an opaque TypeError up through callers.
+  if (typeof body !== 'object' || body === null || !('success' in body)) {
+    if (response.status === 403) ui.toast('error', 'notPermitted');
     return { ok: false, status: response.status, code: 'bad_response', message: `Unexpected response (${response.status})` };
   }
-  if (!envelope.success) {
+  if (!body.success) {
+    if (response.status === 403) ui.toast('error', 'notPermitted');
     return {
       ok: false,
       status: response.status,
-      code: envelope.error.code,
-      message: envelope.error.message,
-      fields: envelope.error.fields,
+      code: body.error.code,
+      message: body.error.message,
+      fields: body.error.fields,
     };
   }
   return {
     ok: true,
-    data: envelope.data,
-    meta: 'meta' in envelope ? envelope.meta : undefined,
+    data: body.data,
+    meta: 'meta' in body ? body.meta : undefined,
   };
 }

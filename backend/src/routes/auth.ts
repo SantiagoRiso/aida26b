@@ -2,6 +2,7 @@ import type express from 'express';
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from '../auth';
+import { sendData, sendError } from '../status_messages';
 import { getSessionToken, loadSession, readPassword, type AuditWriter } from '../session';
 import {
   findUserForLogin,
@@ -51,7 +52,7 @@ export function mountAuthRoutes(
           actorId: row ? Number(row.id) : null,
           businessId: row?.business_id != null ? Number(row.business_id) : null,
         });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return sendError(res, 401, 'invalid_credentials', 'Invalid credentials');
       }
 
       const user = auth.publicUser(row!);
@@ -65,10 +66,10 @@ export function mountAuthRoutes(
 
       res.setHeader('Set-Cookie', auth.sessionCookie(token, process.env.NODE_ENV === 'production'));
 
-      return res.json({ user });
+      return sendData(res, { user });
     } catch (error) {
       console.error('Error logging in:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      return sendError(res, 500, 'internal_error', 'Internal server error');
     }
   });
 
@@ -89,12 +90,12 @@ export function mountAuthRoutes(
       return res.status(204).send();
     } catch (error) {
       console.error('Error logging out:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      return sendError(res, 500, 'internal_error', 'Internal server error');
     }
   });
 
   app.get('/api/auth/me', requireAuth, (req, res) => {
-    return res.json({ user: (req as AuthedRequest).user });
+    return sendData(res, { user: (req as AuthedRequest).user });
   });
 
   app.post('/api/auth/change-password', requireAuth, async (req, res) => {
@@ -105,9 +106,7 @@ export function mountAuthRoutes(
       const user = (req as AuthedRequest).user!;
 
       if (!currentPassword || !newPassword) {
-        return res.status(400).json({
-          error: 'Current password and a valid new password are required',
-        });
+        return sendError(res, 400, 'invalid_request', 'Current password and a valid new password are required');
       }
 
       const current = await getPasswordCreds(pool, user.id);
@@ -117,15 +116,13 @@ export function mountAuthRoutes(
 
       if (!ok) {
         await audit(req, 'password_change_failed', 'failure');
-        return res.status(401).json({ error: 'Invalid current password' });
+        return sendError(res, 401, 'invalid_current_password', 'Invalid current password');
       }
 
       // Reusing the current password defeats a forced reset, so reject it.
       const sameAsCurrent = await auth.verifyPassword(newPassword, current!.password_salt, current!.password_hash);
       if (sameAsCurrent) {
-        return res.status(400).json({
-          error: 'New password must be different from the current password',
-        });
+        return sendError(res, 400, 'password_reuse', 'New password must be different from the current password');
       }
 
       const { passwordHash, passwordSalt } = await auth.hashPassword(newPassword);
@@ -143,10 +140,10 @@ export function mountAuthRoutes(
 
       await audit(req, 'password_changed', 'success');
 
-      return res.json({ user: (req as AuthedRequest).user });
+      return sendData(res, { user: (req as AuthedRequest).user });
     } catch (error) {
       console.error('Error changing password:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      return sendError(res, 500, 'internal_error', 'Internal server error');
     }
   });
 }

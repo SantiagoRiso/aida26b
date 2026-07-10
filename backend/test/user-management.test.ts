@@ -116,7 +116,7 @@ describe('Client user creation', () => {
     });
     expect(res.status).toBe(201);
 
-    const body = res.body as { id: unknown; username: string; role: string };
+    const body = res.body.data as { id: unknown; username: string; role: string };
     expect(body.role).toBe('Client');
     expect(Number(body.id)).toBeGreaterThan(0);
 
@@ -136,7 +136,7 @@ describe('Client user creation', () => {
       body: { username: 'newclient2', password: 'clientpass2', role: 'Client', display_name: 'Profile Client' },
     });
     expect(res.status).toBe(201);
-    const userId = (res.body as { id: number }).id;
+    const userId = (res.body.data as { id: number }).id;
 
     const userRow = await testPool.query(
       `SELECT id, display_name, role FROM auth.users WHERE id = $1`,
@@ -158,7 +158,7 @@ describe('Client user creation', () => {
 
     const row = await testPool.query<{ dni: string }>(
       `SELECT dni FROM auth.users WHERE id = $1`,
-      [(res.body as { id: number }).id]
+      [(res.body.data as { id: number }).id]
     );
     expect(row.rows[0].dni).toBe('99887766');
   });
@@ -194,7 +194,7 @@ describe('client creation by non-admin staff', () => {
 
     const row = await testPool.query<{ role: string; business_id: string }>(
       `SELECT role, business_id FROM auth.users WHERE id = $1`,
-      [(res.body as { id: number }).id]
+      [(res.body.data as { id: number }).id]
     );
     expect(row.rows[0].role).toBe('Client');
     expect(String(row.rows[0].business_id)).toBe(adminBusinessId);
@@ -210,7 +210,7 @@ describe('client creation by non-admin staff', () => {
 
     const row = await testPool.query<{ role: string }>(
       `SELECT role FROM auth.users WHERE id = $1`,
-      [(res.body as { id: number }).id]
+      [(res.body.data as { id: number }).id]
     );
     expect(row.rows[0].role).toBe('Client');
   });
@@ -249,7 +249,7 @@ describe('Professional user creation', () => {
       body: { username: 'newpro1', password: 'propass123', role: 'Professional', display_name: 'Pro User' },
     });
     expect(res.status).toBe(201);
-    const userId = (res.body as { id: number }).id;
+    const userId = (res.body.data as { id: number }).id;
 
     const userRow = await testPool.query(
       `SELECT id, display_name, role FROM auth.users WHERE id = $1`,
@@ -270,7 +270,7 @@ describe('Admin and Receptionist user creation', () => {
       body: { username: 'newadmin1', password: 'adminpass2', role: 'Admin' },
     });
     expect(res.status).toBe(201);
-    const userId = (res.body as { id: number }).id;
+    const userId = (res.body.data as { id: number }).id;
 
     const userRow = await testPool.query(`SELECT role FROM auth.users WHERE id = $1`, [userId]);
     expect(userRow.rows).toHaveLength(1);
@@ -284,7 +284,7 @@ describe('Admin and Receptionist user creation', () => {
       body: { username: 'newreception1', password: 'receptionpass1', role: 'Receptionist' },
     });
     expect(res.status).toBe(201);
-    const userId = (res.body as { id: number }).id;
+    const userId = (res.body.data as { id: number }).id;
 
     const userRow = await testPool.query(`SELECT role FROM auth.users WHERE id = $1`, [userId]);
     expect(userRow.rows).toHaveLength(1);
@@ -333,7 +333,7 @@ describe('business_id stamping', () => {
       },
     });
     expect(res.status).toBe(201);
-    const userId = (res.body as { id: number }).id;
+    const userId = (res.body.data as { id: number }).id;
 
     const row = await testPool.query<{ business_id: string }>(
       `SELECT business_id FROM auth.users WHERE id = $1`,
@@ -351,7 +351,7 @@ describe('reset-password', () => {
       body: { username: 'resetpwuser', password: 'oldpass12', role: 'Admin' },
     });
     expect(createRes.status).toBe(201);
-    const userId = (createRes.body as { id: number }).id;
+    const userId = (createRes.body.data as { id: number }).id;
 
     await testPool.query(
       `UPDATE auth.users SET must_change_password = false WHERE id = $1`,
@@ -421,7 +421,7 @@ describe('deactivation', () => {
       body: { username: 'deactuser1', password: 'deactpass1', role: 'Admin' },
     });
     expect(createRes.status).toBe(201);
-    const userId = (createRes.body as { id: number }).id;
+    const userId = (createRes.body.data as { id: number }).id;
 
     await testPool.query(
       `UPDATE auth.users SET must_change_password = false WHERE id = $1`,
@@ -499,7 +499,7 @@ describe('change-password session invalidation', () => {
       body: { username: 'sessrotate1', password: 'oldpass12', role: 'Receptionist' },
     });
     expect(createRes.status).toBe(201);
-    const userId = (createRes.body as { id: number }).id;
+    const userId = (createRes.body.data as { id: number }).id;
 
     await testPool.query(
       `UPDATE auth.users SET must_change_password = false WHERE id = $1`,
@@ -530,7 +530,7 @@ describe('change-password session invalidation', () => {
       body: { username: 'reuse1', password: 'reusepass1', role: 'Receptionist' },
     });
     expect(createRes.status).toBe(201);
-    const userId = (createRes.body as { id: number }).id;
+    const userId = (createRes.body.data as { id: number }).id;
 
     await testPool.query(
       `UPDATE auth.users SET must_change_password = false WHERE id = $1`,
@@ -603,7 +603,7 @@ describe('role immutability', () => {
       body: { username: 'roleimmute1', password: 'immpass123', role: 'Client' },
     });
     expect(createRes.status).toBe(201);
-    const userId = (createRes.body as { id: number }).id;
+    const userId = (createRes.body.data as { id: number }).id;
 
     const patchRole = await request(`/api/admin/users/${userId}/role`, {
       method: 'PATCH',

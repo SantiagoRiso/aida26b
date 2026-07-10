@@ -180,16 +180,16 @@ test('login, me and logout manage the session cookie', async () => {
 
     const loginRes = await request(baseUrl, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'adminpass' } });
     assert.equal(loginRes.status, 200);
-    assert.equal(loginRes.body.user.business_id, 1);
-    assert.equal(loginRes.body.user.must_change_password, false);
+    assert.equal(loginRes.body.data.user.business_id, 1);
+    assert.equal(loginRes.body.data.user.must_change_password, false);
     const cookie = loginRes.cookie;
     assert.ok(cookie.startsWith('aida_session='));
 
     const me = await request(baseUrl, '/api/auth/me', { cookie });
     assert.equal(me.status, 200);
-    assert.equal(me.body.user.role, 'Admin');
-    assert.equal(me.body.user.business_id, 1);
-    assert.equal(me.body.user.must_change_password, false);
+    assert.equal(me.body.data.user.role, 'Admin');
+    assert.equal(me.body.data.user.business_id, 1);
+    assert.equal(me.body.data.user.must_change_password, false);
 
     const logout = await request(baseUrl, '/api/auth/logout', { method: 'POST', cookie });
     assert.equal(logout.status, 204);
@@ -233,14 +233,14 @@ test('admin can create users and reset passwords', async () => {
     const adminCookie = await login(baseUrl, 'admin', 'adminpass');
     const created = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'newclient', password: 'firstpass', role: 'Client' } });
     assert.equal(created.status, 201);
-    assert.equal(created.body.role, 'Client');
+    assert.equal(created.body.data.role, 'Client');
 
-    const reset = await request(baseUrl, `/api/admin/users/${created.body.id}/reset-password`, { method: 'POST', cookie: adminCookie, body: { password: 'secondpass' } });
+    const reset = await request(baseUrl, `/api/admin/users/${created.body.data.id}/reset-password`, { method: 'POST', cookie: adminCookie, body: { password: 'secondpass' } });
     assert.equal(reset.status, 200);
 
     const newCookie = await login(baseUrl, 'newclient', 'secondpass');
     const me = await request(baseUrl, '/api/auth/me', { cookie: newCookie });
-    assert.equal(me.body.user.must_change_password, true);
+    assert.equal(me.body.data.user.must_change_password, true);
   });
 });
 
@@ -277,7 +277,7 @@ test('first login users must change password before using the app', async () => 
     const tempCookie = await login(baseUrl, 'tempuser', 'temppass1');
     const blocked = await request(baseUrl, '/api/clients', { cookie: tempCookie });
     assert.equal(blocked.status, 403);
-    assert.equal(blocked.body.error, 'Password change required');
+    assert.equal(blocked.body.error.message, 'Password change required');
 
     const changed = await request(baseUrl, '/api/auth/change-password', {
       method: 'POST',
@@ -285,7 +285,7 @@ test('first login users must change password before using the app', async () => 
       body: { current_password: 'temppass1', new_password: 'newpass123' },
     });
     assert.equal(changed.status, 200);
-    assert.equal(changed.body.user.must_change_password, false);
+    assert.equal(changed.body.data.user.must_change_password, false);
     assert.equal((await request(baseUrl, '/api/clients', { cookie: tempCookie })).status, 200);
   });
 });
@@ -304,7 +304,7 @@ test('must_change_password blocks write routes and clears after change', async (
       body: { name: 'Haircut', default_duration_minutes: 30, default_price_ars: '100.00' },
     });
     assert.equal(blockedWrite.status, 403);
-    assert.equal(blockedWrite.body.error, 'Password change required');
+    assert.equal(blockedWrite.body.error.message, 'Password change required');
 
     const logoutRes = await request(baseUrl, '/api/auth/logout', { method: 'POST', cookie: tempCookie });
     assert.equal(logoutRes.status, 204);
@@ -324,7 +324,7 @@ test('change-password response carries business_id', async () => {
       body: { current_password: 'oldpass1', new_password: 'newpass123' },
     });
     assert.equal(changed.status, 200);
-    assert.equal(changed.body.user.must_change_password, false);
-    assert.ok('business_id' in changed.body.user);
+    assert.equal(changed.body.data.user.must_change_password, false);
+    assert.ok('business_id' in changed.body.data.user);
   });
 });

@@ -69,10 +69,10 @@ describe('enveloped error', () => {
   });
 });
 
-describe('raw auth route success', () => {
-  it('resolves { user } as ok:true data', async () => {
+describe('auth route success', () => {
+  it('resolves the enveloped { user } payload as ok:true data', async () => {
     const user = { id: 1, username: 'demo_admin', role: 'Admin' };
-    mockFetch(200, { user });
+    mockFetch(200, { success: true, data: { user } });
     const { apiFetch } = await importFresh();
     const result = await apiFetch<{ user: typeof user }>('/auth/me');
     expect(result.ok).toBe(true);
@@ -82,9 +82,9 @@ describe('raw auth route success', () => {
   });
 });
 
-describe('raw auth route error', () => {
-  it('returns ok:false with the string error message', async () => {
-    mockFetch(401, { error: 'Invalid credentials' });
+describe('auth route error', () => {
+  it('returns ok:false on a 401', async () => {
+    mockFetch(401, { success: false, error: { code: 'invalid_credentials', message: 'Invalid credentials' } });
     const { apiFetch } = await importFresh();
     const result = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({}) }, { authMode: 'entry' });
     expect(result.ok).toBe(false);
