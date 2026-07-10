@@ -12,7 +12,8 @@ import {
   canCancelAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
-import { recheckConflictsInTx } from './scheduling';
+import { recheckConflictsInTx } from '../services/scheduling';
+import { BUSINESS_TZ, HHMM_RE, DATE_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
 import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
@@ -58,17 +59,7 @@ type BookingBody = {
   description?: string | null;
 };
 
-const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
-
-function addMinutes(hhmm: string, minutes: number): string {
-  const [h, m] = hhmm.split(':').map(Number);
-  const total = h * 60 + m + minutes;
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
 
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
@@ -123,11 +114,8 @@ async function resolveAndLoadService(
   if (!HHMM_RE.test(start)) fields.start = 'must be HH:MM';
   if (!Number.isInteger(durationMinutes) || durationMinutes <= 0)
     fields.duration_minutes = 'must be a positive integer';
-  if (!fields.start && !fields.duration_minutes) {
-    const startMin =
-      Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5));
-    if (startMin + durationMinutes > 24 * 60)
-      fields.duration_minutes = 'start + duration must not cross midnight';
+  if (!fields.start && !fields.duration_minutes && crossesMidnight(start, durationMinutes)) {
+    fields.duration_minutes = 'start + duration must not cross midnight';
   }
 
   if (Object.keys(fields).length > 0) {
@@ -226,7 +214,7 @@ export function mountAppointmentRoutes(
     } = resolved;
 
     // Dry-run conflict check — read-only, no advisory lock needed for a mere read.
-    const { loadConflictInputs } = await import('./scheduling');
+    const { loadConflictInputs } = await import('../services/scheduling');
     const inputs = await loadConflictInputs(pool, businessId, {
       professionalUserId,
       date,
@@ -503,10 +491,8 @@ export function mountAppointmentRoutes(
     if (!Number.isInteger(durationMinutes) || durationMinutes <= 0)
       fields.duration_minutes = 'must be a positive integer';
     // Parity with create: an appointment starts and ends on the same day.
-    if (!fields.start && !fields.duration_minutes) {
-      const startMin = Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5));
-      if (startMin + durationMinutes > 24 * 60)
-        fields.duration_minutes = 'start + duration must not cross midnight';
+    if (!fields.start && !fields.duration_minutes && crossesMidnight(start, durationMinutes)) {
+      fields.duration_minutes = 'start + duration must not cross midnight';
     }
     if (Object.keys(fields).length > 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
@@ -530,7 +516,7 @@ export function mountAppointmentRoutes(
     });
 
     const override = req.body?.override === true;
-    const startsAt = `${date} ${start}:00 ${BUSINESS_TZ}`;
+    const startsAt = buildStartsAt(date, start);
 
     try {
       const outcome = await withTransaction(pool, async (tx) => {

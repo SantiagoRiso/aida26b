@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
-import { recheckConflictsInTx } from '../src/routes/scheduling';
+import { recheckConflictsInTx } from '../src/services/scheduling';
 
 // Concurrency proof driven directly against recheckConflictsInTx. No appointment is written
 // (a recheck is read-only) — the invariant is proven at the advisory-lock level.
