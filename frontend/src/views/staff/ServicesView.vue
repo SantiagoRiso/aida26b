@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
 import { structure } from '@shared/ssot/structure';
+import type { TableRecordMap } from '@shared/types/types';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -18,7 +19,7 @@ const auth = useAuthStore();
 const TABLE_KEY = 'services' as const;
 
 const panelOpen = ref(false);
-const editingRow = ref<Record<string, unknown> | null>(null);
+const editingRow = ref<TableRecordMap['services'] | null>(null);
 const mode = ref<'create' | 'edit'>('create');
 const confirmOpen = ref(false);
 const pendingDeleteId = ref<string | null>(null);
@@ -30,7 +31,7 @@ function canDelete(): boolean {
   return auth.user ? roleAllowedFor(required, auth.user.role) : false;
 }
 
-function onEdit(row: Record<string, unknown>) {
+function onEdit(row: TableRecordMap['services']) {
   editingRow.value = row;
   mode.value = 'edit';
   panelOpen.value = true;
@@ -48,8 +49,8 @@ function onSaved() {
   reloadKey.value++;
 }
 
-function requestDelete(row: Record<string, unknown>) {
-  pendingDeleteId.value = String(row.id ?? '');
+function requestDelete(row: TableRecordMap['services']) {
+  pendingDeleteId.value = String(row.id);
   confirmOpen.value = true;
 }
 

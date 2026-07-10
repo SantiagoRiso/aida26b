@@ -25,8 +25,10 @@ export const SCREEN_ROLES: Record<string, Role[]> = {
   'staff-requests': ['Admin', 'Professional', 'Receptionist'],
   'staff-clients': ['Admin', 'Professional', 'Receptionist'],
   'staff-professionals': ['Admin', 'Professional', 'Receptionist'],
-  'staff-services': ['Admin', 'Professional', 'Receptionist'],
-  'staff-resources': ['Admin', 'Professional', 'Receptionist'],
+  // Catalog management is not front-desk work; receptionists consume services/resources
+  // through the booking form, not these screens.
+  'staff-services': ['Admin', 'Professional'],
+  'staff-resources': ['Admin', 'Professional'],
   'staff-users': ['Admin'],
   'staff-audit': ['Admin'],
   'staff-settings': ['Admin', 'Professional', 'Receptionist'],

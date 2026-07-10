@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
+import type { TableRecordMap } from '@shared/types/types';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ProfessionalDetail from '@/components/staff/ProfessionalDetail.vue';
@@ -15,7 +16,7 @@ const detailOpen = ref(false);
 const reloadKey = ref(0);
 
 // GenericTable emits `edit` on row click (for roles allowed to update); route it to the detail modal.
-function openDetail(row: Record<string, unknown>) {
+function openDetail(row: TableRecordMap['professionals']) {
   const id = Number(row.id);
   if (!Number.isFinite(id)) return;
   selectedId.value = id;

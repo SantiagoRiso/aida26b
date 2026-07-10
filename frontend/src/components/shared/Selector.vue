@@ -77,6 +77,15 @@ const filtered = computed(() => {
   });
 });
 
+// The query is a transient filter, not state: once a choice is made (or the input is left),
+// reopening must show the full list, not the leftover filter.
+watch(
+  () => props.modelValue,
+  () => {
+    query.value = '';
+  },
+);
+
 // Reconcile the bound value with the options: auto-select a lone option (locked), otherwise apply a
 // soft default when nothing is chosen. Guarded so it only emits when the value actually changes.
 watch(
@@ -125,6 +134,7 @@ watch(
         :display-value="(v) => labelFor(v as string | null)"
         autocomplete="off"
         @change="query = ($event.target as HTMLInputElement).value"
+        @blur="query = ''"
       />
       <ComboboxButton class="absolute inset-y-0 right-0 flex items-center px-2" aria-label="Abrir opciones">
         <ChevronUpDownIcon class="h-5 w-5 text-neutral" aria-hidden="true" />

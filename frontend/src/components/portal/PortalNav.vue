@@ -11,7 +11,7 @@ const navItems = [
 </script>
 
 <template>
-  <nav class="flex items-center gap-1" aria-label="Portal navigation">
+  <nav class="flex items-center gap-1" :aria-label="t('portal.navLabel')">
     <RouterLink
       v-for="item in navItems"
       :key="item.name"

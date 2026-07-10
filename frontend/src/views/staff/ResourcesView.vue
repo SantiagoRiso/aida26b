@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
+import type { TableRecordMap } from '@shared/types/types';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -14,13 +15,13 @@ const { toast } = useToast();
 const TABLE_KEY = 'resources' as const;
 
 const panelOpen = ref(false);
-const editingRow = ref<Record<string, unknown> | null>(null);
+const editingRow = ref<TableRecordMap['resources'] | null>(null);
 const mode = ref<'create' | 'edit'>('create');
 const confirmOpen = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 const reloadKey = ref(0);
 
-function onEdit(row: Record<string, unknown>) {
+function onEdit(row: TableRecordMap['resources']) {
   editingRow.value = row;
   mode.value = 'edit';
   panelOpen.value = true;
@@ -37,8 +38,8 @@ function onSaved() {
   reloadKey.value++;
 }
 
-function requestDelete(row: Record<string, unknown>) {
-  pendingDeleteId.value = String(row.id ?? '');
+function requestDelete(row: TableRecordMap['resources']) {
+  pendingDeleteId.value = String(row.id);
   confirmOpen.value = true;
 }
 

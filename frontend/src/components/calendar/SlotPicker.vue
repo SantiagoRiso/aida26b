@@ -20,18 +20,23 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const slots = ref<TimeInterval[]>([]);
+// Whether the professional works that day at all — an empty slot list on a working day
+// means "fully booked", which deserves a different message than "doesn't work that day".
+const dayOpen = ref(true);
 const loading = ref(false);
 
 watch(
   [() => props.professionalId, () => props.date],
   async ([profId, date]) => {
     slots.value = [];
+    dayOpen.value = true;
     if (!profId || !date) return;
     loading.value = true;
     const result = await getAvailability(`prof:${profId}`, date);
     loading.value = false;
     if (result.ok) {
       slots.value = result.data.slots;
+      dayOpen.value = result.data.open;
       // Auto-select the slot matching a preset start (e.g. the calendar cell the user clicked) so
       // its duration flows to the parent without a second click.
       const preset = slots.value.find((s) => s.start === props.modelValue);
@@ -60,11 +65,11 @@ function slotDuration(slot: TimeInterval): number {
     <div v-if="loading" class="text-sm text-neutral">{{ t('loading') }}</div>
 
     <p v-else-if="!professionalId || !date" class="text-sm text-neutral italic">
-      Seleccioná un profesional y una fecha para ver los horarios.
+      {{ t('calendar.slotPickerPrompt') }}
     </p>
 
     <p v-else-if="slots.length === 0" class="text-sm text-neutral italic">
-      {{ t('calendar.noSlotsAvailable') }}
+      {{ t(dayOpen ? 'calendar.dayFullyBooked' : 'calendar.dayNotWorked') }}
     </p>
 
     <div v-else class="flex flex-wrap gap-2">

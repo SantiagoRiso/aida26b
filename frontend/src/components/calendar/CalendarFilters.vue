@@ -29,12 +29,12 @@ const selectedResource = ref<number | null>(null);
 
 onMounted(async () => {
   const [profResult, resResult] = await Promise.all([
-    listRows<{ id: number; display_name: string }>('professionals', { limit: 200 }),
-    listRows<{ id: number; name: string }>('resources', { limit: 200 }),
+    listRows('professionals', { limit: 200 }),
+    listRows('resources', { limit: 200 }),
   ]);
   if (profResult.ok) {
-    const options = (profResult.data as { id: number; display_name: string }[]).map((p) => ({
-      id: p.id,
+    const options = profResult.data.map((p) => ({
+      id: Number(p.id),
       label: p.display_name,
     }));
     professionals.value = scopeProfessionalOptions(options, auth.user);
@@ -45,8 +45,8 @@ onMounted(async () => {
     }
   }
   if (resResult.ok) {
-    resources.value = (resResult.data as { id: number; name: string }[]).map((r) => ({
-      id: r.id,
+    resources.value = resResult.data.map((r) => ({
+      id: Number(r.id),
       label: r.name,
     }));
   }

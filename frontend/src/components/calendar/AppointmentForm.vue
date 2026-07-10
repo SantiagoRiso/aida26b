@@ -16,6 +16,7 @@ import FieldError from '@/components/shared/FieldError.vue';
 import Selector from '@/components/shared/Selector.vue';
 import SlotPicker from './SlotPicker.vue';
 import type { TimeInterval } from '@shared/ssot/domain/scheduling';
+import type { TableRecordMap } from '@shared/types/types';
 
 const props = defineProps<{
   // Presence switches the form to edit/reschedule mode.
@@ -84,10 +85,15 @@ const saving = ref(false);
 // prefilled start no longer forces manual mode.
 const manualOpen = ref(!!props.appointment);
 
-const { options: clientOptions } = useForeignKeyOptions({
-  table: 'clients',
-  valueField: 'id',
-  labelField: 'display_name',
+// Options carry the DNI so staff can find a client by document number, not just name.
+interface ClientOption { value: string; label: string; dni: string }
+const clientRows = ref<TableRecordMap['clients'][]>([]);
+const clientOptions = computed<ClientOption[]>(() =>
+  clientRows.value.map((c) => ({ value: String(c.id), label: c.display_name, dni: c.dni ?? '' })),
+);
+onMounted(async () => {
+  const res = await listRows('clients', { limit: 200 });
+  if (res.ok) clientRows.value = res.data;
 });
 
 // Locked when booking from a specific client's page — the client isn't a choice here.
@@ -112,7 +118,8 @@ const { options: resourceOptions } = useForeignKeyOptions({
 watch(() => form.service_id, () => {});
 
 // A professional may only book on their own calendar (the backend enforces own-only for
-// professionals — grants are a receptionist mechanism). Other roles pick from all professionals.
+// professionals). Receptionist grant scoping is server-side: the professionals list they
+// fetch already contains only granted calendars.
 const availableProfessionalOptions = computed(() => {
   if (auth.user?.role === 'Professional') {
     return professionalOptions.value.filter((o) => String(o.value) === String(auth.user!.id));
@@ -134,13 +141,10 @@ watch(
 // professional selected → fall back to all services.
 const profServiceMap = ref<Map<string, string[]>>(new Map());
 onMounted(async () => {
-  const result = await listRows<{ professional_user_id: string; service_id: string }>(
-    'professional_services',
-    { limit: 500 },
-  );
+  const result = await listRows('professional_services', { limit: 500 });
   if (!result.ok) return;
   const map = new Map<string, string[]>();
-  for (const row of result.data as { professional_user_id: string; service_id: string }[]) {
+  for (const row of result.data) {
     const key = String(row.professional_user_id);
     const list = map.get(key);
     if (list) list.push(String(row.service_id));
@@ -262,9 +266,17 @@ function submit() {
         :readonly="clientLocked"
         :model-value="form.client_user_id || null"
         :options="clientOptions"
+        :extra-search="(o) => o.dni"
         placeholder="Buscar cliente…"
         @update:model-value="form.client_user_id = $event ?? ''"
-      />
+      >
+        <template #option="{ option, selected }">
+          <div class="flex items-baseline gap-2">
+            <span class="flex-shrink-0" :class="selected ? 'font-semibold' : 'font-medium'">{{ option.label }}</span>
+            <span v-if="option.dni" class="min-w-0 truncate text-xs text-neutral">DNI {{ option.dni }}</span>
+          </div>
+        </template>
+      </Selector>
       <FieldError :message="fieldErrors.client_user_id" />
     </div>
 

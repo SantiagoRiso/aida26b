@@ -7,6 +7,7 @@ export interface AdminUserPayload {
   password: string;
   role: string;
   display_name?: string;
+  dni?: string;
 }
 
 export interface AdminUserResult {
@@ -15,8 +16,9 @@ export interface AdminUserResult {
   role: string;
 }
 
-// Admin-user management routes use the raw JSON envelope (not the generic envelope).
+// User management routes use the raw JSON envelope (not the generic envelope).
 // Errors arrive as { error: string } — the generic ApiResult maps them to ok:false.
+// createUser is not admin-only: Professionals/Receptionists may create Clients.
 
 export function createUser(body: AdminUserPayload): Promise<ApiResult<AdminUserResult>> {
   return apiFetch<AdminUserResult>('/admin/users', {

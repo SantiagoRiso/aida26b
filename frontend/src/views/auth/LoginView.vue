@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
+import PasswordInput from '@/components/shared/PasswordInput.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -70,13 +71,12 @@ async function submit() {
           <label for="password" class="block text-sm font-semibold mb-1">
             {{ t('auth.passwordLabel') }}
           </label>
-          <input
+          <PasswordInput
             id="password"
             v-model="password"
-            type="password"
             autocomplete="current-password"
             required
-            :class="[
+            :input-class="[
               'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
               credError ? 'border-destructive' : 'border-border',
             ]"

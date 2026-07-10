@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="K extends TableKey">
 import { ref, computed, reactive } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
@@ -6,18 +6,18 @@ import { validateField, validateFullObject } from '@shared/validation/validate';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, ColumnDef } from '@shared/types/types';
+import type { TableKey, TableRecordMap, ColumnDef, ColumnValue } from '@shared/types/types';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{
-  tableKey: TableKey;
+  tableKey: K;
   mode: 'create' | 'edit';
-  initial?: Record<string, unknown>;
+  initial?: Partial<TableRecordMap[K]>;
 }>();
 
 const emit = defineEmits<{
-  saved: [row: Record<string, unknown>];
+  saved: [row: TableRecordMap[K]];
   cancel: [];
 }>();
 
@@ -35,9 +35,12 @@ const editableColumns = computed(() => {
   });
 });
 
-const values = reactive<Record<string, unknown>>({});
+// Column names are dynamic (from the SSOT columns map), so the row is read by name.
+const initialByColumn = computed(() => (props.initial ?? {}) as Partial<Record<string, ColumnValue>>);
+
+const values = reactive<Record<string, ColumnValue | undefined>>({});
 for (const [key, col] of Object.entries(tableSpec.value.columns as Record<string, ColumnDef>)) {
-  values[key] = props.initial?.[key] ?? (col.type === 'number' ? '' : '');
+  values[key] = initialByColumn.value[key] ?? (col.type === 'number' ? '' : '');
 }
 
 // Inline errors are advisory only; the backend is authoritative.
@@ -68,7 +71,7 @@ function getFkOptions(field: string, col: ColumnDef) {
 }
 
 async function onSubmit() {
-  const check = validateFullObject(props.tableKey, values);
+  const check = validateFullObject(props.tableKey, values as Partial<TableRecordMap[K]>);
   if ('fields' in check) {
     for (const [f, msg] of Object.entries(check.fields)) {
       fieldErrors[f] = msg;
@@ -81,18 +84,18 @@ async function onSubmit() {
     const pk = tableSpec.value.pk;
     const id = typeof pk === 'string' ? values[pk] : undefined;
 
-    const body: Record<string, unknown> = {};
+    const body: Record<string, ColumnValue | undefined> = {};
     for (const [key] of editableColumns.value) {
       body[key] = values[key] ?? null;
     }
 
     const result = props.mode === 'edit' && id
-      ? await updateRow(props.tableKey, String(id), body)
-      : await createRow(props.tableKey, body);
+      ? await updateRow(props.tableKey, String(id), body as Partial<TableRecordMap[K]>)
+      : await createRow(props.tableKey, body as Partial<TableRecordMap[K]>);
 
     if (result.ok) {
       toast('success', 'genericSuccess');
-      emit('saved', result.data as Record<string, unknown>);
+      emit('saved', result.data);
     } else {
       if (result.fields && Object.keys(result.fields).length > 0) {
         for (const [f, msg] of Object.entries(result.fields)) {
@@ -218,7 +221,7 @@ async function onSubmit() {
         class="flex flex-col gap-1"
       >
         <span class="text-sm font-semibold text-neutral">{{ label(col.label) }}</span>
-        <span class="rounded-md bg-surface px-3 py-2 text-sm text-neutral">{{ initial?.[field] ?? '—' }}</span>
+        <span class="rounded-md bg-surface px-3 py-2 text-sm text-neutral">{{ initialByColumn[field] ?? '—' }}</span>
       </div>
     </template>
 

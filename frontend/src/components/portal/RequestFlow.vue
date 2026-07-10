@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { useI18n, Translation as I18nT } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listRows } from '@/api/crud';
 import { checkConflict } from '@/api/scheduling';
 import { requestAppointment, listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
-import type { TableKey } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/types/types';
 import { useCurrency, todayLocalISO } from '@/composables/useCurrency';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
 import Selector from '@/components/shared/Selector.vue';
@@ -26,19 +26,12 @@ const { formatARS, formatDate } = useCurrency();
 type Step = 1 | 2 | 3 | 4;
 const step = ref<Step>(1);
 
-interface ProfRow { id: number; display_name: string; bio?: string | null }
-interface ServiceRow {
-  id: number;
-  name: string;
-  description?: string | null;
-  default_duration_minutes: number;
-  default_price_ars: string;
-}
-interface ProfServiceRow { professional_user_id: string; service_id: string }
+type ProfRow = TableRecordMap['professionals'];
+type ServiceRow = TableRecordMap['services'];
 
 const professionals = ref<ProfRow[]>([]);
 const services = ref<ServiceRow[]>([]);
-const profServices = ref<ProfServiceRow[]>([]);
+const profServices = ref<TableRecordMap['professional_services'][]>([]);
 // The client's own appointment history — drives the recency ordering of professionals.
 const myAppointments = ref<Appointment[]>([]);
 const loadingOptions = ref(false);
@@ -57,9 +50,9 @@ async function loadOptions() {
   // Services and the professional↔service map are readable by all roles; the appointments list
   // is server-scoped to the calling client.
   const [profRes, svcRes, psRes, apptRes] = await Promise.all([
-    listRows<ProfRow>('professionals' as TableKey),
-    listRows<ServiceRow>('services' as TableKey),
-    listRows<ProfServiceRow>('professional_services' as TableKey, { limit: 500 }),
+    listRows('professionals'),
+    listRows('services'),
+    listRows('professional_services', { limit: 500 }),
     listAppointments({ limit: 200 }),
   ]);
   loadingOptions.value = false;
@@ -196,7 +189,7 @@ async function loadEffectivePrice() {
   // /conflict-check REQUIRES duration_minutes — supply the service default.
   const res = await checkConflict({
     professional_user_id: selectedProfId.value,
-    service_id: selectedService.value.id,
+    service_id: Number(selectedService.value.id),
     client_user_id: auth.user.id,
     date: selectedDate.value,
     start: selectedStart.value,
@@ -215,18 +208,19 @@ async function loadEffectivePrice() {
 }
 
 const submitting = ref(false);
-const conflictMessage = ref<string | null>(null);
+// Flag, not a message string, so the warning re-renders on language switch.
+const slotConflict = ref(false);
 
 async function submitRequest() {
   if (!selectedProfId.value || !selectedService.value || !selectedDate.value || !selectedStart.value) return;
 
   submitting.value = true;
-  conflictMessage.value = null;
+  slotConflict.value = false;
 
   // Duration is the service default — clients cannot set a custom one; no resource/override.
   const res = await requestAppointment({
     professional_user_id: selectedProfId.value,
-    service_id: selectedService.value.id,
+    service_id: Number(selectedService.value.id),
     date: selectedDate.value,
     start: selectedStart.value,
     duration_minutes: selectedService.value.default_duration_minutes,
@@ -242,7 +236,7 @@ async function submitRequest() {
   // If the server returns a conflict verdict (saved=false), the slot is gone.
   // Clients CANNOT override — reload slots and show a message.
   if (!res.data.saved) {
-    conflictMessage.value = 'Ese horario ya no está disponible. Por favor elegí otro.';
+    slotConflict.value = true;
     step.value = 2;
     selectedStart.value = null;
     return;
@@ -276,17 +270,17 @@ const today = todayLocalISO();
 <template>
   <div class="space-y-6">
     <div class="flex items-center gap-2 text-sm text-neutral">
-      <span :class="step >= 1 ? 'font-semibold text-accent' : ''">1. Profesional</span>
+      <span :class="step >= 1 ? 'font-semibold text-accent' : ''">{{ t('portal.step1') }}</span>
       <span>›</span>
-      <span :class="step >= 2 ? 'font-semibold text-accent' : ''">2. Horario</span>
+      <span :class="step >= 2 ? 'font-semibold text-accent' : ''">{{ t('portal.step2') }}</span>
       <span>›</span>
-      <span :class="step >= 3 ? 'font-semibold text-accent' : ''">3. Precio</span>
+      <span :class="step >= 3 ? 'font-semibold text-accent' : ''">{{ t('portal.step3') }}</span>
       <span>›</span>
-      <span :class="step >= 4 ? 'font-semibold text-accent' : ''">4. Confirmar</span>
+      <span :class="step >= 4 ? 'font-semibold text-accent' : ''">{{ t('portal.step4') }}</span>
     </div>
 
     <section v-if="step === 1" class="space-y-4">
-      <h2 class="text-lg font-semibold">Elegí profesional y servicio</h2>
+      <h2 class="text-lg font-semibold">{{ t('portal.chooseProfService') }}</h2>
 
       <div v-if="loadingOptions">
         <Skeleton :rows="2" />
@@ -294,14 +288,14 @@ const today = todayLocalISO();
 
       <div v-else class="space-y-4">
         <div>
-          <label class="mb-1 block text-sm font-medium" for="prof-select">Profesional</label>
+          <label class="mb-1 block text-sm font-medium" for="prof-select">{{ t('portal.professional') }}</label>
           <Selector
             id="prof-select"
             searchable
             :model-value="selectedProfId != null ? String(selectedProfId) : null"
             :options="professionalOptions"
             :extra-search="(o) => `${o.services} ${o.bio ?? ''}`"
-            placeholder="Buscá por nombre, servicio o especialidad…"
+            :placeholder="t('portal.professionalSearchPlaceholder')"
             @update:model-value="selectedProfId = $event ? Number($event) : null"
           >
             <template #option="{ option }">
@@ -315,31 +309,31 @@ const today = todayLocalISO();
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium" for="svc-select">Servicio</label>
+          <label class="mb-1 block text-sm font-medium" for="svc-select">{{ t('portal.service') }}</label>
           <Selector
             id="svc-select"
             :model-value="selectedServiceId"
             :options="serviceSelectOptions"
-            placeholder="Seleccioná un servicio"
+            :placeholder="t('portal.servicePlaceholder')"
             @update:model-value="selectedServiceId = $event"
           />
         </div>
 
         <AppButton :disabled="!canGoStep2" @click="goStep2">
-          Siguiente
+          {{ t('portal.next') }}
         </AppButton>
       </div>
     </section>
 
     <section v-if="step === 2" class="space-y-4">
-      <h2 class="text-lg font-semibold">Elegí fecha y horario</h2>
+      <h2 class="text-lg font-semibold">{{ t('portal.chooseDateTime') }}</h2>
 
-      <div v-if="conflictMessage" class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800" role="alert">
-        {{ conflictMessage }}
+      <div v-if="slotConflict" class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800" role="alert">
+        {{ t('portal.slotNoLongerAvailable') }}
       </div>
 
       <div>
-        <label class="mb-1 block text-sm font-medium" for="date-input">Fecha</label>
+        <label class="mb-1 block text-sm font-medium" for="date-input">{{ t('portal.date') }}</label>
         <input
           id="date-input"
           v-model="selectedDate"
@@ -359,63 +353,63 @@ const today = todayLocalISO();
       />
 
       <div class="flex gap-3">
-        <AppButton variant="neutral" @click="step = 1">Volver</AppButton>
-        <AppButton :disabled="!canGoStep3" @click="goStep3">Ver precio</AppButton>
+        <AppButton variant="neutral" @click="step = 1">{{ t('portal.back') }}</AppButton>
+        <AppButton :disabled="!canGoStep3" @click="goStep3">{{ t('portal.viewPrice') }}</AppButton>
       </div>
     </section>
 
     <section v-if="step === 3" class="space-y-4">
-      <h2 class="text-lg font-semibold">Costo estimado</h2>
+      <h2 class="text-lg font-semibold">{{ t('portal.estimatedCost') }}</h2>
 
       <div v-if="loadingPrice">
         <Skeleton :rows="1" />
       </div>
 
       <div v-else class="rounded-lg border border-border bg-card p-4 space-y-2">
-        <p class="text-sm text-neutral">Profesional: <strong class="text-current">{{ professionals.find(p => p.id === selectedProfId)?.display_name }}</strong></p>
-        <p class="text-sm text-neutral">Servicio: <strong class="text-current">{{ selectedService?.name }}</strong></p>
-        <p class="text-sm text-neutral">Fecha: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
-        <p class="text-sm text-neutral">Horario: <strong class="text-current">{{ selectedStart }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => String(p.id) === String(selectedProfId))?.display_name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.service') }}: <strong class="text-current">{{ selectedService?.name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.date') }}: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.time') }}: <strong class="text-current">{{ selectedStart }}</strong></p>
         <div class="border-t border-border mt-3 pt-3">
           <p class="text-base font-semibold">
-            Costo estimado:
+            {{ t('portal.estimatedCost') }}:
             <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : '—' }}</span>
           </p>
           <!-- Framed as expected cost, not an invoice. -->
           <p class="text-xs text-neutral mt-1">
-            Este es el costo esperado al momento de la solicitud. El precio final puede variar.
-            No es una factura.
+            {{ t('portal.costDisclaimer') }}
           </p>
           <p v-if="priceError" class="text-xs text-amber-600 mt-1">
-            (Precio estimado basado en tarifa del servicio — no se pudo obtener el precio personalizado.)
+            {{ t('portal.priceFallbackNote') }}
           </p>
         </div>
       </div>
 
       <div class="flex gap-3">
-        <AppButton variant="neutral" @click="step = 2">Volver</AppButton>
-        <AppButton :disabled="!canConfirm" @click="goStep4">Confirmar solicitud</AppButton>
+        <AppButton variant="neutral" @click="step = 2">{{ t('portal.back') }}</AppButton>
+        <AppButton :disabled="!canConfirm" @click="goStep4">{{ t('portal.confirmRequest') }}</AppButton>
       </div>
     </section>
 
     <section v-if="step === 4" class="space-y-4">
-      <h2 class="text-lg font-semibold">Confirmá tu solicitud</h2>
+      <h2 class="text-lg font-semibold">{{ t('portal.confirmRequestHeading') }}</h2>
 
       <div class="rounded-lg border border-border bg-card p-4 space-y-2">
-        <p class="text-sm text-neutral">Profesional: <strong class="text-current">{{ professionals.find(p => p.id === selectedProfId)?.display_name }}</strong></p>
-        <p class="text-sm text-neutral">Servicio: <strong class="text-current">{{ selectedService?.name }}</strong></p>
-        <p class="text-sm text-neutral">Fecha: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
-        <p class="text-sm text-neutral">Horario: <strong class="text-current">{{ selectedStart }}</strong></p>
-        <p class="text-sm font-semibold">Costo estimado: <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : '—' }}</span></p>
+        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => String(p.id) === String(selectedProfId))?.display_name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.service') }}: <strong class="text-current">{{ selectedService?.name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.date') }}: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.time') }}: <strong class="text-current">{{ selectedStart }}</strong></p>
+        <p class="text-sm font-semibold">{{ t('portal.estimatedCost') }}: <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : '—' }}</span></p>
       </div>
 
-      <p class="text-sm text-neutral">
-        Tu solicitud queda en estado <strong>Solicitado</strong> hasta que el equipo la revise.
-        Vas a ver el resultado en "Mis turnos".
-      </p>
+      <I18nT keypath="portal.requestPendingNote" tag="p" class="text-sm text-neutral">
+        <template #status>
+          <strong>{{ t('status.requested') }}</strong>
+        </template>
+      </I18nT>
 
       <div class="flex gap-3">
-        <AppButton variant="neutral" @click="step = 3">Volver</AppButton>
+        <AppButton variant="neutral" @click="step = 3">{{ t('portal.back') }}</AppButton>
         <AppButton :loading="submitting" @click="submitRequest">
           {{ t('actions.requestAppointment') }}
         </AppButton>

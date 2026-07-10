@@ -31,6 +31,8 @@ export async function checkConflict(
 export interface AvailabilityResult {
   date: string;
   slots: TimeInterval[];
+  // False = the owner does not work that day; true with empty slots = fully booked.
+  open: boolean;
 }
 
 // owner = 'prof:<id>' or 'res:<id>'. exclude drops that appointment from "booked" so a dragged

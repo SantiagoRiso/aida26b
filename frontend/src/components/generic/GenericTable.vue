@@ -1,22 +1,23 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="K extends TableKey">
 import { ref, computed, watch, useSlots } from 'vue';
+import type { Ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
 import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, ColumnDef, TableStructure } from '@shared/types/types';
+import type { TableKey, TableRecordMap, ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import GenericFilters from '@/components/generic/GenericFilters.vue';
 import Pagination from '@/components/generic/Pagination.vue';
 
 const props = defineProps<{
-  tableKey: TableKey;
+  tableKey: K;
 }>();
 
 const emit = defineEmits<{
-  edit: [row: Record<string, unknown>];
+  edit: [row: TableRecordMap[K]];
   create: [];
 }>();
 
@@ -73,7 +74,7 @@ function toggleSort(field: string) {
 
 const page = ref(1);
 const filters = ref<Record<string, string>>({});
-const rows = ref<Record<string, unknown>[]>([]);
+const rows = ref([]) as Ref<TableRecordMap[K][]>;
 const total = ref(0);
 const limit = 20;
 const loading = ref(false);
@@ -90,7 +91,7 @@ async function reload() {
       filters: filters.value,
     });
     if (result.ok) {
-      rows.value = result.data as Record<string, unknown>[];
+      rows.value = result.data;
       total.value = result.meta?.total ?? rows.value.length;
     } else {
       loadError.value = true;
@@ -138,10 +139,15 @@ const tableTitle = computed(() => {
 const slots = useSlots();
 const hasActionsColumn = computed(() => canUpdate() || canDelete() || !!slots['row-actions']);
 
-function formatCell(value: unknown): string {
+function formatCell(value: ColumnValue | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? label({ es: 'Sí', en: 'Yes' }) : label({ es: 'No', en: 'No' });
   return String(value);
+}
+
+// Column keys come from the SSOT columns map at runtime, so cells are read by name.
+function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined {
+  return (row as Partial<Record<string, ColumnValue>>)[key];
 }
 </script>
 
@@ -206,13 +212,13 @@ function formatCell(value: unknown): string {
           <template v-else>
             <tr
               v-for="row in rows"
-              :key="String(row[tableSpec.pk as string] ?? '')"
+              :key="String(cellValue(row, tableSpec.pk as string) ?? '')"
               class="border-t border-border hover:bg-surface"
               :class="canUpdate() ? 'cursor-pointer' : ''"
               @click="canUpdate() ? emit('edit', row) : undefined"
             >
               <td v-for="{ key } in columns" :key="key" class="px-4 py-3">
-                {{ formatCell(row[key]) }}
+                {{ formatCell(cellValue(row, key)) }}
               </td>
               <td v-if="hasActionsColumn" class="px-4 py-3 text-right whitespace-nowrap">
                 <slot name="row-actions" :row="row" />

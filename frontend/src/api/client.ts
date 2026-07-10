@@ -13,6 +13,9 @@ type Envelope<T> =
   | { success: true; data: T; meta?: { page: number; limit: number; total: number } }
   | { success: false; error: { code: string; message: string; fields?: Record<string, string> } };
 
+// Raw routes report failures as { error: string }; the parse fallback is an empty body.
+type RawErrorBody = { error?: string };
+
 export type ApiResult<T> =
   | { ok: true; data: T; meta?: { page: number; limit: number; total: number } }
   | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> };
@@ -53,7 +56,8 @@ export async function apiFetch<T>(
     return { ok: true, data: undefined as T };
   }
 
-  const body = await response.json().catch(() => ({} as Record<string, unknown>));
+  const body: Envelope<T> | RawErrorBody = await response.json().catch(() => ({}));
+  const rawError = (body as RawErrorBody).error;
 
   if (response.status === 403) {
     ui.toast('error', 'notPermitted');
@@ -61,7 +65,7 @@ export async function apiFetch<T>(
       ok: false,
       status: 403,
       code: 'forbidden',
-      message: typeof body['error'] === 'string' ? body['error'] : 'Forbidden',
+      message: typeof rawError === 'string' ? rawError : 'Forbidden',
     };
   }
 
@@ -71,7 +75,7 @@ export async function apiFetch<T>(
         ok: false,
         status: response.status,
         code: 'error',
-        message: typeof body['error'] === 'string' ? body['error'] : `Error ${response.status}`,
+        message: typeof rawError === 'string' ? rawError : `Error ${response.status}`,
       };
     }
     return { ok: true, data: body as T };

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
+import PasswordInput from '@/components/shared/PasswordInput.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -73,13 +74,12 @@ async function logout() {
           <label for="current-password" class="block text-sm font-semibold mb-1">
             {{ t('auth.currentPasswordLabel') }}
           </label>
-          <input
+          <PasswordInput
             id="current-password"
             v-model="currentPassword"
-            type="password"
             autocomplete="current-password"
             required
-            :class="[
+            :input-class="[
               'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
               errorMessage ? 'border-destructive' : 'border-border',
             ]"
@@ -90,13 +90,12 @@ async function logout() {
           <label for="new-password" class="block text-sm font-semibold mb-1">
             {{ t('auth.newPasswordLabel') }}
           </label>
-          <input
+          <PasswordInput
             id="new-password"
             v-model="newPassword"
-            type="password"
             autocomplete="new-password"
             required
-            :class="[
+            :input-class="[
               'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
               errorMessage ? 'border-destructive' : 'border-border',
             ]"
