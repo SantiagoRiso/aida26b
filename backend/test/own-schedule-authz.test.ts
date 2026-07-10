@@ -8,7 +8,7 @@ import { resetTestDb, makeTestPool } from './helpers';
 import { mountGenericRoutes } from '../src/app';
 import type { AuthUser } from '../src/auth';
 
-// Exercises the D-16 own-schedule guard through the GENERIC write path (post.ts) — a
+// Exercises the own-schedule guard through the generic write path (post.ts) — a
 // schedule_exceptions create targeting a professional — across every role/grant combination.
 let pool: Pool;
 let server: http.Server;

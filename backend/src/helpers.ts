@@ -1,9 +1,9 @@
-import type { TableKey, Response, ColumnDef, TableStructure, SqlParam }  from '../../shared/src/types/types';
+import type { TableKey, ColumnDef, TableStructure }  from '../../shared/src/types/types';
 import      { structure } from '../../shared/src/ssot/structure';
-import      { getPkFields, getSoftDeletePolicy } from '../../shared/src/utils/utils';
-import type { Pool }      from 'pg';
+import      { getPkFields } from '../../shared/src/utils/utils';
 import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction, RequestHandler } from 'express';
 import { sendError } from './status_messages';
+import { httpForDbError } from './db/errors';
 
 // Express 4 does not catch rejected async handlers — one uncaught rejection kills the whole
 // process. These wrappers are the crash net; structured error handling stays in the handlers.
@@ -14,6 +14,11 @@ function guardRoute(
     try {
       await fn(req, res);
     } catch (error) {
+      const mapped = httpForDbError(error);
+      if (mapped) {
+        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
+        return;
+      }
       console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
       if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
     }
@@ -29,6 +34,11 @@ function guardMiddleware(
     try {
       await fn(req, res, next);
     } catch (error) {
+      const mapped = httpForDbError(error);
+      if (mapped) {
+        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
+        return;
+      }
       console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
       if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
     }
@@ -37,11 +47,6 @@ function guardMiddleware(
 
 function getEntityName(table: TableKey): string {
   return String(structure.tables[table].uiName.en);
-}
-
-function softDeleteClause(table: TableKey): string {
-  const policy = getSoftDeletePolicy(table);
-  return policy ? `"${policy.deletedAtColumn}" IS NULL` : '';
 }
 
 // Only SSOT-declared `filterable` columns may be used to build WHERE identifiers.
@@ -59,26 +64,6 @@ function getSortableColumns(table: TableKey): string[] {
     .filter(([, col]) => col.sortable === true)
     .map(([name]) => name);
   return Array.from(new Set([...getPkFields(table), ...sortable]));
-}
-
-async function tryQuery(pool: Pool, queryStatement: string, queryArguments?: SqlParam[]): Promise<Response>{
-  try {
-    return {success: true , data: await pool.query(queryStatement, queryArguments), message: ''};
-  } catch (error) {
-    console.error(error);
-    const e = error as { code?: string };
-    const code = typeof e.code === 'string' ? e.code : undefined;
-    return {success: false, data: error, message: 'Internal server error', code};
-  }
-}
-
-function columnNamesEqualsNumber(columnsNames: string[], from: number = 1, separator: string = ','): string{
-  let res: string = '';
-  let i: number   = from;
-  columnsNames.forEach(columnName => {
-    res += `${columnName} = $${i++}` + separator;
-  })
-  return res.slice(0, -separator.length);
 }
 
 function getDerivableFields(tableName: TableKey): [string, ColumnDef][]{
@@ -111,14 +96,4 @@ function getRoleCheckedColumns(tableName: TableKey): Array<{ column: string; rol
     .map(([column, def]) => ({ column, role: def.referencesUserRole! }));
 }
 
-function formatTableColumnsForQuery(fieldsNames: string[], from: number = 1): string[]{
-  let tupleWithReplaceParameters = '';
-  for (let columnsCount = from; columnsCount <= fieldsNames.length; columnsCount++){
-    tupleWithReplaceParameters += `$${columnsCount} `;
-  }  
-  tupleWithReplaceParameters = '(' + tupleWithReplaceParameters.split(' ').join(',').slice(0,-1) + ')';
-  let tupleContent: string = '(' + fieldsNames.join(',') + ')';
-  return [tupleContent, tupleWithReplaceParameters];
-}
-
-export { guardRoute, guardMiddleware, getEntityName, tryQuery, columnNamesEqualsNumber, getNotDerivableFields, getRequiredFields, formatTableColumnsForQuery, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, softDeleteClause, getRoleCheckedColumns };
+export { guardRoute, guardMiddleware, getEntityName, getNotDerivableFields, getRequiredFields, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, getRoleCheckedColumns };

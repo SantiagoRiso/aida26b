@@ -26,7 +26,6 @@ async function apptReq(method: 'GET' | 'POST' | 'PATCH', path: string, body?: un
   return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
 }
 
-// ── Seed identifiers ──────────────────────────────────────────────────────────
 let bizId: number;
 let svcId: number;
 let proId: number;
@@ -88,7 +87,6 @@ beforeAll(async () => {
   pool = makeTestPool();
   await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
 
-  // Business with cutoff=0 initially.
   const biz = await pool.query<{ id: string }>(
     `INSERT INTO businesses (name, cancellation_cutoff_hours) VALUES ('Appt Biz', 0) RETURNING id`,
   );
@@ -101,13 +99,11 @@ beforeAll(async () => {
   recepNoGrantId = await seedUser('appt_recep_no', 'Receptionist');
   recepWithGrantId = await seedUser('appt_recep_yes', 'Receptionist');
 
-  // Schedule for pro1 (Monday 09:00–12:00, 30-min slots).
   await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [
     proId,
     WEEKLY,
   ]);
 
-  // Service belonging to the test business.
   const svc = await pool.query<{ id: string }>(
     `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
      VALUES ($1, 'Consulta', 30, '1500.00') RETURNING id`,
@@ -115,7 +111,6 @@ beforeAll(async () => {
   );
   svcId = Number(svc.rows[0].id);
 
-  // Receptionist grant: recepWithGrant → pro1's calendar.
   await pool.query(
     `INSERT INTO calendar_grants (professional_user_id, grantee_user_id) VALUES ($1, $2)`,
     [proId, recepWithGrantId],
@@ -143,7 +138,6 @@ afterAll(async () => {
   await pool.end();
 });
 
-// ── Helper: build a standard request body for pro1 ───────────────────────────
 function requestBody(overrides: Record<string, unknown> = {}) {
   return {
     professional_user_id: proId,
@@ -155,8 +149,6 @@ function requestBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ── Task 1: Create endpoints ──────────────────────────────────────────────────
-
 describe('POST /api/appointments/request', () => {
   test('creates a requested appointment with correct fields', async () => {
     currentUser = asUser(clientId, 'Client');
@@ -164,20 +156,17 @@ describe('POST /api/appointments/request', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.state).toBe('requested');
     expect(res.body.data.override_conflict).toBe(false);
-    // staff fields stripped from client-facing payload (D-08/D-31)
+    // staff fields stripped from client-facing payload
     expect(res.body.data.staff_note).toBeUndefined();
     expect(res.body.data.override_actor_id).toBeUndefined();
     // price captured from resolveBooking
     expect(res.body.data.price).toBe('1500.00');
-    // resource_id omitted in client request (D-09)
     expect(res.body.data.resource_id).toBeNull();
 
-    // cleanup
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
   });
 
   test('conflicting slot returns 200 verdict with can_override=false and writes no row', async () => {
-    // Block 09:00 with a scheduled appointment.
     const blocker = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -197,7 +186,6 @@ describe('POST /api/appointments/request', () => {
     expect(res.body.data.requires_override).toBe(true);
     expect(res.body.data.can_override).toBe(false);
 
-    // No new row written.
     const countAfter = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM appointments WHERE professional_user_id = $1 AND state = 'requested'`,
       [proId],
@@ -229,7 +217,6 @@ describe('POST /api/appointments/schedule', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.requires_override).toBe(true);
 
-    // No new row written.
     const check = await pool.query(
       `SELECT id FROM appointments
        WHERE professional_user_id = $1
@@ -335,8 +322,6 @@ describe('cross-business tenant isolation on /schedule (CR-03)', () => {
   });
 });
 
-// ── Task 2: Transitions ───────────────────────────────────────────────────────
-
 describe('POST /api/appointments/:id/approve', () => {
   test('approve on now-clashing slot returns 200 verdict without writing (D-03)', async () => {
     const requested = await pool.query<{ id: string }>(
@@ -348,7 +333,6 @@ describe('POST /api/appointments/:id/approve', () => {
     );
     const requestedId = Number(requested.rows[0].id);
 
-    // Seed a conflicting scheduled appointment at the same slot.
     const blocker = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -362,7 +346,6 @@ describe('POST /api/appointments/:id/approve', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.requires_override).toBe(true);
 
-    // Appointment stays requested.
     const check = await pool.query<{ state: string }>(
       `SELECT state FROM appointments WHERE id = $1`,
       [requestedId],
@@ -556,7 +539,6 @@ describe('Client cancellation cutoff (D-16/D-17)', () => {
   });
 
   test('client can withdraw a requested appointment regardless of cutoff (D-17)', async () => {
-    // Large cutoff.
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 9999 WHERE id = $1`, [bizId]);
 
     const r = await pool.query<{ id: string }>(
@@ -662,8 +644,6 @@ describe('PATCH /api/appointments/:id — terminal freeze (D-12)', () => {
   });
 });
 
-// ── Task 3: Reads ─────────────────────────────────────────────────────────────
-
 describe('GET /api/appointments/:id — staff detail read', () => {
   test('client is always 403 regardless of ownership (D-08)', async () => {
     const r = await pool.query<{ id: string }>(
@@ -725,7 +705,6 @@ describe('GET /api/appointments — paginated list', () => {
     expect(res.status).toBe(200);
     const rows = res.body.data as any[];
     expect(rows.length).toBeGreaterThan(0);
-    // All rows must belong to this client.
     for (const row of rows) {
       expect(Number(row.client_user_id)).toBe(clientId);
       expect(row).not.toHaveProperty('staff_note');
@@ -776,7 +755,6 @@ describe('GET /api/appointments — paginated list', () => {
     expect(res.status).toBe(200);
     const rows = res.body.data as any[];
     expect(rows.length).toBeGreaterThan(0);
-    // All must be on pro1's calendar (the only granted one).
     for (const row of rows) {
       expect(Number(row.professional_user_id)).toBe(proId);
     }
@@ -802,7 +780,6 @@ describe('GET /api/appointments — paginated list', () => {
   });
 
   test('audit events are written in the same transaction as lifecycle actions (D-14)', async () => {
-    // Schedule on a clean future slot to avoid conflicts.
     await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2) ON CONFLICT (professional_user_id) DO NOTHING`, [proId, WEEKLY]);
 
     currentUser = asUser(proId, 'Professional');
@@ -833,7 +810,6 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
   let adminId: number;
 
   beforeAll(async () => {
-    // One appointment each for client1 and client2, both on pro1's calendar.
     const r1 = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -911,8 +887,6 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
   });
 });
 
-// ── WR-04 regression: malformed date_from/date_to → 422 ──────────────────────
-
 describe('GET /api/appointments — malformed date filters (WR-04)', () => {
   test('malformed date_from returns 422 invalid_request', async () => {
     currentUser = asUser(proId, 'Professional');
@@ -936,11 +910,8 @@ describe('GET /api/appointments — malformed date filters (WR-04)', () => {
   });
 });
 
-// ── WR-06 regression: unauthorized caller on terminal appointment → 403 ───────
-
 describe('POST /api/appointments/:id/reschedule — authz before state check (WR-06)', () => {
   test('unauthorized caller on a terminal appointment gets 403, not 422', async () => {
-    // Insert a canceled (terminal) appointment on pro1's calendar.
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -950,7 +921,6 @@ describe('POST /api/appointments/:id/reschedule — authz before state check (WR
     );
     const id = Number(r.rows[0].id);
 
-    // recepNoGrantId has no grant for pro1 — should get 403, not 422.
     currentUser = asUser(recepNoGrantId, 'Receptionist');
     const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
       date: MONDAY,
@@ -963,13 +933,10 @@ describe('POST /api/appointments/:id/reschedule — authz before state check (WR
   });
 });
 
-// ── WR-02 regression: foreign resource_id → 404 ──────────────────────────────
-
 describe('POST /api/appointments/schedule — foreign resource_id (WR-02)', () => {
   let foreignResourceId: number;
 
   beforeAll(async () => {
-    // Create a resource belonging to a different business.
     const biz3 = await pool.query<{ id: string }>(
       `INSERT INTO businesses (name, cancellation_cutoff_hours) VALUES ('Resource Biz', 0) RETURNING id`,
     );

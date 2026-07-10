@@ -1,18 +1,21 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import type { Response, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
-import { getPkFields, getSoftDeletePolicy } from '../../../shared/src/utils/utils';
+import type { TableKey, TableRecordMap } from '../../../shared/src/types/types';
+import { getPkFields } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
-  tryQuery,
-  columnNamesEqualsNumber,
 } from '../helpers';
 
+import { buildDeleteStatement } from '../db/generic';
+
+import { query as runQuery } from '../db/core';
+import { getScheduleOwnerRow } from '../db/scheduling';
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, assertOwnScheduleAllowed, buildScopeConditions } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed } from './crud-policy';
 import type { AuthUser } from '../auth';
+import type { GenericRow } from '../../../shared/src/ssot/query-types';
 
 import {
   validateOnlyPk,
@@ -59,75 +62,35 @@ export async function deleteHandler(
 
   // Own+Admin+granted enforcement for schedule tables — owner read from the existing row.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
-    const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(
-      `SELECT professional_user_id, resource_id FROM ${physicalTable} WHERE id = $1`,
-      [pkValues[0]]
-    );
-    if (existing.rows.length === 0) {
+    const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0]);
+    if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);
     }
-    const guard = await assertOwnScheduleAllowed(pool, user, existing.rows[0]);
+    const guard = await assertOwnScheduleAllowed(pool, user, existingRow);
     if (!guard.ok) {
       return sendError(res, guard.status, guard.code, guard.message);
     }
   }
 
-  const softDelete = getSoftDeletePolicy(tableName);
+  const { text, values } = buildDeleteStatement(
+    tableName,
+    physicalTable,
+    pkFields,
+    pkValues,
+    allowed,
+    user?.id ?? null,
+  );
 
-  let query: string;
-  let params: SqlParam[];
+  try {
+    const rows = await runQuery<GenericRow>(pool, text, values);
 
-  if (softDelete) {
-    // Referenced core records are archived, never physically removed.
-    const actorId = user?.id ?? null;
-    const sets = [`${softDelete.deletedAtColumn} = now()`, `updated_at = now()`];
-    params = [];
-    let nextParam = 1;
-
-    if (softDelete.deletedByColumn) {
-      sets.push(`${softDelete.deletedByColumn} = $${nextParam++}`);
-      params.push(actorId);
+    if (rows.length === 0) {
+      return sendError(res, 404, 'not_found', `${entityName} not found`);
     }
 
-    const whereArguments = columnNamesEqualsNumber(pkFields, nextParam, ' AND ');
-    params.push(...pkValues);
-    nextParam += pkFields.length;
-
-    // AND scope into WHERE so out-of-scope rows yield rowCount 0 → 404.
-    const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, nextParam);
-    params.push(...scopeValues);
-    const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
-
-    query = `
-      UPDATE ${physicalTable}
-      SET ${sets.join(', ')}
-      WHERE ${whereArguments} AND ${softDelete.deletedAtColumn} IS NULL${scopeClause}
-      RETURNING *
-    `;
-  } else {
-    const whereArguments = columnNamesEqualsNumber(pkFields, 1, ' AND ');
-    params = [...pkValues];
-
-    const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, pkValues.length + 1);
-    params.push(...scopeValues);
-    const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
-
-    query = `
-      DELETE FROM ${physicalTable}
-      WHERE ${whereArguments}${scopeClause}
-      RETURNING *
-    `;
+    return sendData(res, rows[0], 200);
+  } catch (err) {
+    console.error(`Error deleting ${entityName}:`, err);
+    return sendError(res, 500, 'internal_error', 'Internal server error');
   }
-
-  const queryResponse: Response = await tryQuery(pool, query, params);
-
-  if (!queryResponse.success) {
-    return sendError(res, 500, 'internal_error', queryResponse.message);
-  }
-
-  if (queryResponse.data?.rowCount === 0) {
-    return sendError(res, 404, 'not_found', `${entityName} not found`);
-  }
-
-  return sendData(res, queryResponse.data?.rows?.[0], 200);
 }

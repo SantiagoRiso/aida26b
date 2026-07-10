@@ -6,7 +6,7 @@ import type { SqlParam } from '../../shared/src/types/types';
 
 dotenv.config();
 
-// Dev/demo-only foundation seed. Idempotent: re-running inserts nothing new. Not a migration.
+// Idempotent: re-running inserts nothing new. Not a migration.
 
 const BUSINESS_NAME = 'Estudio Demo';
 const TIMEZONE = 'America/Argentina/Buenos_Aires';

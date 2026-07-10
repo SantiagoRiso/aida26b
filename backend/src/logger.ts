@@ -1,8 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { RequestHandler } from 'express';
 
-// Structured JSON logger. LOG_LEVEL is read per call so it stays configurable;
-// 'silent' suppresses everything (used by tests).
+// LOG_LEVEL is read per call so it stays configurable; 'silent' suppresses everything (used by tests).
 
 type Level = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
@@ -45,7 +44,7 @@ export const logger = {
   error: (fields: LogFields) => emit('error', fields),
 };
 
-// Per-request log on completion. Never logs the request body.
+// Never logs the request body.
 export function requestLogger(): RequestHandler {
   return (req, res, next) => {
     const reqId = randomUUID();

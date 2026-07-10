@@ -32,9 +32,7 @@ async function insertRow(tableName: string, row: Record<string, unknown>) {
   }
 }
 
-// pkField is accepted for signature parity with fetchById but generic PUT/DELETE take the id
-// as a path segment, matching the frontend's crud.ts calls — there is no query-string form.
-async function updateRow(tableName: string, id: string, row: Record<string, unknown>, _pkField: string = 'id') {
+async function updateRow(tableName: string, id: string, row: Record<string, unknown>) {
   try {
     return await fetch(`${API_BASE}/${tableName}/${id}`, {
       method: 'PUT',
@@ -47,7 +45,7 @@ async function updateRow(tableName: string, id: string, row: Record<string, unkn
   }
 }
 
-async function deleteRow(tableName: string, id: string, _pkField: string = 'id') {
+async function deleteRow(tableName: string, id: string) {
   try {
     return await fetch(`${API_BASE}/${tableName}/${id}`, { method: 'DELETE' });
   } catch (error) {

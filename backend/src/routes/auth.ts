@@ -3,6 +3,14 @@ import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from '../auth';
 import { getSessionToken, loadSession, readPassword, type AuditWriter } from '../session';
+import {
+  findUserForLogin,
+  createSession,
+  deleteSessionByToken,
+  getPasswordCreds,
+  updateUserPassword,
+  deleteOtherSessions,
+} from '../db/auth';
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
 
@@ -26,16 +34,7 @@ export function mountAuthRoutes(
       const password =
         typeof req.body.password === 'string' ? req.body.password : '';
 
-      const result = await pool.query(
-        `SELECT
-           id, username, email, password_hash, password_salt,
-           role, business_id, is_active, must_change_password
-         FROM auth.users
-         WHERE username = $1`,
-        [username],
-      );
-
-      const row = result.rows[0];
+      const row = await findUserForLogin(pool, username);
 
       // Always run scrypt — even for an unknown username — against a fixed dummy hash so
       // login response time can't be used to enumerate which usernames exist.
@@ -49,20 +48,16 @@ export function mountAuthRoutes(
         // Record failed attempts against a real account (resolved from the row); attempts on an
         // unknown username have no business to attribute and are not audited.
         await audit(req, 'login_failed', 'failure', { username }, {
-          actorId: row?.id ?? null,
-          businessId: row?.business_id ?? null,
+          actorId: row ? Number(row.id) : null,
+          businessId: row?.business_id != null ? Number(row.business_id) : null,
         });
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const user = auth.publicUser(row);
+      const user = auth.publicUser(row!);
       const token = auth.newSessionToken();
 
-      await pool.query(
-        `INSERT INTO auth.sessions (user_id, token_hash, expires_at)
-         VALUES ($1, $2, now() + interval '7 days')`,
-        [user.id, auth.hashToken(token)],
-      );
+      await createSession(pool, user.id, auth.hashToken(token));
 
       (req as AuthedRequest).user = user;
 
@@ -86,7 +81,7 @@ export function mountAuthRoutes(
         if (user) {
           (req as AuthedRequest).user = user;
         }
-        await pool.query('DELETE FROM auth.sessions WHERE token_hash = $1', [auth.hashToken(token)]);
+        await deleteSessionByToken(pool, auth.hashToken(token));
         await audit(req, 'logout', 'success');
       }
 
@@ -115,14 +110,10 @@ export function mountAuthRoutes(
         });
       }
 
-      const current = await pool.query(
-        'SELECT password_hash, password_salt FROM auth.users WHERE id = $1',
-        [user.id],
-      );
-      const row = current.rows[0];
+      const current = await getPasswordCreds(pool, user.id);
 
       const ok =
-        row && (await auth.verifyPassword(currentPassword, row.password_salt, row.password_hash));
+        current !== null && (await auth.verifyPassword(currentPassword, current.password_salt, current.password_hash));
 
       if (!ok) {
         await audit(req, 'password_change_failed', 'failure');
@@ -130,7 +121,7 @@ export function mountAuthRoutes(
       }
 
       // Reusing the current password defeats a forced reset, so reject it.
-      const sameAsCurrent = await auth.verifyPassword(newPassword, row.password_salt, row.password_hash);
+      const sameAsCurrent = await auth.verifyPassword(newPassword, current!.password_salt, current!.password_hash);
       if (sameAsCurrent) {
         return res.status(400).json({
           error: 'New password must be different from the current password',
@@ -139,25 +130,16 @@ export function mountAuthRoutes(
 
       const { passwordHash, passwordSalt } = await auth.hashPassword(newPassword);
 
-      const result = await pool.query(
-        `UPDATE auth.users
-         SET password_hash = $1, password_salt = $2, must_change_password = false, updated_at = now()
-         WHERE id = $3
-         RETURNING id, username, email, role, business_id, is_active, must_change_password`,
-        [passwordHash, passwordSalt, user.id],
-      );
+      const updatedRow = await updateUserPassword(pool, user.id, passwordHash, passwordSalt);
 
       // Invalidate the user's other sessions so a changed password locks out anyone
       // holding an older token; the current session stays valid.
       const currentToken = getSessionToken(req);
       if (currentToken) {
-        await pool.query(
-          'DELETE FROM auth.sessions WHERE user_id = $1 AND token_hash <> $2',
-          [user.id, auth.hashToken(currentToken)],
-        );
+        await deleteOtherSessions(pool, user.id, auth.hashToken(currentToken));
       }
 
-      (req as AuthedRequest).user = auth.publicUser(result.rows[0]);
+      (req as AuthedRequest).user = auth.publicUser(updatedRow!);
 
       await audit(req, 'password_changed', 'success');
 

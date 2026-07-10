@@ -25,7 +25,6 @@ export type CreateAppOptions = {
 };
 
 // Shared generic CRUD route stack so the test app and the runtime server never drift.
-// Callers supply the auth/authorization guards.
 export function mountGenericRoutes(
   app: express.Express,
   pool: Pool,
@@ -76,5 +75,3 @@ export function createApp(pool: Pool, options: CreateAppOptions = {}) {
 
   return app;
 }
-
-export const createAppGivenPool = createApp;

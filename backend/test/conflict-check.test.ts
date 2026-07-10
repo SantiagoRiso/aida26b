@@ -255,7 +255,6 @@ describe('GET /api/availability', () => {
     expect(full.body.data.open).toBe(true);
     expect(full.body.data.slots).toHaveLength(0);
 
-    // Worked day with free slots stays open.
     const free = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
     expect(free.body.data.open).toBe(true);
   });

@@ -5,8 +5,8 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { recheckConflictsInTx } from '../src/routes/scheduling';
 
-// D-02 concurrency proof driven directly against recheckConflictsInTx. No appointment is written
-// (appointments are SELECT-only, D-01) — the invariant is proven at the advisory-lock level.
+// Concurrency proof driven directly against recheckConflictsInTx. No appointment is written
+// (a recheck is read-only) — the invariant is proven at the advisory-lock level.
 let pool: Pool;
 let bizId: number;
 let pro1: number;
@@ -56,7 +56,7 @@ describe('recheckConflictsInTx — advisory-locked transactional recheck', () =>
     const order: string[] = [];
     try {
       await c1.query('BEGIN');
-      const v1 = await recheckConflictsInTx(c1, proposal(pro1)); // acquires pro1's advisory lock
+      const v1 = await recheckConflictsInTx(c1, proposal(pro1));
       expect(v1.can_save).toBe(true);
       order.push('c1-evaluated');
 
@@ -69,14 +69,14 @@ describe('recheckConflictsInTx — advisory-locked transactional recheck', () =>
 
       await new Promise((r) => setTimeout(r, 200)); // let c2 reach and block on the lock
       order.push('c1-commit');
-      await c1.query('COMMIT'); // releasing the lock lets c2 proceed
+      await c1.query('COMMIT');
 
       const v2 = await c2done;
       await c2.query('COMMIT');
 
       // c2 evaluated only AFTER c1 committed → the two same-owner rechecks were serialized.
       expect(order).toEqual(['c1-evaluated', 'c1-commit', 'c2-evaluated']);
-      expect(v2.can_save).toBe(true); // still free: D-01 forbids a write, so no state changed
+      expect(v2.can_save).toBe(true); // still free: a recheck never writes, so no state changed
     } finally {
       c1.release();
       c2.release();
@@ -88,7 +88,7 @@ describe('recheckConflictsInTx — advisory-locked transactional recheck', () =>
     const c3 = await pool.connect();
     try {
       await c1.query('BEGIN');
-      await recheckConflictsInTx(c1, proposal(pro1)); // holds pro1's lock, tx stays open
+      await recheckConflictsInTx(c1, proposal(pro1));
 
       await c3.query('BEGIN');
       const outcome = await Promise.race([

@@ -401,7 +401,7 @@ describe('per-block granularity validation (D-06/D-07/D-07c)', () => {
 });
 
 describe('computeDailySlots — discrete fixed slots (D-07/D-08/D-09/D-15)', () => {
-  const MONDAY = '2026-06-29'; // Monday (UTC)
+  const MONDAY = '2026-06-29';
 
   it('chops a block into back-to-back fixed slots of its granularity', () => {
     const slots = computeDailySlots({

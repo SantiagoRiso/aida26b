@@ -1,14 +1,14 @@
 import express from 'express';
 import type { Request, RequestHandler } from 'express';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
-import { auditInTx } from './appointment-authz';
-import type { ColumnValue, SqlParam } from '../../../shared/src/types/types';
+import { listAuditEvents } from '../db/audit';
+import { getBusinessSettings, updateBusinessCutoff } from '../db/businesses';
+import type { ColumnValue } from '../../../shared/src/types/types';
 import { AUDIT_OUTCOME_VALUES } from '../../../shared/src/ssot/domain';
 
-// Accepts YYYY-MM-DD or ISO 8601 timestamp (date + T + time + optional Z/offset).
 const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -43,88 +43,57 @@ export function mountAuditRoutes(
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
 
-    // Only code-controlled column names are interpolated; all user-supplied filter
-    // values are bound as $N params — no SQL injection risk from column names.
-    const conditions: string[] = ['a.business_id = $1'];
-    const params: SqlParam[] = [user.business_id];
-    let paramIdx = 2;
+    const entityType = req.query.entity_type ? String(req.query.entity_type) : undefined;
 
-    if (req.query.entity_type) {
-      conditions.push(`a.entity_type = $${paramIdx}`);
-      params.push(String(req.query.entity_type));
-      paramIdx++;
-    }
-
+    let actorUserId: number | undefined;
     if (req.query.actor_user_id) {
       const actorId = Number(req.query.actor_user_id);
-      if (Number.isInteger(actorId) && actorId > 0) {
-        conditions.push(`a.actor_user_id = $${paramIdx}`);
-        params.push(actorId);
-        paramIdx++;
-      }
+      if (Number.isInteger(actorId) && actorId > 0) actorUserId = actorId;
     }
 
-    if (req.query.event_type) {
-      conditions.push(`a.event_type = $${paramIdx}`);
-      params.push(String(req.query.event_type));
-      paramIdx++;
-    }
+    const eventType = req.query.event_type ? String(req.query.event_type) : undefined;
 
+    let outcome: string | undefined;
     if (req.query.outcome) {
       if (!AUDIT_OUTCOME_VALUES.has(String(req.query.outcome))) {
         return sendError(res, 422, 'invalid_request', 'Unknown outcome');
       }
-      conditions.push(`a.outcome = $${paramIdx}`);
-      params.push(String(req.query.outcome));
-      paramIdx++;
+      outcome = String(req.query.outcome);
     }
 
+    let dateFrom: string | undefined;
     if (req.query.date_from) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
         return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
       }
-      conditions.push(`a.created_at >= $${paramIdx}`);
-      params.push(String(req.query.date_from));
-      paramIdx++;
+      dateFrom = String(req.query.date_from);
     }
 
+    let dateTo: string | undefined;
     if (req.query.date_to) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
         return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
       }
-      conditions.push(`a.created_at <= $${paramIdx}`);
-      params.push(String(req.query.date_to));
-      paramIdx++;
+      dateTo = String(req.query.date_to);
     }
 
-    const where = conditions.join(' AND ');
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const page = Math.max(Number(req.query.page) || 1, 1);
     const offset = (page - 1) * limit;
 
-    try {
-      const [rows, count] = await Promise.all([
-        pool.query(
-          `SELECT a.id, a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
-                  a.outcome, a.ip, a.details, a.created_at
-           FROM audit_events a
-           WHERE ${where}
-           ORDER BY a.created_at DESC
-           LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
-          [...params, limit, offset],
-        ),
-        pool.query<{ n: string }>(
-          `SELECT count(*)::text AS n FROM audit_events a WHERE ${where}`,
-          params,
-        ),
-      ]);
+    const { rows, total } = await listAuditEvents(pool, {
+      businessId: user.business_id,
+      entityType,
+      actorUserId,
+      eventType,
+      outcome,
+      dateFrom,
+      dateTo,
+      limit,
+      offset,
+    });
 
-      return sendList(res, rows.rows, { page, limit, total: Number(count.rows[0].n) });
-    } catch (err) {
-      // A route error must never crash the process — 500, not an unhandled rejection.
-      console.error('Error listing audit events:', err);
-      return sendError(res, 500, 'internal_error', 'Internal server error');
-    }
+    return sendList(res, rows, { page, limit, total });
   }));
 
   // Session-scoped, any authenticated role: the cancellation cutoff is business policy the portal
@@ -134,19 +103,12 @@ export function mountAuditRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
-    try {
-      const result = await pool.query<{ id: string; cancellation_cutoff_hours: number }>(
-        `SELECT id, cancellation_cutoff_hours FROM businesses WHERE id = $1`,
-        [user.business_id],
-      );
-      if (result.rows.length === 0) {
-        return sendError(res, 404, 'not_found', 'Business not found');
-      }
-      return sendData(res, result.rows[0]);
-    } catch (err) {
-      console.error('Error reading business settings:', err);
-      return sendError(res, 500, 'internal_error', 'Internal server error');
+
+    const settings = await getBusinessSettings(pool, user.business_id);
+    if (!settings) {
+      return sendError(res, 404, 'not_found', 'Business not found');
     }
+    return sendData(res, settings);
   }));
 
   // A mismatched :id is cross-tenant — returns 404 to hide existence.
@@ -170,26 +132,14 @@ export function mountAuditRoutes(
       return sendError(res, 404, 'not_found', 'Business not found');
     }
 
-    try {
-      const result = await pool.query<{ id: string; cancellation_cutoff_hours: number }>(
-        `SELECT id, cancellation_cutoff_hours FROM businesses WHERE id = $1`,
-        [user.business_id],
-      );
-
-      if (result.rows.length === 0) {
-        return sendError(res, 404, 'not_found', 'Business not found');
-      }
-
-      return sendData(res, result.rows[0]);
-    } catch (err) {
-      // A route error must never crash the process — 500, not an unhandled rejection.
-      console.error('Error reading business settings:', err);
-      return sendError(res, 500, 'internal_error', 'Internal server error');
+    const settings = await getBusinessSettings(pool, user.business_id);
+    if (!settings) {
+      return sendError(res, 404, 'not_found', 'Business not found');
     }
+    return sendData(res, settings);
   }));
 
   // A mismatched :id is cross-tenant — returns 404 to hide existence.
-  // Only cancellation_cutoff_hours is writable here.
   app.patch('/api/businesses/:id/settings', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
@@ -223,30 +173,17 @@ export function mountAuditRoutes(
       });
     }
 
-    try {
-      const result = await pool.query<{ id: string; cancellation_cutoff_hours: number }>(
-        `UPDATE businesses
-         SET cancellation_cutoff_hours = $1
-         WHERE id = $2
-         RETURNING id, cancellation_cutoff_hours`,
-        [cutoffHours, user.business_id],
-      );
-
-      if (result.rows.length === 0) {
-        return sendError(res, 404, 'not_found', 'Business not found');
-      }
-
-      // No data-integrity dependency on the audit row, so guards.audit (pool) is fine here.
-      await guards.audit(req, 'business_settings_updated', 'success', {
-        business_id: user.business_id,
-        cancellation_cutoff_hours: cutoffHours,
-      });
-
-      return sendData(res, result.rows[0]);
-    } catch (err) {
-      // A route error must never crash the process — 500, not an unhandled rejection.
-      console.error('Error updating business settings:', err);
-      return sendError(res, 500, 'internal_error', 'Internal server error');
+    const updated = await updateBusinessCutoff(pool, user.business_id, cutoffHours);
+    if (!updated) {
+      return sendError(res, 404, 'not_found', 'Business not found');
     }
+
+    // No data-integrity dependency on the audit row, so guards.audit (pool) is fine here.
+    await guards.audit(req, 'business_settings_updated', 'success', {
+      business_id: user.business_id,
+      cancellation_cutoff_hours: cutoffHours,
+    });
+
+    return sendData(res, updated);
   }));
 }

@@ -51,9 +51,8 @@ export async function updatedCorrectly(
   tableName: TableKey,
   id: string,
   row: Record<string, unknown>,
-  pkField: string = 'id',
 ) {
-  const response = await updateRow(tableName, id, row, pkField);
+  const response = await updateRow(tableName, id, row);
   assert.strictEqual(response.status, 202);
   const body = await response.json();
   assert.strictEqual(body.success, true);
@@ -63,8 +62,8 @@ export async function updatedCorrectly(
   return body.data;
 }
 
-export async function deletedCorrectly(tableName: TableKey, id: string, pkField: string = 'id') {
-  const response = await deleteRow(tableName, id, pkField);
+export async function deletedCorrectly(tableName: TableKey, id: string) {
+  const response = await deleteRow(tableName, id);
   assert.strictEqual(response.status, 200);
   const body = await response.json();
   assert.strictEqual(body.success, true);

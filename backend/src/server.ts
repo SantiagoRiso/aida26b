@@ -1,10 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 
+import { pool } from './db';
 import { mountGenericRoutes, mountObservability } from './app';
 import { createAuditWriter, createAuthGuards } from './session';
 import { mountAuthRoutes } from './routes/auth';
@@ -25,14 +25,6 @@ const port = process.env.PORT || 3000;
 // req.ip reflects the real client rather than the proxy. Audited IPs depend on this.
 app.set('trust proxy', 1);
 
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-});
-
 app.use(cors());
 app.use(express.json());
 
@@ -42,13 +34,11 @@ mountObservability(app, pool);
 const audit = createAuditWriter(pool);
 const { requireAuth, requirePasswordReady, requireAdmin } = createAuthGuards(pool, audit);
 
-// Session lifecycle (login/logout/me/change-password).
 mountAuthRoutes(app, pool, { audit, requireAuth });
 
-// Admin user management (create/deactivate/reset-password).
 mountUserAdminRoutes(app, pool, { audit, requireAuth, requirePasswordReady, requireAdmin });
 
-// Explicit grant-management surface; calendar_grants stays protected in SSOT (no generic CRUD).
+// calendar_grants stays protected in SSOT (no generic CRUD), so grants need this explicit route.
 mountGrantRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
@@ -69,21 +59,19 @@ mountSetScheduleRoutes(app, pool, {
   audit,
 });
 
-// Full appointment lifecycle: request/schedule/approve/reschedule/transition/PATCH + reads.
 mountAppointmentRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
   audit,
 });
 
-// Immutable ARS ledger: entry create + balance + paginated history.
+// Immutable ARS ledger — append-only, never mutated.
 mountLedgerRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
   audit,
 });
 
-// Admin audit view (filtered, paginated) + admin business settings endpoint.
 mountAuditRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,

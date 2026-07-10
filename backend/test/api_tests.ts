@@ -167,7 +167,7 @@ test('POST & GET /services inserts a service into an empty db', async () => {
 });
 
 test('DELETE /clients soft-deletes the row', async () => {
-  await asserts.deletedCorrectly('clients', clientUserId, 'id');
+  await asserts.deletedCorrectly('clients', clientUserId);
   const response = await fetch(`${API_BASE}/clients`);
   const body = await response.json();
   expect(body.data.length).toBe(0);
@@ -187,12 +187,12 @@ test('DELETE /services removes the row', async () => {
 });
 
 test('PUT /clients updates profile fields', async () => {
-  await asserts.updatedCorrectly('clients', clientUserId, fixtures.clientModifiedFor(clientUserId), 'id');
+  await asserts.updatedCorrectly('clients', clientUserId, fixtures.clientModifiedFor(clientUserId));
   await asserts.fetchedByIdMatches('clients', clientUserId, fixtures.clientModifiedFor(clientUserId), 'id');
 });
 
 test('PUT /professionals updates profile fields', async () => {
-  await asserts.updatedCorrectly('professionals', professionalUserId, fixtures.professionalModifiedFor(professionalUserId), 'id');
+  await asserts.updatedCorrectly('professionals', professionalUserId, fixtures.professionalModifiedFor(professionalUserId));
 });
 
 test('PUT /services updates the row', async () => {

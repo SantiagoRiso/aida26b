@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { guardRoute, guardMiddleware } from '../src/helpers';
+import { DbError } from '../src/db/errors';
 
 type Envelope = { success: boolean; error: { code: string; message: string } };
 
@@ -78,5 +79,32 @@ describe('async handler crash net', () => {
     await Promise.resolve(handler(req, res as unknown as Response, () => {}));
 
     expect(res.statusCode).toBe(200);
+  });
+
+  it('maps a DbError unique-violation (23505) to 409 without logging', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = fakeRes();
+    const handler = guardRoute(async () => {
+      throw new DbError('duplicate key value violates unique constraint', '23505');
+    });
+
+    await Promise.resolve(handler(req, res as unknown as Response, () => {}));
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body?.error.code).toBe('conflict');
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('an unmapped DbError still responds 500 and logs', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = fakeRes();
+    const handler = guardRoute(async () => {
+      throw new DbError('deadlock detected', '40P01');
+    });
+
+    await Promise.resolve(handler(req, res as unknown as Response, () => {}));
+
+    expect(res.statusCode).toBe(500);
+    expect(consoleError).toHaveBeenCalledOnce();
   });
 });

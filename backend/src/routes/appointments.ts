@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler } from 'express';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
@@ -14,8 +14,27 @@ import {
 } from '../../../shared/src/ssot/domain';
 import { recheckConflictsInTx } from './scheduling';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
-import { grantedProfessionalScope } from '../grant-queries';
-import type { ColumnValue, SqlParam } from '../../../shared/src/types/types';
+import { withTransaction } from '../db/core';
+import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
+import {
+  resourceExistsInBusiness,
+  clientExistsInBusiness,
+  loadAppointment,
+  getAppointmentWallClock,
+  insertRequestedAppointment,
+  insertScheduledAppointment,
+  approveAppointment,
+  rescheduleAppointment,
+  transitionAppointmentState,
+  patchAppointmentFields,
+  listAppointments,
+  listRelatedClientIds,
+  type AppointmentRoleScope,
+} from '../db/appointments';
+import { insertSessionChargeIfAbsent } from '../db/ledger';
+import { getCancellationCutoffHours } from '../db/businesses';
+import type { ColumnValue } from '../../../shared/src/types/types';
+import type { AppointmentRow } from '../../../shared/src/ssot/query-types';
 
 type AuthedRequest = Request & { user?: AuthUser };
 
@@ -25,28 +44,6 @@ type AuditFn = (
   outcome: string,
   details?: Record<string, ColumnValue>,
 ) => Promise<void>;
-
-// appointments wire row as node-pg returns it: BIGINT and NUMERIC arrive as
-// strings, TIMESTAMPTZ as Date. Matches the DDL, plus staff_note (later migration).
-type AppointmentRow = {
-  id: string;
-  client_user_id: string;
-  professional_user_id: string;
-  resource_id: string | null;
-  service_id: string;
-  starts_at: Date;
-  duration_minutes: number;
-  ends_at: Date;
-  state: string;
-  name: string | null;
-  description: string | null;
-  price: string;
-  override_conflict: boolean;
-  override_actor_id: string | null;
-  staff_note: string | null;
-  created_at: Date;
-  updated_at: Date;
-};
 
 // Booking input as the endpoints expect it; every field is still format-checked at runtime.
 type BookingBody = {
@@ -82,7 +79,7 @@ function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, (typeof STA
 }
 
 async function resolveAndLoadService(
-  pool: Pool | PoolClient,
+  pool: Pool,
   businessId: number,
   body: BookingBody,
 ): Promise<
@@ -137,12 +134,8 @@ async function resolveAndLoadService(
     return { ok: false, status: 422, code: 'invalid_request', message: 'Invalid appointment input', fields };
   }
 
-  const svc = await pool.query<{ default_price_ars: string }>(
-    `SELECT default_price_ars FROM services
-     WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
-    [serviceId, businessId],
-  );
-  if (svc.rows.length === 0) {
+  const serviceDefaultPriceArs = await getServiceDefaultPrice(pool, serviceId, businessId);
+  if (serviceDefaultPriceArs == null) {
     return { ok: false, status: 404, code: 'not_found', message: 'Service not found in this business' };
   }
 
@@ -150,11 +143,7 @@ async function resolveAndLoadService(
   // check independent of the conflict loader so a future override bypass cannot
   // write a foreign resource_id.
   if (resourceId !== undefined && Number.isInteger(resourceId)) {
-    const resourceCheck = await pool.query<{ id: string }>(
-      `SELECT id FROM resources WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
-      [resourceId, businessId],
-    );
-    if (resourceCheck.rows.length === 0) {
+    if (!(await resourceExistsInBusiness(pool, resourceId, businessId))) {
       return { ok: false, status: 404, code: 'not_found', message: 'Resource not found in this business' };
     }
   }
@@ -162,33 +151,16 @@ async function resolveAndLoadService(
   // Client (when supplied) must belong to the session's business — a body-supplied
   // client_user_id from another tenant is rejected before it reaches the INSERT.
   if (clientUserId != null && Number.isInteger(clientUserId)) {
-    const clientCheck = await pool.query<{ id: string }>(
-      `SELECT id FROM auth.users
-       WHERE id = $1 AND role = 'Client' AND business_id = $2`,
-      [clientUserId, businessId],
-    );
-    if (clientCheck.rows.length === 0) {
+    if (!(await clientExistsInBusiness(pool, clientUserId, businessId))) {
       return { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
     }
   }
 
-  // Per-client override price, business-scoped to prevent cross-tenant price reads.
   let clientOverridePriceArs: string | null = null;
   if (clientUserId != null && Number.isInteger(clientUserId)) {
-    const ov = await pool.query<{ price_ars: string }>(
-      `SELECT cps.price_ars
-       FROM client_professional_services cps
-       JOIN auth.users u ON u.id = cps.client_user_id
-       WHERE cps.client_user_id       = $1
-         AND cps.professional_user_id = $2
-         AND cps.service_id           = $3
-         AND u.business_id            = $4`,
-      [clientUserId, professionalUserId, serviceId, businessId],
-    );
-    clientOverridePriceArs = ov.rows[0]?.price_ars ?? null;
+    clientOverridePriceArs = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
   }
 
-  const serviceDefaultPriceArs = svc.rows[0].default_price_ars;
   const { effective_price, effective_duration_minutes } = resolveBooking({
     serviceDefaultPriceArs,
     clientOverridePriceArs,
@@ -215,24 +187,6 @@ async function resolveAndLoadService(
   };
 }
 
-// Loads an appointment row scoped to the session business via a JOIN through auth.users on
-// professional_user_id. Returns null when the row does not exist or belongs to another tenant
-// (both surface as 404 to hide cross-tenant existence).
-async function loadAppointment(
-  pool: Pool,
-  id: number,
-  businessId: number,
-): Promise<AppointmentRow | null> {
-  const r = await pool.query<AppointmentRow>(
-    `SELECT a.*
-     FROM appointments a
-     JOIN auth.users u ON u.id = a.professional_user_id
-     WHERE a.id = $1 AND u.business_id = $2`,
-    [id, businessId],
-  );
-  return r.rows[0] ?? null;
-}
-
 export function mountAppointmentRoutes(
   app: express.Application,
   pool: Pool,
@@ -244,6 +198,7 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
     if (user.role !== 'Client') {
       return sendError(res, 403, 'forbidden', 'Only clients may use the request endpoint');
     }
@@ -252,7 +207,7 @@ export function mountAppointmentRoutes(
     // Client is always the caller; ignore any body-supplied client_user_id.
     body.client_user_id = user.id;
 
-    const resolved = await resolveAndLoadService(pool, user.business_id, body);
+    const resolved = await resolveAndLoadService(pool, businessId, body);
     if (!resolved.ok) {
       return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
@@ -272,7 +227,7 @@ export function mountAppointmentRoutes(
 
     // Dry-run conflict check — read-only, no advisory lock needed for a mere read.
     const { loadConflictInputs } = await import('./scheduling');
-    const inputs = await loadConflictInputs(pool, user.business_id, {
+    const inputs = await loadConflictInputs(pool, businessId, {
       professionalUserId,
       date,
     });
@@ -293,40 +248,22 @@ export function mountAppointmentRoutes(
       return sendData(res, verdict);
     }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    const appt = await withTransaction(pool, async (tx) => {
+      const inserted = await insertRequestedAppointment(tx, {
+        clientUserId: user.id,
+        professionalUserId,
+        serviceId,
+        startsAt,
+        durationMinutes: effective_duration_minutes,
+        price: effective_price,
+        name,
+        description,
+      });
+      await auditInTx(tx, user, 'appointment_requested', 'success', Number(inserted!.id));
+      return inserted!;
+    });
 
-      const insert = await client.query<AppointmentRow>(
-        `INSERT INTO appointments
-           (client_user_id, professional_user_id, service_id,
-            starts_at, duration_minutes, state, price,
-            override_conflict, override_actor_id, name, description)
-         VALUES ($1, $2, $3, $4, $5, 'requested', $6, false, null, $7, $8)
-         RETURNING *`,
-        [
-          user.id,
-          professionalUserId,
-          serviceId,
-          startsAt,
-          effective_duration_minutes,
-          effective_price,
-          name,
-          description,
-        ],
-      );
-      const appt = insert.rows[0];
-
-      await auditInTx(client, user, 'appointment_requested', 'success', Number(appt.id));
-
-      await client.query('COMMIT');
-      return sendData(res, stripStaffFields(appt), 201);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    return sendData(res, stripStaffFields(appt), 201);
   }));
 
   app.post('/api/appointments/schedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
@@ -335,6 +272,7 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const body = req.body ?? {};
     const professionalUserId = Number(body.professional_user_id);
@@ -348,7 +286,7 @@ export function mountAppointmentRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const resolved = await resolveAndLoadService(pool, user.business_id, body);
+    const resolved = await resolveAndLoadService(pool, businessId, body);
     if (!resolved.ok) {
       return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
@@ -368,78 +306,66 @@ export function mountAppointmentRoutes(
 
     const override = req.body.override === true;
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-
-      const verdict = await recheckConflictsInTx(client, {
-        businessId: user.business_id,
-        professionalUserId,
-        resourceId,
-        date,
-        start,
-        durationMinutes: effective_duration_minutes,
-        callerIsStaff: true,
-      });
-
-      if (verdict.requires_override && !override) {
-        // Warn first; do NOT commit. The client requirement below is checked only once we're
-        // actually about to write a row — a caller probing for conflicts without a client yet
-        // chosen must still see the verdict, not a premature validation error.
-        await client.query('ROLLBACK');
-        return sendData(res, verdict);
-      }
-
-      // appointments.client_user_id is NOT NULL — every booking requires a client.
-      if (!Number.isInteger(clientUserId) || (clientUserId as number) <= 0) {
-        await client.query('ROLLBACK');
-        return sendError(res, 422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
-      }
-
-      // A sobreturno is an override that bypassed a real conflict; a redundant
-      // override flag on a clean booking must not mark the row.
-      const forced = override && verdict.requires_override;
-
-      const insert = await client.query<AppointmentRow>(
-        `INSERT INTO appointments
-           (client_user_id, professional_user_id, resource_id, service_id,
-            starts_at, duration_minutes, state, price,
-            override_conflict, override_actor_id, name, description)
-         VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, $10, $11)
-         RETURNING *`,
-        [
-          clientUserId,
+      const outcome = await withTransaction(pool, async (tx) => {
+        const verdict = await recheckConflictsInTx(tx, {
+          businessId,
           professionalUserId,
-          resourceId ?? null,
+          resourceId,
+          date,
+          start,
+          durationMinutes: effective_duration_minutes,
+          callerIsStaff: true,
+        });
+
+        // Warn first; do NOT write. The client requirement is checked only once we're actually
+        // about to insert a row — a caller probing for conflicts without a client yet chosen
+        // must still see the verdict, not a premature validation error.
+        if (verdict.requires_override && !override) {
+          return { kind: 'verdict' as const, verdict };
+        }
+
+        // appointments.client_user_id is NOT NULL — every booking requires a client.
+        if (!Number.isInteger(clientUserId) || (clientUserId as number) <= 0) {
+          return { kind: 'invalid' as const };
+        }
+
+        // A sobreturno is an override that bypassed a real conflict; a redundant override flag
+        // on a clean booking must not mark the row.
+        const forced = override && verdict.requires_override;
+
+        const appt = await insertScheduledAppointment(tx, {
+          clientUserId: clientUserId as number,
+          professionalUserId,
+          resourceId: resourceId ?? null,
           serviceId,
           startsAt,
-          effective_duration_minutes,
-          effective_price,
-          forced,
-          forced ? user.id : null,
+          durationMinutes: effective_duration_minutes,
+          price: effective_price,
+          overrideConflict: forced,
+          overrideActorId: forced ? user.id : null,
           name,
           description,
-        ],
-      );
-      const appt = insert.rows[0];
+        });
+        await auditInTx(tx, user, 'appointment_scheduled', 'success', Number(appt!.id));
+        return { kind: 'ok' as const, appt: appt! };
+      });
 
-      await auditInTx(client, user, 'appointment_scheduled', 'success', Number(appt.id));
-
-      await client.query('COMMIT');
-      return sendData(res, appt, 201);
+      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+      if (outcome.kind === 'invalid') {
+        return sendError(res, 422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
+      }
+      return sendData(res, outcome.appt, 201);
     } catch (err) {
-      await client.query('ROLLBACK');
       // Propagate structured status from recheckConflictsInTx loader errors (e.g. owner gone).
       if (typeof err === 'object' && err !== null && 'status' in err) {
         const e = err as { status: number; code: string; message: string };
         return sendError(res, e.status, e.code, e.message);
       }
-      // Any other error (e.g. an unexpected DB constraint violation) must never crash
-      // the process — surface it as a 500 instead of rethrowing into an unhandled rejection.
+      // Any other error (e.g. an unexpected DB constraint violation) must never crash the
+      // process — surface it as a 500 instead of rethrowing into an unhandled rejection.
       console.error('Error scheduling appointment:', err);
       return sendError(res, 500, 'internal_error', 'Internal server error');
-    } finally {
-      client.release();
     }
   }));
 
@@ -448,13 +374,14 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
     const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
@@ -471,64 +398,46 @@ export function mountAppointmentRoutes(
     const resourceId =
       row.resource_id == null ? undefined : Number(row.resource_id);
 
-    // Derive wall-clock date + start in SQL (mirrors how scheduling.ts reads
-    // booked slot times) — avoids locale-string round-trips that can drift at
-    // DST-style timezone boundaries.
-    const wallClock = await pool.query<{ date_str: string; start_str: string }>(
-      `SELECT to_char(starts_at AT TIME ZONE $1, 'YYYY-MM-DD') AS date_str,
-              to_char(starts_at AT TIME ZONE $1, 'HH24:MI')   AS start_str
-       FROM appointments WHERE id = $2`,
-      [BUSINESS_TZ, id],
-    );
-    const dateStr = wallClock.rows[0].date_str;
-    const startStr = wallClock.rows[0].start_str;
+    const wall = await getAppointmentWallClock(pool, id, BUSINESS_TZ);
+    if (!wall) return sendError(res, 404, 'not_found', 'Appointment not found');
+    const dateStr = wall.date;
+    const startStr = wall.start;
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      const outcome = await withTransaction(pool, async (tx) => {
+        const verdict = await recheckConflictsInTx(tx, {
+          businessId,
+          professionalUserId: Number(row.professional_user_id),
+          resourceId,
+          date: dateStr,
+          start: startStr,
+          durationMinutes: Number(row.duration_minutes),
+          callerIsStaff: true,
+          excludeAppointmentId: id,
+        });
 
-      const verdict = await recheckConflictsInTx(client, {
-        businessId: user.business_id,
-        professionalUserId: Number(row.professional_user_id),
-        resourceId,
-        date: dateStr,
-        start: startStr,
-        durationMinutes: Number(row.duration_minutes),
-        callerIsStaff: true,
-        excludeAppointmentId: id,
+        if (verdict.requires_override && !override) {
+          return { kind: 'verdict' as const, verdict };
+        }
+
+        const forced = override && verdict.requires_override;
+
+        const appt = await approveAppointment(tx, id, {
+          overrideConflict: forced,
+          overrideActorId: forced ? user.id : (row.override_actor_id ?? null),
+        });
+        await auditInTx(tx, user, 'appointment_approved', 'success', id);
+        return { kind: 'ok' as const, appt: appt! };
       });
 
-      if (verdict.requires_override && !override) {
-        await client.query('ROLLBACK');
-        return sendData(res, verdict);
-      }
-
-      const forced = override && verdict.requires_override;
-
-      const updated = await client.query<AppointmentRow>(
-        `UPDATE appointments
-         SET state = 'scheduled',
-             override_conflict = $1,
-             override_actor_id = $2
-         WHERE id = $3
-         RETURNING *`,
-        [forced, forced ? user.id : row.override_actor_id ?? null, id],
-      );
-      const appt = updated.rows[0];
-
-      await auditInTx(client, user, 'appointment_approved', 'success', id);
-
-      await client.query('COMMIT');
-      return sendData(res, appt);
+      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+      return sendData(res, outcome.appt);
     } catch (err) {
-      await client.query('ROLLBACK');
       if (typeof err === 'object' && err !== null && 'status' in err) {
         const e = err as { status: number; code: string; message: string };
         return sendError(res, e.status, e.code, e.message);
       }
       throw err;
-    } finally {
-      client.release();
     }
   }));
 
@@ -537,17 +446,18 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
-    // Authz before state check: unauthorized callers get 403 regardless of the
-    // appointment's state — prevents probing terminal vs. actionable via 422 vs. 403.
+    // Authz before state check: unauthorized callers get 403 regardless of the appointment's
+    // state — prevents probing terminal vs. actionable via 422 vs. 403.
     const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
     if (!authz.ok) {
       await guards.audit(req, 'appointment_action_denied', 'denied', { reason: authz.code, entity_id: id });
@@ -569,22 +479,18 @@ export function mountAppointmentRoutes(
       ? Number(body.resource_id)
       : (row.resource_id != null ? Number(row.resource_id) : undefined);
 
-    // Parse date + start from the request body, or fall back to the stored
-    // starts_at derived in SQL (mirrors scheduling.ts — no locale-string round-trip).
+    // Parse date + start from the request body, or fall back to the stored starts_at derived
+    // in SQL (mirrors scheduling — no locale-string round-trip).
     let date: string;
     let start: string;
     if (body.date && body.start) {
       date = String(body.date);
       start = String(body.start);
     } else {
-      const wc = await pool.query<{ date_str: string; start_str: string }>(
-        `SELECT to_char(starts_at AT TIME ZONE $1, 'YYYY-MM-DD') AS date_str,
-                to_char(starts_at AT TIME ZONE $1, 'HH24:MI')   AS start_str
-         FROM appointments WHERE id = $2`,
-        [BUSINESS_TZ, id],
-      );
-      date = wc.rows[0].date_str;
-      start = wc.rows[0].start_str;
+      const wc = await getAppointmentWallClock(pool, id, BUSINESS_TZ);
+      if (!wc) return sendError(res, 404, 'not_found', 'Appointment not found');
+      date = wc.date;
+      start = wc.start;
     }
 
     const durationMinutes = body.duration_minutes != null
@@ -606,33 +512,19 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
     }
 
-    const svc = await pool.query<{ default_price_ars: string }>(
-      `SELECT default_price_ars FROM services
-       WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
-      [serviceId, user.business_id],
-    );
-    if (svc.rows.length === 0) {
+    const serviceDefaultPriceArs = await getServiceDefaultPrice(pool, serviceId, businessId);
+    if (serviceDefaultPriceArs == null) {
       return sendError(res, 404, 'not_found', 'Service not found in this business');
     }
 
     const clientUserId = Number(row.client_user_id);
     let clientOverridePriceArs: string | null = null;
     if (Number.isInteger(clientUserId) && clientUserId > 0) {
-      const ov = await pool.query<{ price_ars: string }>(
-        `SELECT cps.price_ars
-         FROM client_professional_services cps
-         JOIN auth.users u ON u.id = cps.client_user_id
-         WHERE cps.client_user_id       = $1
-           AND cps.professional_user_id = $2
-           AND cps.service_id           = $3
-           AND u.business_id            = $4`,
-        [clientUserId, professionalUserId, serviceId, user.business_id],
-      );
-      clientOverridePriceArs = ov.rows[0]?.price_ars ?? null;
+      clientOverridePriceArs = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
     }
 
     const { effective_price, effective_duration_minutes } = resolveBooking({
-      serviceDefaultPriceArs: svc.rows[0].default_price_ars,
+      serviceDefaultPriceArs,
       clientOverridePriceArs,
       slotGranularityMinutes: durationMinutes,
     });
@@ -640,71 +532,49 @@ export function mountAppointmentRoutes(
     const override = req.body?.override === true;
     const startsAt = `${date} ${start}:00 ${BUSINESS_TZ}`;
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      const outcome = await withTransaction(pool, async (tx) => {
+        const verdict = await recheckConflictsInTx(tx, {
+          businessId,
+          professionalUserId,
+          resourceId,
+          date,
+          start,
+          durationMinutes: effective_duration_minutes,
+          callerIsStaff: true,
+          excludeAppointmentId: id,
+        });
 
-      const verdict = await recheckConflictsInTx(client, {
-        businessId: user.business_id,
-        professionalUserId,
-        resourceId,
-        date,
-        start,
-        durationMinutes: effective_duration_minutes,
-        callerIsStaff: true,
-        excludeAppointmentId: id,
-      });
+        if (verdict.requires_override && !override) {
+          return { kind: 'verdict' as const, verdict };
+        }
 
-      if (verdict.requires_override && !override) {
-        await client.query('ROLLBACK');
-        return sendData(res, verdict);
-      }
+        const forced = override && verdict.requires_override;
 
-      const forced = override && verdict.requires_override;
-
-      const updated = await client.query<AppointmentRow>(
-        `UPDATE appointments
-         SET professional_user_id = $1,
-             service_id            = $2,
-             resource_id           = $3,
-             starts_at             = $4,
-             duration_minutes      = $5,
-             price                 = $6,
-             override_conflict     = $7,
-             override_actor_id     = $8,
-             name                  = COALESCE($9, name),
-             description           = COALESCE($10, description)
-         WHERE id = $11
-         RETURNING *`,
-        [
+        const appt = await rescheduleAppointment(tx, id, {
           professionalUserId,
           serviceId,
-          resourceId ?? null,
+          resourceId: resourceId ?? null,
           startsAt,
-          effective_duration_minutes,
-          effective_price,
-          forced,
-          forced ? user.id : null,
-          body.name ?? null,
-          body.description ?? null,
-          id,
-        ],
-      );
-      const appt = updated.rows[0];
+          durationMinutes: effective_duration_minutes,
+          price: effective_price,
+          overrideConflict: forced,
+          overrideActorId: forced ? user.id : null,
+          name: body.name ?? null,
+          description: body.description ?? null,
+        });
+        await auditInTx(tx, user, 'appointment_rescheduled', 'success', id);
+        return { kind: 'ok' as const, appt: appt! };
+      });
 
-      await auditInTx(client, user, 'appointment_rescheduled', 'success', id);
-
-      await client.query('COMMIT');
-      return sendData(res, appt);
+      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+      return sendData(res, outcome.appt);
     } catch (err) {
-      await client.query('ROLLBACK');
       if (typeof err === 'object' && err !== null && 'status' in err) {
         const e = err as { status: number; code: string; message: string };
         return sendError(res, e.status, e.code, e.message);
       }
       throw err;
-    } finally {
-      client.release();
     }
   }));
 
@@ -713,6 +583,7 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -724,7 +595,7 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Field "to" is required');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
     const currentState = String(row.state);
@@ -744,14 +615,7 @@ export function mountAppointmentRoutes(
       }
       // Cutoff applies to scheduled; requested can be withdrawn anytime.
       if (currentState === 'scheduled') {
-        const cutoffRow = await pool.query<{ cancellation_cutoff_hours: number }>(
-          `SELECT b.cancellation_cutoff_hours
-           FROM businesses b
-           JOIN auth.users u ON u.business_id = b.id
-           WHERE u.id = $1 LIMIT 1`,
-          [user.id],
-        );
-        const cutoffHours = cutoffRow.rows[0]?.cancellation_cutoff_hours ?? DEFAULT_CANCELLATION_CUTOFF_HOURS;
+        const cutoffHours = (await getCancellationCutoffHours(pool, user.id)) ?? DEFAULT_CANCELLATION_CUTOFF_HOURS;
         if (!canCancelAppointment('scheduled', String(row.starts_at), cutoffHours, Date.now())) {
           return sendError(
             res, 422, 'outside_cutoff',
@@ -777,48 +641,32 @@ export function mountAppointmentRoutes(
       }
     }
 
-    const pgClient = await pool.connect();
-    try {
-      await pgClient.query('BEGIN');
+    const appt = await withTransaction(pool, async (tx) => {
+      const updated = await transitionAppointmentState(tx, id, to);
 
-      const updated = await pgClient.query<AppointmentRow>(
-        `UPDATE appointments SET state = $1 WHERE id = $2 RETURNING *`,
-        [to, id],
-      );
-      const appt = updated.rows[0];
-
-      await auditInTx(pgClient, user, `appointment_${to}`, 'success', id);
+      await auditInTx(tx, user, `appointment_${to}`, 'success', id);
 
       // Marking a session attended (completed) bills it: post the session charge once. A no_show
-      // never charges, and the NOT EXISTS guard keeps it idempotent if a charge was already posted.
+      // never charges, and the guard keeps it idempotent if a charge was already posted.
       if (to === 'completed' && row.price != null && row.client_user_id != null) {
-        const charge = await pgClient.query<{ id: string }>(
-          `INSERT INTO ledger_entries
-             (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
-           SELECT $1, $2, 'charge', $3, NULL, $4
-           WHERE NOT EXISTS (
-             SELECT 1 FROM ledger_entries WHERE appointment_id = $2 AND entry_type = 'charge'
-           )
-           RETURNING id`,
-          [row.client_user_id, id, row.price, user.id],
-        );
-        if (charge.rows[0]) {
-          await auditInTx(pgClient, user, 'ledger_charge_created', 'success', Number(charge.rows[0].id), 'ledger_entries');
+        const chargeId = await insertSessionChargeIfAbsent(tx, {
+          clientUserId: row.client_user_id,
+          appointmentId: id,
+          amountArs: row.price,
+          actorUserId: user.id,
+        });
+        if (chargeId) {
+          await auditInTx(tx, user, 'ledger_charge_created', 'success', Number(chargeId), 'ledger_entries');
         }
       }
 
-      await pgClient.query('COMMIT');
+      return updated!;
+    });
 
-      if (user.role === 'Client') {
-        return sendData(res, stripStaffFields(appt));
-      }
-      return sendData(res, appt);
-    } catch (err) {
-      await pgClient.query('ROLLBACK');
-      throw err;
-    } finally {
-      pgClient.release();
+    if (user.role === 'Client') {
+      return sendData(res, stripStaffFields(appt));
     }
+    return sendData(res, appt);
   }));
 
   app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
@@ -826,13 +674,14 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
     if (user.role === 'Client') {
@@ -863,79 +712,43 @@ export function mountAppointmentRoutes(
     const description =
       !isTerminal && body.description !== undefined ? String(body.description) : undefined;
 
-    const setClauses: string[] = [];
-    const params: SqlParam[] = [];
-    let p = 1;
-
-    if (name !== undefined) { setClauses.push(`name = $${p++}`); params.push(name); }
-    if (description !== undefined) { setClauses.push(`description = $${p++}`); params.push(description); }
-    if (staffNote !== undefined) { setClauses.push(`staff_note = $${p++}`); params.push(staffNote); }
-
-    if (setClauses.length === 0) {
+    if (name === undefined && description === undefined && staffNote === undefined) {
       return sendError(res, 422, 'invalid_request', 'No editable fields provided');
     }
 
-    params.push(id);
-
-    // Wrap UPDATE + audit in a transaction so a failed audit never leaves a
-    // committed edit with no audit trail — matches the durability invariant of
-    // every other appointment mutation in this module.
-    const pgClient = await pool.connect();
-    try {
-      await pgClient.query('BEGIN');
-
-      const updated = await pgClient.query<AppointmentRow>(
-        `UPDATE appointments SET ${setClauses.join(', ')} WHERE id = $${p} RETURNING *`,
-        params,
-      );
-
-      await auditInTx(pgClient, user, 'appointment_patched', 'success', id, 'appointments', {
+    // Wrap UPDATE + audit in a transaction so a failed audit never leaves a committed edit with
+    // no audit trail — matches the durability invariant of every other appointment mutation.
+    const appt = await withTransaction(pool, async (tx) => {
+      const updated = await patchAppointmentFields(tx, id, { name, description, staffNote });
+      await auditInTx(tx, user, 'appointment_patched', 'success', id, 'appointments', {
         fields: Object.keys(body).filter((k) => ['name', 'description', 'staff_note'].includes(k)),
       });
+      return updated!;
+    });
 
-      await pgClient.query('COMMIT');
-      return sendData(res, updated.rows[0]);
-    } catch (err) {
-      await pgClient.query('ROLLBACK');
-      throw err;
-    } finally {
-      pgClient.release();
-    }
+    return sendData(res, appt);
   }));
 
   // Distinct client ids the caller has any appointment with, in their role scope. Backs the
-  // "clients with a prior relationship" list without shipping (and truncating) the whole
-  // appointment history to the browser. Registered before /:id so the literal path wins.
+  // "clients with a prior relationship" list without shipping the whole appointment history to
+  // the browser. Registered before /:id so the literal path wins.
   app.get('/api/appointments/related-clients', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Staff access required');
     }
 
-    const conditions: string[] = ['u.business_id = $1', 'a.client_user_id IS NOT NULL'];
-    const params: SqlParam[] = [user.business_id];
-    let p = 2;
+    const relatedIds = await listRelatedClientIds(pool, {
+      businessId,
+      professionalUserId: user.role === 'Professional' ? user.id : undefined,
+      granteeUserId: user.role === 'Receptionist' ? user.id : undefined,
+    });
 
-    if (user.role === 'Professional') {
-      conditions.push(`a.professional_user_id = $${p++}`);
-      params.push(user.id);
-    } else if (user.role === 'Receptionist') {
-      conditions.push(grantedProfessionalScope('a.professional_user_id', `$${p++}`));
-      params.push(user.id);
-    }
-
-    const result = await pool.query<{ client_user_id: string }>(
-      `SELECT DISTINCT a.client_user_id
-       FROM appointments a
-       JOIN auth.users u ON u.id = a.professional_user_id
-       WHERE ${conditions.join(' AND ')}`,
-      params,
-    );
-
-    return sendData(res, { client_user_ids: result.rows.map((r) => Number(r.client_user_id)) });
+    return sendData(res, { client_user_ids: relatedIds });
   }));
 
   app.get('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
@@ -943,6 +756,7 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     // Clients use /api/appointments (filtered list) + /api/availability.
     if (user.role === 'Client') {
@@ -954,7 +768,7 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
     const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
@@ -970,95 +784,75 @@ export function mountAppointmentRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
     }
+    const businessId = user.business_id;
 
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const page = Math.max(Number(req.query.page) || 1, 1);
     const offset = (page - 1) * limit;
 
-    // All filter values go through parameterized $N — never string-interpolated.
-    const conditions: string[] = [`u.business_id = $1`];
-    const params: SqlParam[] = [user.business_id];
-    let p = 2;
+    let roleScope: AppointmentRoleScope;
+    if (user.role === 'Client') roleScope = { kind: 'client', userId: user.id };
+    else if (user.role === 'Professional') roleScope = { kind: 'professional', userId: user.id };
+    else if (user.role === 'Receptionist') roleScope = { kind: 'receptionist', granteeUserId: user.id };
+    else roleScope = { kind: 'all' };
 
-    if (user.role === 'Client') {
-      conditions.push(`a.client_user_id = $${p++}`);
-      params.push(user.id);
-    } else if (user.role === 'Professional') {
-      conditions.push(`a.professional_user_id = $${p++}`);
-      params.push(user.id);
-    } else if (user.role === 'Receptionist') {
-      conditions.push(grantedProfessionalScope('a.professional_user_id', `$${p++}`));
-      params.push(user.id);
-    }
-
+    let dateFrom: string | undefined;
     if (req.query.date_from) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
         return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
       }
-      conditions.push(`a.starts_at >= $${p++}`);
-      params.push(String(req.query.date_from));
+      dateFrom = String(req.query.date_from);
     }
+
+    let dateTo: string | undefined;
     if (req.query.date_to) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
         return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
       }
-      conditions.push(`a.starts_at <= $${p++}`);
-      params.push(String(req.query.date_to));
+      dateTo = String(req.query.date_to);
     }
-    if (req.query.professional_user_id) {
-      conditions.push(`a.professional_user_id = $${p++}`);
-      params.push(Number(req.query.professional_user_id));
-    }
-    if (req.query.resource_id) {
-      conditions.push(`a.resource_id = $${p++}`);
-      params.push(Number(req.query.resource_id));
-    }
+
+    const professionalUserId = req.query.professional_user_id
+      ? Number(req.query.professional_user_id)
+      : undefined;
+    const resourceId = req.query.resource_id ? Number(req.query.resource_id) : undefined;
+
+    let clientUserId: number | undefined;
     if (req.query.client_user_id && user.role !== 'Client') {
-      // Staff narrowing to one client's turnos. A Client is already pinned to their own above,
-      // so this param is meaningless (and must not widen their scope) for that role.
-      const clientId = Number(req.query.client_user_id);
-      if (!Number.isInteger(clientId) || clientId <= 0) {
+      // Staff narrowing to one client's turnos. A Client is already pinned to their own via
+      // roleScope, so this param is meaningless (and must not widen their scope) for that role.
+      const cid = Number(req.query.client_user_id);
+      if (!Number.isInteger(cid) || cid <= 0) {
         return sendError(res, 422, 'invalid_request', 'client_user_id must be a positive integer');
       }
-      conditions.push(`a.client_user_id = $${p++}`);
-      params.push(clientId);
+      clientUserId = cid;
     }
+
+    let state: string | undefined;
     if (req.query.state) {
       // Requests span the whole future, so the Solicitudes screen filters by state rather than
       // paging through every earlier appointment.
       if (!APPOINTMENT_STATE_VALUES.has(String(req.query.state))) {
         return sendError(res, 422, 'invalid_request', 'Unknown appointment state');
       }
-      conditions.push(`a.state = $${p++}`);
-      params.push(String(req.query.state));
+      state = String(req.query.state);
     }
 
-    const where = conditions.join(' AND ');
+    const { rows, total } = await listAppointments(pool, {
+      businessId,
+      roleScope,
+      dateFrom,
+      dateTo,
+      professionalUserId,
+      resourceId,
+      clientUserId,
+      state,
+      limit,
+      offset,
+    });
 
-    const [rows, count] = await Promise.all([
-      pool.query<AppointmentRow>(
-        `SELECT a.*
-         FROM appointments a
-         JOIN auth.users u ON u.id = a.professional_user_id
-         WHERE ${where}
-         ORDER BY a.starts_at
-         LIMIT $${p} OFFSET $${p + 1}`,
-        [...params, limit, offset],
-      ),
-      pool.query<{ n: string }>(
-        `SELECT count(*)::text AS n
-         FROM appointments a
-         JOIN auth.users u ON u.id = a.professional_user_id
-         WHERE ${where}`,
-        params,
-      ),
-    ]);
+    const data = user.role === 'Client' ? rows.map(stripStaffFields) : rows;
 
-    const data =
-      user.role === 'Client'
-        ? rows.rows.map(stripStaffFields)
-        : rows.rows;
-
-    return sendList(res, data, { page, limit, total: Number(count.rows[0].n) });
+    return sendList(res, data, { page, limit, total });
   }));
 }

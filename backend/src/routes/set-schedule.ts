@@ -1,12 +1,12 @@
 import express from 'express';
 import type { Request, RequestHandler } from 'express';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import { assertOwnScheduleAllowed } from './crud-policy';
 import { validateWeeklySchedule } from '../../../shared/src/ssot/domain';
-import type { WeeklySchedule } from '../../../shared/src/ssot/domain';
+import { upsertSchedule } from '../db/scheduling';
 import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -18,7 +18,7 @@ type AuditFn = (
   details?: Record<string, ColumnValue>
 ) => Promise<void>;
 
-// Dedicated set-weekly-schedule endpoint (D-14): validates the per-block-granularity weekly JSON
+// Dedicated set-weekly-schedule endpoint: validates the per-block-granularity weekly JSON
 // in the domain layer (SQL treats weekly as opaque JSONB), enforces the one-owner rule, applies
 // the own-schedule authz guard, and upserts the single schedules row for the owner.
 export function mountSetScheduleRoutes(
@@ -62,22 +62,16 @@ export function mountSetScheduleRoutes(
     // Upsert the single schedules row for this owner. weekly is stored opaque; the validated
     // object is JSON.stringify'd into one bound param (no SQL-side JSON construction).
     const ownerCol = target.professional_user_id != null ? 'professional_user_id' : 'resource_id';
-    const ownerId = target.professional_user_id != null ? target.professional_user_id : target.resource_id;
+    const ownerId = (target.professional_user_id ?? target.resource_id) as number;
 
-    const result = await pool.query<{ id: string; weekly: WeeklySchedule }>(
-      `INSERT INTO schedules (${ownerCol}, weekly)
-       VALUES ($1, $2)
-       ON CONFLICT (${ownerCol}) DO UPDATE SET weekly = EXCLUDED.weekly, updated_at = now()
-       RETURNING id, weekly`,
-      [ownerId, JSON.stringify(validated.value)]
-    );
+    const scheduleRow = await upsertSchedule(pool, ownerCol, ownerId, JSON.stringify(validated.value));
 
     await guards.audit(req, 'schedule_updated', 'success', {
       entity_type: 'schedules',
-      entity_id: Number(result.rows[0].id),
+      entity_id: Number(scheduleRow!.id),
       [ownerCol]: ownerId,
     });
 
-    return sendData(res, result.rows[0]);
+    return sendData(res, scheduleRow);
   }));
 }

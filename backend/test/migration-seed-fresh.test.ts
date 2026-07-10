@@ -5,7 +5,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { seedDemo } from '../src/seed-demo';
 import { resetTestDb, makeTestPool } from './helpers';
 
-// SC5 item 7: a fresh-schema migration + demo-seed load must succeed on an empty DB.
+// A fresh-schema migration + demo-seed load must succeed on an empty DB.
 // Also proves append-only idempotency — ledger_entries and audit_events counts are stable
 // across a re-run because both are guarded by natural-key WHERE NOT EXISTS.
 
@@ -16,7 +16,6 @@ async function count(table: string): Promise<number> {
   return Number(r.rows[0].count);
 }
 
-// Counts captured after the first seed, compared after the second.
 let afterFirst: Record<string, number> = {};
 let afterSecond: Record<string, number> = {};
 

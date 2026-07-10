@@ -1,18 +1,20 @@
 import type { Pool, PoolClient } from 'pg';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
-import { hasCalendarGrant, grantedAppointmentJoin } from '../grant-queries';
-import { VOID_APPOINTMENT_STATES } from '../../../shared/src/ssot/domain';
-
-// SQL list literal of the void states, built from the shared SSOT const (values are code-owned,
-// never user input) so the "real service history" filter can never drift from the calendar's.
-const VOID_STATES_SQL = VOID_APPOINTMENT_STATES.map((s) => `'${s}'`).join(', ');
+import { hasCalendarGrant } from '../db/grants';
+import { insertAuditEvent } from '../db/audit';
+import {
+  professionalHasClientAppointment,
+  granteeCanActOnAppointment,
+  userExistsInBusiness,
+  professionalHasClient,
+  granteeReadsClientLedger,
+} from '../db/authz';
 
 export type AuthzResult =
   | { ok: true }
   | { ok: false; status: number; code: string; message: string };
 
-// Inserts an audit row on the caller's open transaction connection.
 // Does NOT catch errors — a lifecycle transition without an audit row must not commit.
 export async function auditInTx(
   client: PoolClient,
@@ -24,20 +26,16 @@ export async function auditInTx(
   details: Record<string, ColumnValue | string[]> = {},
 ): Promise<void> {
   if (user.business_id == null) return;
-  await client.query(
-    `INSERT INTO audit_events
-       (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      user.business_id,
-      user.id,
-      eventType,
-      entityType,
-      entityId ?? null,
-      outcome,
-      JSON.stringify(details),
-    ],
-  );
+  await insertAuditEvent(client, {
+    businessId: user.business_id,
+    actorId: user.id,
+    eventType,
+    entityType,
+    entityId: entityId ?? null,
+    outcome,
+    ip: null,
+    detailsJson: JSON.stringify(details),
+  });
 }
 
 // `db` accepts both Pool and PoolClient so a caller can pass a transaction-bound client
@@ -84,22 +82,10 @@ export async function assertLedgerWriteAllowed(
   if (user.role === 'Admin') return { ok: true };
 
   if (user.role === 'Professional') {
-    // Join through auth.users to verify business_id — closes cross-business leak.
-    const r = await db.query<{ allowed: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1
-         FROM appointments a
-         JOIN auth.users c ON c.id = a.client_user_id
-         WHERE a.client_user_id       = $1
-           AND a.professional_user_id = $2
-           AND c.business_id          = $3
-       ) AS allowed`,
-      [clientUserId, user.id, user.business_id],
-    );
-    if (!r.rows[0].allowed) {
-      return { ok: false, status: 403, code: 'forbidden', message: 'Professional may only write ledger entries for own clients' };
-    }
-    return { ok: true };
+    const allowed = await professionalHasClientAppointment(db, clientUserId, user.id, user.business_id);
+    return allowed
+      ? { ok: true }
+      : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only write ledger entries for own clients' };
   }
 
   // Receptionist: appointment-linked charges and payments on a granted calendar — the front
@@ -110,17 +96,8 @@ export async function assertLedgerWriteAllowed(
   if (appointmentId == null) {
     return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists must provide an appointment_id' };
   }
-  const r = await db.query<{ allowed: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-       FROM appointments a
-       ${grantedAppointmentJoin('$3')}
-       WHERE a.id             = $1
-         AND a.client_user_id = $2
-     ) AS allowed`,
-    [appointmentId, clientUserId, user.id],
-  );
-  return r.rows[0].allowed
+  const allowed = await granteeCanActOnAppointment(db, appointmentId, clientUserId, user.id);
+  return allowed
     ? { ok: true }
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to create a charge for this appointment' };
 }
@@ -140,42 +117,22 @@ export async function assertLedgerReadAllowed(
   }
   if (user.role === 'Admin') {
     // Admin scope is business-bounded — a client in another tenant is not readable.
-    const r = await db.query(
-      `SELECT 1 FROM auth.users WHERE id = $1 AND business_id = $2`,
-      [clientUserId, user.business_id],
-    );
-    return r.rows.length > 0
+    const allowed = await userExistsInBusiness(db, clientUserId, user.business_id);
+    return allowed
       ? { ok: true }
       : { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
   }
 
   if (user.role === 'Professional') {
-    const r = await db.query<{ allowed: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM appointments
-         WHERE client_user_id       = $1
-           AND professional_user_id = $2
-       ) AS allowed`,
-      [clientUserId, user.id],
-    );
-    return r.rows[0].allowed
+    const allowed = await professionalHasClient(db, clientUserId, user.id);
+    return allowed
       ? { ok: true }
       : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only read ledger for own clients' };
   }
 
-  // Receptionist: may read for clients who share a granted professional.
-  // Canceled/rejected appointments are excluded — only real service history qualifies.
-  const r = await db.query<{ allowed: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-       FROM appointments a
-       ${grantedAppointmentJoin('$2')}
-       WHERE a.client_user_id  = $1
-         AND a.state NOT IN (${VOID_STATES_SQL})
-     ) AS allowed`,
-    [clientUserId, user.id],
-  );
-  return r.rows[0].allowed
+  // Receptionist: may read for clients who share a granted professional (void appointments excluded).
+  const allowed = await granteeReadsClientLedger(db, clientUserId, user.id);
+  return allowed
     ? { ok: true }
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to read ledger for this client' };
 }

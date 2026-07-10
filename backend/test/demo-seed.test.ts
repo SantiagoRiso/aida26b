@@ -6,8 +6,6 @@ import { seedDemo } from '../src/seed-demo';
 import { resetTestDb, makeTestPool } from './helpers';
 import { validateWeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
 
-// Asserts the SC4 feature coverage of the demo dataset plus its idempotency.
-
 let pool: Pool;
 
 async function count(sql: string, params: unknown[] = []): Promise<number> {
@@ -128,7 +126,6 @@ describe('demo seed feature coverage (SC4)', () => {
 
   it('seeds dated schedule exceptions (day off / holiday / one-off / changed-hours)', async () => {
     expect(await count(`SELECT COUNT(*)::int count FROM schedule_exceptions`)).toBeGreaterThanOrEqual(1);
-    // At least one changed-hours "available" exception carrying granularity_minutes.
     const changedHours = await count(
       `SELECT COUNT(*)::int count FROM schedule_exceptions
        WHERE is_unavailable = false AND granularity_minutes IS NOT NULL`,

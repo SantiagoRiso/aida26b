@@ -912,7 +912,6 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
   });
 });
 
-// Phase 4 schema surface
 describe('scheduler-schema: Phase 4 columns, entry_type CHECK replacement, and triggers', () => {
   let pool: Pool;
 
@@ -1111,7 +1110,6 @@ describe('scheduler-schema: Phase 4 columns, entry_type CHECK replacement, and t
       const proId = pro.rows[0].id;
       const svcId = svc.rows[0].id;
 
-      // Insert a scheduled appointment.
       const appt = await pool.query<{ id: string }>(
         `INSERT INTO appointments
            (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, ends_at, state, price)
@@ -1121,10 +1119,8 @@ describe('scheduler-schema: Phase 4 columns, entry_type CHECK replacement, and t
       );
       const apptId = appt.rows[0].id;
 
-      // Move to terminal.
       await pool.query(`UPDATE appointments SET state = 'completed' WHERE id = $1`, [apptId]);
 
-      // Terminal → active must be rejected.
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
@@ -1198,7 +1194,6 @@ describe('scheduler-schema: Phase 4 columns, entry_type CHECK replacement, and t
 
       await pool.query(`UPDATE appointments SET state = 'canceled' WHERE id = $1`, [apptId]);
 
-      // staff_note UPDATE on a terminal appointment must be allowed.
       const r = await pool.query<{ staff_note: string }>(
         `UPDATE appointments SET staff_note = 'client did not show' WHERE id = $1 RETURNING staff_note`,
         [apptId]

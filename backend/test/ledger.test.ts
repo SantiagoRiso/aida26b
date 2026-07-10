@@ -26,7 +26,6 @@ async function req(method: 'GET' | 'POST', path: string, body?: unknown) {
   return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
 }
 
-// ── Seed identifiers ──────────────────────────────────────────────────────────
 let bizId: number;
 let adminId: number;
 let proId: number;
@@ -36,7 +35,7 @@ let client2Id: number;
 let recepNoGrantId: number;
 let recepWithGrantId: number;
 let svcId: number;
-let apptId: number; // an appointment linking pro1 → client1
+let apptId: number;
 
 // Compute dates relative to now (mandatory — never hardcode calendar dates).
 function nextMondayDate(): string {
@@ -98,7 +97,6 @@ beforeAll(async () => {
   );
   svcId = Number(svc.rows[0].id);
 
-  // An appointment that links pro1 → client1 (used by multiple ledger tests).
   const appt = await pool.query<{ id: string }>(
     `INSERT INTO appointments
        (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -108,7 +106,6 @@ beforeAll(async () => {
   );
   apptId = Number(appt.rows[0].id);
 
-  // Grant recepWithGrant access to pro1's calendar.
   await pool.query(
     `INSERT INTO calendar_grants (professional_user_id, grantee_user_id) VALUES ($1, $2)`,
     [proId, recepWithGrantId],
@@ -136,8 +133,6 @@ afterAll(async () => {
   await pool.end();
 });
 
-// ── Task 1: Entry create — role/grant write matrix ────────────────────────────
-
 describe('POST /api/ledger — Admin write matrix', () => {
   test('admin creates a charge → 201 with audit event in same transaction (D-14)', async () => {
     currentUser = asUser(adminId, 'Admin');
@@ -151,7 +146,6 @@ describe('POST /api/ledger — Admin write matrix', () => {
     expect(res.body.data.entry_type).toBe('charge');
     expect(res.body.data.amount_ars).toBe('1000.00');
 
-    // Audit event written in the same transaction.
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'ledger_entries'`,
       [res.body.data.id],
@@ -226,7 +220,6 @@ describe('POST /api/ledger — Admin write matrix', () => {
     });
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
-    // Both entries reference the same appointment_id and both survive.
     expect(Number(r1.body.data.appointment_id)).toBe(apptId);
     expect(Number(r2.body.data.appointment_id)).toBe(apptId);
   });
@@ -239,7 +232,6 @@ describe('POST /api/ledger — charge prefill from appointment (D-22)', () => {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
-      // no amount_ars supplied
     });
     expect(res.status).toBe(201);
     // Service booked at 2500.00; should be prefilled.
@@ -341,7 +333,6 @@ describe('POST /api/ledger — Receptionist write matrix (D-23/D-24)', () => {
       client_user_id: clientId,
       entry_type: 'charge',
       amount_ars: '100.00',
-      // no appointment_id
     });
     expect(res.status).toBe(403);
   });
@@ -412,8 +403,6 @@ describe('POST /api/ledger — Validation (422 / 404)', () => {
   });
 });
 
-// ── Task 2: Balance formula + immutability ────────────────────────────────────
-
 describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
   // Uses a fresh client (client2) for an isolated balance calculation.
   let balanceClientId: number;
@@ -462,7 +451,6 @@ describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
   });
 
   test('partial payment reduces balance correctly', async () => {
-    // Seed another payment that reduces the balance further.
     await pool.query(
       `INSERT INTO ledger_entries
          (client_user_id, entry_type, amount_ars, actor_user_id)
@@ -526,8 +514,6 @@ describe('GET /api/clients/:id/ledger — paginated list (D-25/D-26)', () => {
   });
 });
 
-// ── Cross-business tenant isolation on reads (CR-01/CR-02) ────────────────────
-
 describe('ledger reads are business-scoped for Admin', () => {
   let biz2Id: number;
   let biz2AdminId: number;
@@ -578,8 +564,6 @@ describe('ledger reads are business-scoped for Admin', () => {
   });
 });
 
-// ── Immutability (D-11, T-04-14) ─────────────────────────────────────────────
-
 describe('ledger_entries immutability trigger (D-11)', () => {
   let immutableEntryId: number;
 
@@ -621,13 +605,10 @@ describe('ledger_entries immutability trigger (D-11)', () => {
   });
 });
 
-// ── WR-01 regression: charge prefill from another client's appointment → 404 ──
-
 describe("POST /api/ledger — prefill rejects an appointment not belonging to the charged client (WR-01)", () => {
   let otherClientApptId: number;
 
   beforeAll(async () => {
-    // An appointment on client2's account (not client1's).
     const appt = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)

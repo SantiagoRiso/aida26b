@@ -1,19 +1,21 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import type { Response } from '../../../shared/src/types/types';
 import { getPkFields } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
   getNotDerivableFields,
-  tryQuery,
-  columnNamesEqualsNumber,
 } from '../helpers';
 
+import { query as runQuery } from '../db/core';
+import { DbError } from '../db/errors';
+import { getScheduleOwnerRow } from '../db/scheduling';
+import { buildUpdateStatement } from '../db/generic';
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, assertOwnScheduleAllowed, buildScopeConditions, assertRoleCheckedReferences } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
 import type { AuthUser } from '../auth';
+import type { GenericRow } from '../../../shared/src/ssot/query-types';
 import { tableOf } from '../../../shared/src/utils/utils';
 import type { ColumnDef, ColumnValue, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
 import { structure } from '../../../shared/src/ssot/structure';
@@ -66,7 +68,6 @@ export async function putHandler(
   const entityName = getEntityName(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
-  // Reject body fields that the server derives from the session.
   const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
     (k) => SERVER_DERIVED.has(k),
   );
@@ -102,11 +103,8 @@ export async function putHandler(
   // Own+Admin+granted enforcement for schedule tables — owner is read from the existing
   // row (authoritative), so a caller cannot edit a peer's row by omitting the owner in the body.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
-    const existing = await pool.query<{ professional_user_id: string | null; resource_id: string | null }>(
-      `SELECT professional_user_id, resource_id FROM ${physicalTable} WHERE id = $1`,
-      [pkValues[0]]
-    );
-    if (existing.rows.length === 0) {
+    const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0]);
+    if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);
     }
 
@@ -116,13 +114,13 @@ export async function putHandler(
     const body = validatedBody.data as Partial<TableRecordMap['schedules'] | TableRecordMap['schedule_exceptions']>;
     const bodyProf = body.professional_user_id != null ? Number(body.professional_user_id) : null;
     const bodyRes = body.resource_id != null ? Number(body.resource_id) : null;
-    const rowProf = existing.rows[0].professional_user_id != null ? Number(existing.rows[0].professional_user_id) : null;
-    const rowRes = existing.rows[0].resource_id != null ? Number(existing.rows[0].resource_id) : null;
+    const rowProf = existingRow.professional_user_id != null ? Number(existingRow.professional_user_id) : null;
+    const rowRes = existingRow.resource_id != null ? Number(existingRow.resource_id) : null;
     if ((bodyProf != null && bodyProf !== rowProf) || (bodyRes != null && bodyRes !== rowRes)) {
       return sendError(res, 403, 'forbidden', 'The owner of a schedule row cannot be changed');
     }
 
-    const guard = await assertOwnScheduleAllowed(pool, user, existing.rows[0]);
+    const guard = await assertOwnScheduleAllowed(pool, user, existingRow);
     if (!guard.ok) {
       return sendError(res, guard.status, guard.code, guard.message);
     }
@@ -160,43 +158,28 @@ export async function putHandler(
     (fieldName) => (validatedBody.data as Record<string, ColumnValue>)[fieldName]
   );
 
-  const setArgumentsString = columnNamesEqualsNumber(
+  const { text, values } = buildUpdateStatement(
+    physicalTable,
     fieldsToUpdate,
-    1,
-    ', '
+    newValues,
+    pkFields,
+    pkValues,
+    allowed,
   );
 
-  const pkStart = fieldsToUpdate.length + 1;
-  const whereArgumentsString = columnNamesEqualsNumber(pkFields, pkStart, ' AND ');
+  try {
+    const rows = await runQuery<GenericRow>(pool, text, values);
 
-  const scopeStart = pkStart + pkFields.length;
-  const { conditions: scopeConditions, values: scopeParams } = buildScopeConditions(allowed, scopeStart);
-  const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
-
-  const query = `
-    UPDATE ${physicalTable}
-    SET ${setArgumentsString}
-    WHERE ${whereArgumentsString}${scopeClause}
-    RETURNING *
-  `;
-
-  const result: Response = await tryQuery(pool, query, [
-    ...newValues,
-    ...pkValues,
-    ...scopeParams,
-  ]);
-
-  if (!result.success) {
-    if (result.code === '23505') {
-      return sendError(res, 409, 'conflict', `${entityName} already exists`);
+    if (rows.length === 0) {
+      return sendError(res, 404, 'not_found', `${entityName} not found`);
     }
 
-    return sendError(res, 500, 'internal_error', result.message);
+    return sendData(res, rows[0], 202);
+  } catch (err) {
+    if (err instanceof DbError && err.pgCode === '23505') {
+      return sendError(res, 409, 'conflict', `${entityName} already exists`);
+    }
+    console.error(`Error updating ${entityName}:`, err);
+    return sendError(res, 500, 'internal_error', 'Internal server error');
   }
-
-  if (result.data?.rowCount === 0) {
-    return sendError(res, 404, 'not_found', `${entityName} not found`);
-  }
-
-  return sendData(res, result.data.rows[0], 202);
 }

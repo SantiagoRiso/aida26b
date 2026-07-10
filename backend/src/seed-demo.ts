@@ -8,7 +8,7 @@ import type { SqlParam } from '../../shared/src/types/types';
 
 dotenv.config();
 
-// Demo/local-only BsAs clinic seed. Idempotent: re-running adds nothing.
+// Idempotent: re-running adds nothing.
 // Passwords are stored hashed; the plaintext only appears here as demo tooling.
 
 const BUSINESS_NAME = 'Consultorio BsAs Demo';
@@ -75,7 +75,6 @@ const SEED_DAYS = 45;
 
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
-// Expands the seeding window into concrete dates tagged with their weekday key.
 function seedDays(): { date: string; key: string }[] {
   const [y, m, d] = SEED_START.split('-').map(Number);
   const out: { date: string; key: string }[] = [];

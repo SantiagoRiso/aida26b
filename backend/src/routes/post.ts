@@ -4,16 +4,19 @@ import { Pool } from 'pg';
 import {
   getEntityName,
   getNotDerivableFields,
-  tryQuery,
-  formatTableColumnsForQuery,
 } from '../helpers';
 
+import { buildInsertStatement } from '../db/generic';
+
+import { query as runQuery } from '../db/core';
+import { DbError } from '../db/errors';
 import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
 import type { OwnScheduleTarget } from './crud-policy';
 import type { AuthUser } from '../auth';
 import { isBusinessScoped } from '../../../shared/src/utils/utils';
 import type { ColumnValue, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
+import type { GenericRow } from '../../../shared/src/ssot/query-types';
 
 import {
   validateFullObject,
@@ -48,7 +51,6 @@ export async function postHandler(
   const entityName = getEntityName(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
-  // Reject body fields that the server derives from the session.
   const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
     (k) => SERVER_DERIVED.has(k),
   );
@@ -78,7 +80,7 @@ export async function postHandler(
     return sendError(res, refCheck.status, refCheck.code, refCheck.message, refCheck.fields);
   }
 
-  // D-16: own+Admin+granted enforcement for schedule tables — the owner comes from the body on
+  // Own+Admin+granted enforcement for schedule tables — the owner comes from the body on
   // create. Runs AFTER the generic role/reference checks so it refines (not preempts) their
   // 422 invalid_reference_role semantics; adds the own/grant 403/404 on top.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
@@ -105,24 +107,16 @@ export async function postHandler(
     valuesToInsert.push(user.business_id);
   }
 
-  const [fieldNamesTuple, parametersNumbersTuple] =
-    formatTableColumnsForQuery(notDerivableFields);
+  const { text, values } = buildInsertStatement(physicalTable, notDerivableFields, valuesToInsert);
 
-  const query = `
-    INSERT INTO ${physicalTable} ${fieldNamesTuple}
-    VALUES ${parametersNumbersTuple}
-    RETURNING *
-  `;
-
-  const queryResponse = await tryQuery(pool, query, valuesToInsert);
-
-  if (!queryResponse.success) {
-    if (queryResponse.code === '23505') {
+  try {
+    const rows = await runQuery<GenericRow>(pool, text, values);
+    return sendData(res, rows[0], 201);
+  } catch (err) {
+    if (err instanceof DbError && err.pgCode === '23505') {
       return sendError(res, 409, 'conflict', `${entityName} already exists`);
     }
-
-    return sendError(res, 500, 'internal_error', queryResponse.message);
+    console.error(`Error creating ${entityName}:`, err);
+    return sendError(res, 500, 'internal_error', 'Internal server error');
   }
-
-  return sendData(res, queryResponse.data.rows[0], 201);
 }

@@ -2,6 +2,9 @@ import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from './auth';
 import { guardMiddleware } from './helpers';
+import { loadSessionUser } from './db/auth';
+import { getUserBusinessId } from './db/users';
+import { insertAuditEvent } from './db/audit';
 import type { ColumnValue } from '../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
@@ -20,25 +23,8 @@ export async function loadSession(pool: Pool, req: Request) {
   const token = getSessionToken(req);
   if (!token) return null;
 
-  const result = await pool.query(
-    `SELECT
-       s.id AS session_id,
-       u.id,
-       u.username,
-       u.email,
-       u.role,
-       u.business_id,
-       u.is_active,
-       u.must_change_password
-     FROM auth.sessions s
-     JOIN auth.users u ON u.id = s.user_id
-     WHERE s.token_hash = $1
-       AND s.expires_at > now()
-       AND u.is_active = true`,
-    [auth.hashToken(token)],
-  );
-
-  return result.rows[0] ? auth.publicUser(result.rows[0]) : null;
+  const row = await loadSessionUser(pool, auth.hashToken(token));
+  return row ? auth.publicUser(row) : null;
 }
 
 export type AuditWriter = (
@@ -66,30 +52,21 @@ export function createAuditWriter(pool: Pool): AuditWriter {
         businessId = override.businessId;
       } else {
         if (actorId === null) return;
-        const business = await pool.query<{ business_id: number | null }>(
-          'SELECT business_id FROM auth.users WHERE id = $1',
-          [actorId],
-        );
-        businessId = business.rows[0]?.business_id ?? null;
+        businessId = await getUserBusinessId(pool, actorId);
       }
 
       if (businessId === null) return;
 
-      await pool.query(
-        `INSERT INTO audit_events
-         (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, ip, details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          businessId,
-          actorId,
-          eventType,
-          (details.entity_type as string) ?? null,
-          (details.entity_id as number) ?? null,
-          outcome,
-          req.ip,
-          JSON.stringify(details),
-        ],
-      );
+      await insertAuditEvent(pool, {
+        businessId,
+        actorId,
+        eventType,
+        entityType: (details.entity_type as string) ?? null,
+        entityId: (details.entity_id as number) ?? null,
+        outcome,
+        ip: req.ip ?? null,
+        detailsJson: JSON.stringify(details),
+      });
     } catch (error) {
       console.error('Error writing audit event:', error);
     }
@@ -102,8 +79,7 @@ export interface AuthGuards {
   requireAdmin: RequestHandler;
 }
 
-// The runtime auth guards, bound to a pool and the audit writer. requireAdmin audits the denial
-// so a forbidden admin action leaves a trace.
+// requireAdmin audits the denial so a forbidden admin action leaves a trace.
 export function createAuthGuards(pool: Pool, audit: AuditWriter): AuthGuards {
   const requireAuth: RequestHandler = guardMiddleware(async (req, res, next) => {
     const user = await loadSession(pool, req);

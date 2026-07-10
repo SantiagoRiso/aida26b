@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler } from 'express';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
@@ -10,6 +10,14 @@ import {
   assertLedgerReadAllowed,
   auditInTx,
 } from './appointment-authz';
+import { withTransaction } from '../db/core';
+import { activeClientInBusiness } from '../db/users';
+import {
+  getAppointmentChargeAmount,
+  insertLedgerEntry,
+  getClientBalance,
+  listClientLedger,
+} from '../db/ledger';
 import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -39,6 +47,7 @@ export function mountLedgerRoutes(
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'A business context is required');
     }
+    const businessId = user.business_id;
 
     const fields: Record<string, string> = {};
 
@@ -65,85 +74,61 @@ export function mountLedgerRoutes(
       req.body.appointment_id != null ? Number(req.body.appointment_id) : null;
     const description: string | null = req.body.description ?? null;
 
-    const clientCheck = await pool.query<{ id: string }>(
-      `SELECT id FROM auth.users
-       WHERE id = $1 AND role = 'Client' AND business_id = $2 AND is_active = true`,
-      [clientUserId, user.business_id],
-    );
-    if (clientCheck.rows.length === 0) {
+    if (!(await activeClientInBusiness(pool, clientUserId, businessId))) {
       return sendError(res, 404, 'not_found', 'Client not found in this business');
     }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      const authz = await assertLedgerWriteAllowed(client, user, {
+    const outcome = await withTransaction(pool, async (tx) => {
+      const authz = await assertLedgerWriteAllowed(tx, user, {
         clientUserId,
         appointmentId,
         entryType,
       });
+      if (!authz.ok) return { kind: 'denied' as const, authz };
 
-      if (!authz.ok) {
-        await client.query('ROLLBACK');
-        // Denial audit is best-effort; guards.audit uses pool, not the rolled-back client.
-        await guards.audit(req, 'ledger_write_denied', 'denied', {
-          reason: authz.code,
-          entry_type: entryType,
-          client_user_id: clientUserId,
-        });
-        return sendError(res, authz.status, authz.code, authz.message);
-      }
-
-      // Prefill amount from the appointment's booked price for charges when the caller
-      // omitted amount_ars. An explicitly supplied amount takes precedence.
+      // Prefill amount from the appointment's booked price for charges when the caller omitted
+      // amount_ars. An explicitly supplied amount takes precedence.
       let amountArs: string;
       if (rawAmount !== undefined && rawAmount !== null) {
         amountArs = String(rawAmount);
       } else if (appointmentId != null && entryType === 'charge') {
-        // Constrain to the appointment owned by the charged client and the caller's
-        // business — prevents sourcing an amount from a cross-tenant appointment.
-        const appt = await client.query<{ price: string }>(
-          `SELECT a.price
-           FROM appointments a
-           JOIN auth.users c ON c.id = a.client_user_id
-           WHERE a.id = $1 AND a.client_user_id = $2 AND c.business_id = $3`,
-          [appointmentId, clientUserId, user.business_id],
-        );
-        if (appt.rows.length === 0) {
-          await client.query('ROLLBACK');
-          return sendError(res, 404, 'not_found', 'Referenced appointment not found');
-        }
-        amountArs = appt.rows[0].price;
+        const price = await getAppointmentChargeAmount(tx, appointmentId, clientUserId, businessId);
+        if (price == null) return { kind: 'appt_not_found' as const };
+        amountArs = price;
       } else {
-        await client.query('ROLLBACK');
-        return sendError(res, 422, 'invalid_request', 'amount_ars is required', {
-          amount_ars: 'required when no appointment_id is supplied or entry_type is not charge',
-        });
+        return { kind: 'amount_required' as const };
       }
 
-      const result = await client.query(
-        `INSERT INTO ledger_entries
-           (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING *`,
-        [clientUserId, appointmentId, entryType, amountArs, description, user.id],
-      );
+      const row = await insertLedgerEntry(tx, {
+        clientUserId,
+        appointmentId,
+        entryType,
+        amountArs,
+        description,
+        actorUserId: user.id,
+      });
+      await auditInTx(tx, user, `ledger_${entryType}_created`, 'success', Number(row!.id), 'ledger_entries');
+      return { kind: 'ok' as const, row: row! };
+    });
 
-      const row = result.rows[0];
-
-      const eventType = `ledger_${entryType}_created`;
-      await auditInTx(client, user, eventType, 'success', Number(row.id), 'ledger_entries');
-
-      await client.query('COMMIT');
-
-      return sendData(res, row, 201);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+    if (outcome.kind === 'denied') {
+      // Denial audit is best-effort; guards.audit uses the pool, not the committed transaction.
+      await guards.audit(req, 'ledger_write_denied', 'denied', {
+        reason: outcome.authz.code,
+        entry_type: entryType,
+        client_user_id: clientUserId,
+      });
+      return sendError(res, outcome.authz.status, outcome.authz.code, outcome.authz.message);
     }
+    if (outcome.kind === 'appt_not_found') {
+      return sendError(res, 404, 'not_found', 'Referenced appointment not found');
+    }
+    if (outcome.kind === 'amount_required') {
+      return sendError(res, 422, 'invalid_request', 'amount_ars is required', {
+        amount_ars: 'required when no appointment_id is supplied or entry_type is not charge',
+      });
+    }
+    return sendData(res, outcome.row, 201);
   }));
 
   // Read authz runs on the pool — no write follows, so TOCTOU is not a concern here.
@@ -160,20 +145,11 @@ export function mountLedgerRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const result = await pool.query<{ balance_ars: string }>(
-      `SELECT
-         COALESCE(SUM(amount_ars) FILTER (WHERE entry_type IN ('charge', 'adjustment_debit')),  0)
-         -
-         COALESCE(SUM(amount_ars) FILTER (WHERE entry_type IN ('payment', 'adjustment_credit')), 0)
-         AS balance_ars
-       FROM ledger_entries
-       WHERE client_user_id = $1`,
-      [clientUserId],
-    );
+    const balanceArs = await getClientBalance(pool, clientUserId);
 
     return sendData(res, {
       client_user_id: clientUserId,
-      balance_ars: result.rows[0].balance_ars,
+      balance_ars: balanceArs,
     });
   }));
 
@@ -194,20 +170,8 @@ export function mountLedgerRoutes(
     const page = Math.max(Number(req.query.page) || 1, 1);
     const offset = (page - 1) * limit;
 
-    const [rows, count] = await Promise.all([
-      pool.query(
-        `SELECT * FROM ledger_entries
-         WHERE client_user_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2 OFFSET $3`,
-        [clientUserId, limit, offset],
-      ),
-      pool.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM ledger_entries WHERE client_user_id = $1`,
-        [clientUserId],
-      ),
-    ]);
+    const { rows, total } = await listClientLedger(pool, clientUserId, { limit, offset });
 
-    return sendList(res, rows.rows, { page, limit, total: Number(count.rows[0].n) });
+    return sendList(res, rows, { page, limit, total });
   }));
 }

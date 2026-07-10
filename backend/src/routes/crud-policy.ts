@@ -5,16 +5,15 @@ import type {
   TableKey,
   CrudPolicy,
   RoleRequired,
-  OwnershipDescriptor,
-  GrantScopeDescriptor,
-  BusinessJoinDescriptor,
-  RoleDiscriminator,
   Role,
   SqlParam,
 } from '../../../shared/src/types/types';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
-import { hasCalendarGrant } from '../grant-queries';
+import { hasCalendarGrant } from '../db/grants';
+import { getProfessionalOwner, getResourceOwner } from '../db/scheduling';
+import { findRoleUserBusiness } from '../db/users';
+import { buildBusinessScope, buildOwnerScope, buildGrantScope, roleDiscriminatorFragment } from '../db/scope';
 import { getRoleCheckedColumns } from '../helpers';
 
 // Ordinary configuration entities declare a `crud` policy in the SSOT; protected/workflow
@@ -33,13 +32,6 @@ export function getSqlReadTable(table: TableKey): string {
   return (meta as { sqlReadTable?: string }).sqlReadTable ?? getSqlTable(table);
 }
 
-export function getRoleDiscriminatorFragment(table: TableKey): { sql: string; value: string } | null {
-  const meta = tableOf(table);
-  const disc = (meta as { roleDiscriminator?: RoleDiscriminator }).roleDiscriminator;
-  if (!disc) return null;
-  return { sql: `"${disc.column}" = ?`, value: disc.value };
-}
-
 export function isKnownTable(name: string): name is TableKey {
   return Object.prototype.hasOwnProperty.call(structure.tables, name);
 }
@@ -56,15 +48,6 @@ export function getCrudPolicy(table: TableKey): CrudPolicy | null {
   return policy;
 }
 
-export type ScopeFragment = {
-  businessWhere:  string;    // '' when Admin with no business or no scope needed
-  businessParams: SqlParam[];
-  ownerWhere?:    string;
-  ownerParams?:   SqlParam[];
-  grantWhere?:    string;
-  grantParams?:   SqlParam[];
-};
-
 export type CrudCheck =
   | {
       ok: true;
@@ -78,102 +61,9 @@ export type CrudCheck =
       grantWhere?: string;
       grantParams?: SqlParam[];
       discriminatorWhere?: string;     // role discriminator clause (renumbered by caller)
-      discriminatorParams?: SqlParam[]; // single-element array with the discriminator value
+      discriminatorParams?: SqlParam[];
     }
   | { ok: false; status: number; code: string; message: string };
-
-export function reNumberFragment(template: string, startIndex: number): { sql: string; nextIndex: number } {
-  let idx = startIndex;
-  const sql = template.replace(/\?/g, () => `$${idx++}`);
-  return { sql, nextIndex: idx };
-}
-
-export type ScopeConditionsInput = {
-  businessWhere: string;
-  businessParams: SqlParam[];
-  ownerWhere?: string;
-  ownerParams?: SqlParam[];
-  grantWhere?: string;
-  grantParams?: SqlParam[];
-  discriminatorWhere?: string;
-  discriminatorParams?: SqlParam[];
-};
-
-// Renumbers and orders the scope fragments (discriminator → business → owner → grant) starting at
-// `startIndex`, returning the conditions and their bound params. The single source for how a
-// resolved CrudCheck's scope becomes SQL — shared by every generic read/write path so the ordering
-// and param numbering can never drift between them. Discriminator first so the DB can index on it.
-export function buildScopeConditions(
-  allowed: ScopeConditionsInput,
-  startIndex: number,
-): { conditions: string[]; values: SqlParam[]; nextIndex: number } {
-  const conditions: string[] = [];
-  const values: SqlParam[] = [];
-  let idx = startIndex;
-
-  const fragments: Array<[string | undefined, SqlParam[] | undefined]> = [
-    [allowed.discriminatorWhere, allowed.discriminatorParams],
-    [allowed.businessWhere, allowed.businessParams],
-    [allowed.ownerWhere, allowed.ownerParams],
-    [allowed.grantWhere, allowed.grantParams],
-  ];
-
-  for (const [where, params] of fragments) {
-    if (!where) continue;
-    const { sql, nextIndex } = reNumberFragment(where, idx);
-    conditions.push(sql);
-    values.push(...(params ?? []));
-    idx = nextIndex;
-  }
-
-  return { conditions, values, nextIndex: idx };
-}
-
-export function buildBusinessScope(
-  tableKey: TableKey,
-  user: AuthUser,
-): { businessWhere: string; businessParams: SqlParam[] } {
-  // Only a super-admin (Admin with no business) sees every tenant's rows. The DB
-  // enforces business_id IS NULL ⟹ role = 'Admin', but gate on role here too so an
-  // app-layer bug can never widen scope to a non-admin who somehow lacks a business.
-  if (user.business_id == null) {
-    if (user.role !== 'Admin') {
-      return { businessWhere: '1 = 0', businessParams: [] };
-    }
-    return { businessWhere: '', businessParams: [] };
-  }
-
-  const meta = tableOf(tableKey);
-
-  if (meta.businessScoped) {
-    return {
-      businessWhere: '"business_id" = ?',
-      businessParams: [user.business_id],
-    };
-  }
-
-  const join = meta.businessJoin as BusinessJoinDescriptor | undefined;
-  if (join && join.paths.length === 1) {
-    const { parentTable, localFk, parentPk } = join.paths[0];
-    return {
-      businessWhere: `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE business_id = ?)`,
-      businessParams: [user.business_id],
-    };
-  }
-
-  if (join && join.paths.length >= 2) {
-    // Dual-owner tables (schedules, schedule_exceptions): either owner may satisfy the filter.
-    const parts = join.paths.map(({ parentTable, localFk, parentPk }) =>
-      `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE business_id = ?)`,
-    );
-    return {
-      businessWhere: `(${parts.join(' OR ')})`,
-      businessParams: join.paths.map(() => user.business_id),
-    };
-  }
-
-  return { businessWhere: '', businessParams: [] };
-}
 
 // Unknown and protected entities both report not-found so the API never reveals which
 // protected tables exist.
@@ -212,34 +102,10 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
   }
 
   const { businessWhere, businessParams } = buildBusinessScope(name as TableKey, user);
+  const { ownerWhere, ownerParams } = buildOwnerScope(name as TableKey, user, op);
+  const { grantWhere, grantParams } = buildGrantScope(name as TableKey, user);
 
-  // Ownership scoping: self-restricts only the role (and, optionally, the specific ops) the
-  // descriptor targets — e.g. a Client is confined to their own row on every op for `clients`,
-  // but a Client reading `professionals` must NOT be scoped: the descriptor there targets only
-  // a Professional editing their own profile, and Clients need the full list to book.
-  let ownerWhere: string | undefined;
-  let ownerParams: SqlParam[] | undefined;
-  if (meta.ownership) {
-    const ownership = meta.ownership as OwnershipDescriptor;
-    const opsMatch = !ownership.ops || ownership.ops.includes(op);
-    if (user.role === ownership.role && opsMatch) {
-      ownerWhere = `"${ownership.ownerColumn}" = ?`;
-      ownerParams = [user.id];
-    }
-  }
-
-  // Grant scoping: rows a grant table names for the caller — scoping, not a new error
-  // path, so ungranted single-row access surfaces as the generic empty/404. Composite-pk
-  // tables are not supported (a grant row names a single pk value).
-  let grantWhere: string | undefined;
-  let grantParams: SqlParam[] | undefined;
-  const gs = meta.grantScope as GrantScopeDescriptor | undefined;
-  if (gs && user.role === gs.role && !Array.isArray(meta.pk)) {
-    grantWhere = `"${meta.pk}" IN (SELECT "${gs.grantRowColumn}" FROM ${gs.grantTable} WHERE "${gs.granteeColumn}" = ?)`;
-    grantParams = [user.id];
-  }
-
-  const disc = getRoleDiscriminatorFragment(name as TableKey);
+  const disc = roleDiscriminatorFragment(name as TableKey);
   const discriminatorWhere = disc?.sql;
   const discriminatorParams = disc ? [disc.value] : undefined;
 
@@ -275,7 +141,7 @@ export type OwnScheduleResult =
 // synchronous assertCrudAllowed cannot express (a granted-staff check needs a DB lookup).
 // Own + Admin + granted: a Professional edits only their own; an Admin any owner in their
 // business; a Receptionist/other staff only with a calendar_grant for that professional;
-// resources are Admin-only for non-granted staff (no resource-grant column exists in D1);
+// resources are Admin-only for non-granted staff (no resource-grant column exists);
 // a Client is always denied. Cross-business owners return 404 to hide existence.
 export async function assertOwnScheduleAllowed(
   db: Pool | PoolClient,
@@ -297,21 +163,15 @@ export async function assertOwnScheduleAllowed(
   const resourceId = target.resource_id != null ? Number(target.resource_id) : null;
 
   if (professionalUserId != null) {
-    const r = await db.query<{ business_id: string | null }>(
-      `SELECT business_id FROM auth.users WHERE id = $1 AND role = 'Professional' AND is_active = true`,
-      [professionalUserId],
-    );
-    const biz = r.rows[0]?.business_id;
-    if (r.rows.length === 0 || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
+    const row = await getProfessionalOwner(db, professionalUserId);
+    const biz = row?.business_id;
+    if (!row || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
       return { ok: false, status: 404, code: 'not_found', message: 'Professional not found in this business' };
     }
   } else if (resourceId != null) {
-    const r = await db.query<{ business_id: string | null }>(
-      `SELECT business_id FROM resources WHERE id = $1 AND deleted_at IS NULL`,
-      [resourceId],
-    );
-    const biz = r.rows[0]?.business_id;
-    if (r.rows.length === 0 || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
+    const row = await getResourceOwner(db, resourceId);
+    const biz = row?.business_id;
+    if (!row || biz == null || (!isSuperAdmin && Number(biz) !== user.business_id)) {
       return { ok: false, status: 404, code: 'not_found', message: 'Resource not found in this business' };
     }
   } else {
@@ -333,7 +193,7 @@ export async function assertOwnScheduleAllowed(
   }
 
   // Resource target: managed by Admin (handled above) + granted staff. The grant model is
-  // per-professional only, so non-admin staff cannot manage resources in D1.
+  // per-professional only, so non-admin staff cannot manage resources.
   return { ok: false, status: 403, code: 'forbidden', message: 'Only an Admin may manage resource schedules' };
 }
 
@@ -355,13 +215,10 @@ export async function assertRoleCheckedReferences(
   for (const { column, role } of getRoleCheckedColumns(table)) {
     const refId = data[column];
     if (refId == null) continue;
-    const check = await db.query<{ business_id: string | null }>(
-      `SELECT business_id FROM auth.users WHERE id = $1 AND role = $2 AND deleted_at IS NULL`,
-      [refId, role],
-    );
-    const refBusiness = check.rows[0]?.business_id;
+    const check = await findRoleUserBusiness(db, refId, role);
+    const refBusiness = check?.business_id;
     const invalidRef =
-      check.rows.length === 0 ||
+      !check ||
       refBusiness == null ||
       (user.business_id != null && Number(refBusiness) !== user.business_id) ||
       (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);

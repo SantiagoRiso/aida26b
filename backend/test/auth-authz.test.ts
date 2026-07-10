@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { assertCrudAllowed, buildBusinessScope } from '../src/routes/crud-policy';
+import { assertCrudAllowed } from '../src/routes/crud-policy';
+import { buildBusinessScope } from '../src/db/scope';
 import type { AuthUser } from '../src/auth';
 import { createApp } from '../src/app';
 import { runMigrations } from '../src/migrate';
@@ -256,7 +257,7 @@ describe('generic routes fail closed without an authenticated user', () => {
   let closedServer: any;
 
   beforeAll(async () => {
-    const app = createApp(testsPool); // no defaultUser, no session middleware
+    const app = createApp(testsPool);
     closedServer = app.listen(PORT);
     await new Promise<void>((resolve, reject) => {
       closedServer.once('listening', resolve);

@@ -4,11 +4,14 @@ import type { Pool } from 'pg';
 import * as auth from '../auth';
 import { guardRoute } from '../helpers';
 import { readPassword, type AuditWriter } from '../session';
+import { withTransaction } from '../db/core';
+import { DbError } from '../db/errors';
+import { insertUser, deactivateUser, resetUserPassword, deleteUserSessions } from '../db/users';
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
 
-function isUniqueViolation(error: { code?: string } | null | undefined) {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+function isUniqueViolation(error: unknown): error is DbError {
+  return error instanceof DbError && error.pgCode === '23505';
 }
 
 export function mountUserAdminRoutes(
@@ -69,48 +72,38 @@ export function mountUserAdminRoutes(
       if (sessionUser.business_id == null) {
         return res.status(400).json({ error: 'A business context is required to manage users' });
       }
+      const businessId = sessionUser.business_id;
       const email = emailRaw ?? `${username}@noemail.local`;
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
-      const client = await pool.connect();
       try {
-        await client.query('BEGIN');
-
         // All person attributes (display_name, dni, phone, bio, notes) live on auth.users directly.
-        const userResult = await client.query(
-          `INSERT INTO auth.users
-             (username, email, display_name, dni, password_hash, password_salt, role, business_id, must_change_password)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
-           RETURNING id`,
-          [username, email, displayName, dni, passwordHash, passwordSalt, role, sessionUser.business_id],
-        );
-        const newUserId: number = userResult.rows[0].id;
-
-        await client.query('COMMIT');
+        const newUserId = await withTransaction(pool, async (tx) => {
+          const inserted = await insertUser(tx, {
+            username, email, displayName, dni,
+            passwordHash, passwordSalt, role, businessId,
+          });
+          return Number(inserted!.id);
+        });
 
         await audit(req, 'user_created', 'success', { user_id: newUserId, role });
 
         return res.status(201).json({ id: newUserId, username, role });
       } catch (error) {
-        await client.query('ROLLBACK');
-
-        if (isUniqueViolation(error as { code?: string })) {
+        if (isUniqueViolation(error)) {
           // dni is also unique per business; name the right conflict so the form can react.
-          const constraint = (error as { constraint?: string }).constraint;
           return res.status(409).json({
-            error: constraint === 'uq_users_business_dni' ? 'DNI already exists' : 'Username already exists',
+            error: error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : 'Username already exists',
           });
         }
 
         console.error('Error creating user:', error);
         return res.status(500).json({ error: 'Internal server error' });
-      } finally {
-        client.release();
       }
     }),
   );
 
-  // Soft-deactivates a user; deletes their sessions. Role is immutable — change requires deactivate + recreate.
+  // Role is immutable — change requires deactivate + recreate.
   app.post(
     '/api/admin/users/:id/deactivate',
     requireAuth,
@@ -134,23 +127,21 @@ export function mountUserAdminRoutes(
           return res.status(400).json({ error: 'You cannot deactivate your own account' });
         }
 
-        const result = await pool.query(
-          `UPDATE auth.users
-           SET is_active = false, deleted_at = now(), deleted_by_user_id = $1, updated_at = now()
-           WHERE id = $2 AND business_id = $3 AND is_active = true
-           RETURNING id, username, role`,
-          [sessionUser.id, userId, sessionUser.business_id],
-        );
+        const deactivated = await deactivateUser(pool, {
+          userId,
+          businessId: sessionUser.business_id,
+          actorId: sessionUser.id,
+        });
 
-        if (result.rows.length === 0) {
+        if (!deactivated) {
           return res.status(404).json({ error: 'User not found' });
         }
 
-        await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [userId]);
+        await deleteUserSessions(pool, userId);
 
         await audit(req, 'user_deactivated', 'success', { user_id: userId });
 
-        return res.json({ user: result.rows[0] });
+        return res.json({ user: deactivated });
       } catch (error) {
         console.error('Error deactivating user:', error);
         return res.status(500).json({ error: 'Internal server error' });
@@ -189,23 +180,22 @@ export function mountUserAdminRoutes(
 
         // Scope by the admin's business so a tenant admin can only reset their own
         // users' passwords, never another business's accounts.
-        const result = await pool.query(
-          `UPDATE auth.users
-           SET password_hash = $1, password_salt = $2, must_change_password = true, updated_at = now()
-           WHERE id = $3 AND business_id = $4 AND is_active = true
-           RETURNING id, username, email, role, is_active, must_change_password`,
-          [passwordHash, passwordSalt, userId, sessionUser.business_id],
-        );
+        const reset = await resetUserPassword(pool, {
+          userId,
+          businessId: sessionUser.business_id,
+          passwordHash,
+          passwordSalt,
+        });
 
-        if (result.rows.length === 0) {
+        if (!reset) {
           return res.status(404).json({ error: 'User not found' });
         }
 
-        await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [userId]);
+        await deleteUserSessions(pool, userId);
 
         await audit(req, 'password_reset', 'success', { user_id: userId });
 
-        return res.json({ user: result.rows[0] });
+        return res.json({ user: reset });
       } catch (error) {
         console.error('Error resetting password:', error);
         return res.status(500).json({ error: 'Internal server error' });
