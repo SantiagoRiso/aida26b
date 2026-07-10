@@ -65,10 +65,10 @@ watch(appointmentId, (id) => {
 watch(showAppointmentPicker, async (show) => {
   if (show && appointments.value.length === 0) {
     loadingAppointments.value = true;
-    const result = await listAppointments({ limit: 200 });
+    // Only this client's appointments may be charged here.
+    const result = await listAppointments({ client_user_id: props.clientUserId, limit: 200 });
     if (result.ok) {
-      // Only this client's appointments may be charged here.
-      appointments.value = result.data.filter((a) => a.client_user_id === props.clientUserId);
+      appointments.value = result.data;
     }
     loadingAppointments.value = false;
   }

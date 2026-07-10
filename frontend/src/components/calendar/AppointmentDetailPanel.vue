@@ -34,24 +34,19 @@ const saving = ref(false);
 // Names for the appointment's ids. Clients cannot list the clients table (and don't
 // need their own name repeated), so that lookup is staff-only.
 const isStaffViewer = auth.user?.role !== 'Client';
-const { options: professionalOptions } = useForeignKeyOptions({
+const { labelFor: professionalLabelFor } = useForeignKeyOptions({
   table: 'professionals', valueField: 'id', labelField: 'display_name',
 });
-const { options: serviceOptions } = useForeignKeyOptions({
+const { labelFor: serviceLabelFor } = useForeignKeyOptions({
   table: 'services', valueField: 'id', labelField: 'name',
 });
-const { options: clientOptions } = isStaffViewer
+const { labelFor: clientLabelFor } = isStaffViewer
   ? useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' })
-  : { options: ref([]) };
+  : { labelFor: () => null };
 
-function nameFor(options: { value: string; label: string }[], id: number | null): string | null {
-  if (id == null) return null;
-  return options.find((o) => o.value === String(id))?.label ?? null;
-}
-
-const clientName = computed(() => nameFor(clientOptions.value, props.appointment?.client_user_id ?? null));
-const professionalName = computed(() => nameFor(professionalOptions.value, props.appointment?.professional_user_id ?? null));
-const serviceName = computed(() => nameFor(serviceOptions.value, props.appointment?.service_id ?? null));
+const clientName = computed(() => clientLabelFor(props.appointment?.client_user_id ?? null));
+const professionalName = computed(() => professionalLabelFor(props.appointment?.professional_user_id ?? null));
+const serviceName = computed(() => serviceLabelFor(props.appointment?.service_id ?? null));
 
 const availableTransitions = computed((): string[] => {
   const appt = props.appointment;
@@ -134,22 +129,20 @@ function fmtPrice(price: string): string {
   return `$ ${n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  requested: 'Solicitado',
-  scheduled: 'Programado',
-  completed: 'Completado',
-  canceled: 'Cancelado',
-  no_show: 'Ausente',
-  rejected: 'Rechazado',
+// The state → i18n action-key map for transition buttons; state labels themselves come from the
+// shared `status.*` namespace so this panel translates like every other screen.
+const TRANSITION_KEY: Record<string, string> = {
+  scheduled: 'calendar.approve',
+  rejected: 'calendar.reject',
+  canceled: 'calendar.cancel',
+  completed: 'calendar.complete',
+  no_show: 'calendar.noShow',
 };
 
-const TRANSITION_LABEL: Record<string, string> = {
-  scheduled: 'Aprobar',
-  rejected: 'Rechazar',
-  canceled: 'Cancelar',
-  completed: 'Completado',
-  no_show: 'Ausente',
-};
+function transitionLabel(to: string): string {
+  const key = TRANSITION_KEY[to];
+  return key ? t(key) : to;
+}
 
 function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
   if (to === 'scheduled') return 'primary';
@@ -171,7 +164,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
             'bg-neutral/10 text-neutral': ['canceled','no_show','rejected'].includes(appointment.state),
           }"
         >
-          {{ STATUS_LABEL[appointment.state] ?? appointment.state }}
+          {{ t(`status.${appointment.state}`) }}
         </span>
       </div>
 
@@ -271,7 +264,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
           :loading="saving"
           @click="doTransition(to)"
         >
-          {{ TRANSITION_LABEL[to] ?? to }}
+          {{ transitionLabel(to) }}
         </AppButton>
       </div>
 

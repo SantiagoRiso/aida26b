@@ -11,7 +11,9 @@ import { listAppointments, approveAppointment, transitionAppointment } from '@/a
 import type { Appointment } from '@/api/appointments';
 import { getAvailability } from '@/api/scheduling';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import type { TableRecordMap } from '@shared/types/types';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
+import { latticeFromFreeSlots } from '@/composables/calendarGrid';
 import type { AuthUser } from '@/stores/auth';
 import type { EventContentArg } from '@fullcalendar/core';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -46,34 +48,24 @@ async function load() {
 }
 onMounted(load);
 
-const { options: clientOptions } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
-const { options: professionalOptions } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
-const { options: serviceOptions } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
+const { labelFor: clientLabelFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
+const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
+const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
 
-function nameFor(opts: { value: string; label: string }[], id: number | null): string | null {
-  if (id == null) return null;
-  return opts.find((o) => o.value === String(id))?.label ?? null;
-}
 function clientName(a: Appointment): string {
-  return nameFor(clientOptions.value, a.client_user_id) ?? a.name ?? `Turno #${a.id}`;
+  return clientLabelFor(a.client_user_id) ?? a.name ?? `Turno #${a.id}`;
 }
 function professionalName(a: Appointment): string {
-  return nameFor(professionalOptions.value, a.professional_user_id) ?? '—';
+  return professionalLabelFor(a.professional_user_id) ?? '—';
 }
 function serviceName(a: Appointment): string {
-  return nameFor(serviceOptions.value, a.service_id) ?? '—';
+  return serviceLabelFor(a.service_id) ?? '—';
 }
 
 // ── Detail drawer: full client context so a request can be triaged without leaving the list ──
-interface ClientProfile {
-  id: number;
-  display_name: string;
-  email: string | null;
-  phone: string | null;
-}
 const detailAppt = ref<Appointment | null>(null);
 const detailOpen = ref(false);
-const clientProfile = ref<ClientProfile | null>(null);
+const clientProfile = ref<TableRecordMap['clients'] | null>(null);
 const clientBalance = ref<string | null>(null);
 const clientAppts = ref<Appointment[]>([]);
 const loadingDetail = ref(false);
@@ -91,25 +83,6 @@ function dayAfter(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function toMin(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
-// Slot starts + finest slot length from a day's free slots (same lattice the main calendar uses).
-function latticeFromSlots(slots: { start: string; end: string }[]): { starts: number[] | null; minutes: number | null } {
-  const set = new Set<number>();
-  let minLen = Infinity;
-  for (const s of slots) {
-    set.add(toMin(s.start));
-    minLen = Math.min(minLen, toMin(s.end) - toMin(s.start));
-  }
-  return {
-    starts: set.size > 0 ? [...set].sort((a, b) => a - b) : null,
-    minutes: Number.isFinite(minLen) ? minLen : null,
-  };
-}
-
 async function openDetail(appt: Appointment) {
   detailAppt.value = appt;
   detailOpen.value = true;
@@ -125,9 +98,9 @@ async function openDetail(appt: Appointment) {
   // Ledger reads are allowed for anyone who can see the request (the request itself is the
   // relationship). The appointment history is the caller's own scoped view of this client.
   const [prof, bal, appts, proDay, avail] = await Promise.all([
-    cid != null ? getRow<ClientProfile>('clients', cid) : Promise.resolve(null),
+    cid != null ? getRow('clients', cid) : Promise.resolve(null),
     cid != null ? getBalance(cid) : Promise.resolve(null),
-    listAppointments({ limit: 500 }),
+    cid != null ? listAppointments({ client_user_id: cid, limit: 500 }) : Promise.resolve(null),
     listAppointments({
       professional_user_id: appt.professional_user_id,
       date_from: day,
@@ -138,12 +111,10 @@ async function openDetail(appt: Appointment) {
   ]);
   if (prof && prof.ok) clientProfile.value = prof.data;
   clientBalance.value = bal && bal.ok ? bal.data.balance_ars : null;
-  clientAppts.value = appts.ok && cid != null
-    ? appts.data.filter((a) => String(a.client_user_id) === String(cid))
-    : [];
+  clientAppts.value = appts && appts.ok ? appts.data : [];
   dayAppts.value = proDay.ok ? proDay.data : [];
   if (avail.ok) {
-    const grid = latticeFromSlots(avail.data.slots);
+    const grid = latticeFromFreeSlots(avail.data.slots);
     daySlotStarts.value = grid.starts;
     daySlotMinutes.value = grid.minutes;
   }
@@ -174,7 +145,7 @@ const { calendarOptions: dayCalendarBase } = useAppointmentCalendar(
   dayAppts,
   nullViewer,
   { onSelect: () => {}, onEventClick: () => {}, onEventDrop: () => {}, onEventResize: () => {} },
-  { fallbackTitle: (a) => nameFor(clientOptions.value, a.client_user_id) },
+  { fallbackTitle: (a) => clientLabelFor(a.client_user_id) },
   { fine: fineDrag, slotStartsMinutes: daySlotStarts, slotMinutes: daySlotMinutes },
 );
 const dayCalendarOptions = computed(() => ({

@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { getRow, listRows, deleteRow } from '@/api/crud';
+import { getRow, deleteRow } from '@/api/crud';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { getBalance, getLedger } from '@/api/ledger';
 import type { LedgerEntry } from '@/api/ledger';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
+import { isOpenAppointmentState } from '@shared/ssot/domain';
+import { useLedgerLabel } from '@/composables/useLedgerLabel';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
-import type { Role } from '@shared/types/types';
+import type { Role, TableRecordMap } from '@shared/types/types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -39,21 +41,12 @@ const auth = useAuthStore();
 
 const clientId = props.clientId;
 
-interface ClientProfile {
-  id: number;
-  display_name: string;
-  email: string | null;
-  phone: string | null;
-  dni: string | null;
-  notes: string | null;
-}
-
-const client = ref<ClientProfile | null>(null);
+const client = ref<TableRecordMap['clients'] | null>(null);
 const balance = ref<string | null>(null);
 const entries = ref<LedgerEntry[]>([]);
 const appointments = ref<Appointment[]>([]);
-const professionalNames = ref<Map<string, string>>(new Map());
-const serviceNames = ref<Map<string, string>>(new Map());
+const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
+const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
 const loading = ref(true);
 
 const showEntryForm = ref(false);
@@ -80,34 +73,28 @@ const ledgerAccessible = computed(() => role.value === 'Admin' || appointments.v
 
 const balancePositive = computed(() => balance.value != null && parseFloat(balance.value) > 0);
 
-// GenericForm.initial expects a plain record; the typed profile isn't index-signature compatible.
-const clientAsRecord = computed(() => (client.value ?? undefined) as Record<string, unknown> | undefined);
-
 // Pending = still actionable (requested or scheduled); these can be cancelled.
 const pendingAppointments = computed(() =>
   appointments.value
-    .filter((a) => a.state === 'requested' || a.state === 'scheduled')
+    .filter((a) => isOpenAppointmentState(a.state))
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
 );
 
-// Closed/past appointments only — the pending (requested/scheduled) ones are already shown
-// in the "Pendientes" list above, so the history table must not repeat them.
+// Closed/past appointments only — the pending ones are already shown in the "Pendientes"
+// list above, so the history table must not repeat them.
 const historyAppointments = computed(() =>
   appointments.value
-    .filter((a) => a.state !== 'requested' && a.state !== 'scheduled')
+    .filter((a) => !isOpenAppointmentState(a.state))
     .sort((a, b) => b.starts_at.localeCompare(a.starts_at)),
 );
 
-const entryTypeLabel = (value: string) => {
-  const found = LEDGER_ENTRY_TYPES.find((e) => e.value === value);
-  return found ? label(found.label) : value;
-};
+const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
 
-const professionalName = (id: number) => professionalNames.value.get(String(id)) ?? `#${id}`;
-const serviceName = (id: number) => serviceNames.value.get(String(id)) ?? `#${id}`;
+const professionalName = (id: number) => professionalLabelFor(id) ?? `#${id}`;
+const serviceName = (id: number) => serviceLabelFor(id) ?? `#${id}`;
 
 async function loadProfile() {
-  const res = await getRow<ClientProfile>('clients', clientId);
+  const res = await getRow('clients', clientId);
   if (res.ok) client.value = res.data;
 }
 
@@ -118,26 +105,14 @@ async function loadLedger() {
 }
 
 async function loadAppointments() {
-  // Ids arrive from the API as strings; compare as strings (clientId is a number).
-  const res = await listAppointments({ limit: 500 });
-  appointments.value = res.ok
-    ? res.data.filter((a) => String(a.client_user_id) === String(clientId))
-    : [];
-}
-
-async function loadNameMaps() {
-  const [pros, svcs] = await Promise.all([
-    listRows<{ id: number | string; display_name: string }>('professionals', { limit: 500 }),
-    listRows<{ id: number | string; name: string }>('services', { limit: 500 }),
-  ]);
-  if (pros.ok) professionalNames.value = new Map(pros.data.map((p) => [String(p.id), p.display_name]));
-  if (svcs.ok) serviceNames.value = new Map(svcs.data.map((s) => [String(s.id), s.name]));
+  const res = await listAppointments({ client_user_id: clientId, limit: 500 });
+  appointments.value = res.ok ? res.data : [];
 }
 
 async function load() {
   loading.value = true;
   // Appointments first: ledger access depends on whether the viewer has seen this client.
-  await Promise.all([loadProfile(), loadAppointments(), loadNameMaps()]);
+  await Promise.all([loadProfile(), loadAppointments()]);
   if (ledgerAccessible.value) await loadLedger();
   loading.value = false;
 }
@@ -282,10 +257,7 @@ onMounted(load);
                 <td class="px-4 py-3">
                   <span
                     class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
-                    :class="{
-                      'bg-red-100 text-destructive': entry.entry_type === 'charge' || entry.entry_type === 'adjustment_debit',
-                      'bg-green-100 text-success': entry.entry_type === 'payment' || entry.entry_type === 'adjustment_credit',
-                    }"
+                    :class="entryBadgeClass(entry.entry_type)"
                   >
                     {{ entryTypeLabel(entry.entry_type) }}
                   </span>
@@ -394,7 +366,7 @@ onMounted(load);
         v-if="client"
         table-key="clients"
         mode="edit"
-        :initial="clientAsRecord"
+        :initial="client ?? undefined"
         @saved="onProfileSaved"
         @cancel="showEditProfile = false"
       />

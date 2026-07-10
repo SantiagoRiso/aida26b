@@ -6,9 +6,8 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { getBalance, getLedger } from '@/api/ledger';
 import type { LedgerEntry } from '@/api/ledger';
-import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
 import { useCurrency } from '@/composables/useCurrency';
-import { useLabel } from '@/composables/useLabel';
+import { useLedgerLabel } from '@/composables/useLedgerLabel';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -16,7 +15,7 @@ import AppButton from '@/components/shared/AppButton.vue';
 const { t } = useI18n();
 const auth = useAuthStore();
 const { formatARS, formatDateTime } = useCurrency();
-const { label } = useLabel();
+const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
 
 const balanceArs = ref<string | null>(null);
 const loadingBalance = ref(false);
@@ -68,28 +67,13 @@ async function loadMore() {
 }
 
 onMounted(load);
-
-function entryTypeLabel(value: string): string {
-  const found = LEDGER_ENTRY_TYPES.find((t) => t.value === value);
-  return found ? label(found.label) : value;
-}
-
-function entryBadgeClass(entryType: string): string {
-  switch (entryType) {
-    case 'charge': return 'bg-red-100 text-destructive';
-    case 'payment': return 'bg-green-100 text-success';
-    case 'adjustment_credit': return 'bg-blue-100 text-blue-700';
-    case 'adjustment_debit': return 'bg-amber-100 text-amber-700';
-    default: return 'bg-slate-100 text-neutral';
-  }
-}
 </script>
 
 <template>
   <div class="space-y-8">
-    <h1 class="text-2xl font-bold">Mi saldo</h1>
+    <h1 class="text-2xl font-bold">{{ t('nav.myBalance') }}</h1>
 
-    <section aria-label="Resumen de saldo">
+    <section :aria-label="t('portal.balanceSummaryLabel')">
       <div v-if="loadingBalance">
         <Skeleton :rows="1" />
       </div>
@@ -102,23 +86,23 @@ function entryBadgeClass(entryType: string): string {
             : 'border-green-200 bg-green-50',
         ]"
       >
-        <p class="text-sm text-neutral">Saldo actual</p>
+        <p class="text-sm text-neutral">{{ t('portal.currentBalance') }}</p>
         <p
           :class="['mt-1 text-3xl font-bold tabular-nums', balancePositive ? 'text-destructive' : 'text-success']"
         >
           {{ balanceArs != null ? formatARS(balanceArs) : '—' }}
         </p>
         <p v-if="balancePositive" class="mt-2 text-sm text-destructive">
-          Tenés saldo pendiente de pago. Comunicáte con la clínica para regularizarlo.
+          {{ t('portal.balanceDue') }}
         </p>
         <p v-else class="mt-2 text-sm text-success">
-          Tu cuenta está al día.
+          {{ t('portal.balanceOk') }}
         </p>
       </div>
     </section>
 
-    <section aria-label="Historial de movimientos">
-      <h2 class="mb-3 text-lg font-semibold">Historial de movimientos</h2>
+    <section :aria-label="t('portal.ledgerHeading')">
+      <h2 class="mb-3 text-lg font-semibold">{{ t('portal.ledgerHeading') }}</h2>
 
       <div v-if="loadingEntries && entries.length === 0">
         <Skeleton :rows="5" />
@@ -126,18 +110,18 @@ function entryBadgeClass(entryType: string): string {
 
       <EmptyState
         v-else-if="!loadingEntries && entries.length === 0"
-        heading="Sin movimientos"
-        body="Todavía no hay movimientos registrados en tu cuenta."
+        :heading="t('portal.noLedgerHeading')"
+        :body="t('portal.noLedgerBody')"
       />
 
       <div v-else class="overflow-x-auto rounded-lg border border-border">
         <table class="w-full text-sm">
           <thead class="border-b border-border bg-surface">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">Tipo</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">Importe</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">Fecha</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">Detalle</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.type') }}</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.amount') }}</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.date') }}</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.detail') }}</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-border">
@@ -170,7 +154,7 @@ function entryBadgeClass(entryType: string): string {
 
       <div v-if="hasMore" class="mt-4 flex justify-center">
         <AppButton variant="neutral" :loading="loadingEntries" @click="loadMore">
-          Cargar más
+          {{ t('portal.loadMore') }}
         </AppButton>
       </div>
     </section>

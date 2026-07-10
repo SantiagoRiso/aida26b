@@ -3,18 +3,29 @@ import { ref, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useLabel } from '@/composables/useLabel';
 import { createUser, deactivateUser, resetPassword } from '@/api/admin-users';
+import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
+import type { TableRecordMap } from '@shared/types/types';
+import { ROLE_OPTIONS } from '@shared/ssot/domain';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import PasswordInput from '@/components/shared/PasswordInput.vue';
 
 const { t } = useI18n();
 const { label } = useLabel();
 const { toast } = useToast();
+const auth = useAuthStore();
 
 const TABLE_KEY = 'users' as const;
+
+// Self-deactivation locks the account out and a self "admin reset" bypasses change-password;
+// the backend rejects both — the UI must not offer them.
+function isSelf(row: TableRecordMap['users']): boolean {
+  return String(row.id) === String(auth.user?.id);
+}
 
 // Users are listed via generic /api/users (SSOT users is read-exposed).
 // Create/deactivate/reset all route through admin-users API, not generic CRUD.
@@ -65,9 +76,9 @@ const pendingDeactivateId = ref<string | null>(null);
 const pendingDeactivateName = ref('');
 const deactivateSubmitting = ref(false);
 
-function requestDeactivate(row: Record<string, unknown>) {
-  pendingDeactivateId.value = String(row.id ?? '');
-  pendingDeactivateName.value = String(row.username ?? row.id ?? '');
+function requestDeactivate(row: TableRecordMap['users']) {
+  pendingDeactivateId.value = String(row.id);
+  pendingDeactivateName.value = String(row.username ?? row.id);
   deactivateConfirmOpen.value = true;
 }
 
@@ -94,8 +105,8 @@ const resetPassword_ = ref('');
 const resetSubmitting = ref(false);
 const resetError = ref('');
 
-function openReset(row: Record<string, unknown>) {
-  resetUserId.value = String(row.id ?? '');
+function openReset(row: TableRecordMap['users']) {
+  resetUserId.value = String(row.id);
   resetPassword_.value = '';
   resetError.value = '';
   resetPanelOpen.value = true;
@@ -130,21 +141,23 @@ async function submitReset() {
         </AppButton>
       </template>
       <template #row-actions="{ row }">
-        <button
-          type="button"
-          class="mr-3 text-accent hover:underline text-xs"
-          @click.stop="openReset(row)"
-        >
-          {{ label({ es: 'Resetear contraseña', en: 'Reset password' }) }}
-        </button>
-        <button
-          v-if="row.is_active"
-          type="button"
-          class="mr-2 text-destructive hover:underline text-xs"
-          @click.stop="requestDeactivate(row)"
-        >
-          {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
-        </button>
+        <template v-if="!isSelf(row)">
+          <button
+            type="button"
+            class="mr-3 text-accent hover:underline text-xs"
+            @click.stop="openReset(row)"
+          >
+            {{ label({ es: 'Resetear contraseña', en: 'Reset password' }) }}
+          </button>
+          <button
+            v-if="row.is_active"
+            type="button"
+            class="mr-2 text-destructive hover:underline text-xs"
+            @click.stop="requestDeactivate(row)"
+          >
+            {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
+          </button>
+        </template>
       </template>
     </GenericTable>
 
@@ -183,11 +196,10 @@ async function submitReset() {
           <label for="password" class="text-sm font-semibold">
             {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
           </label>
-          <input
+          <PasswordInput
             id="password"
             v-model="createForm.password"
-            type="password"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           />
         </div>
@@ -203,10 +215,7 @@ async function submitReset() {
             required
           >
             <option value="">{{ label({ es: 'Seleccionar…', en: 'Select…' }) }}</option>
-            <option value="Admin">Admin</option>
-            <option value="Professional">{{ label({ es: 'Profesional', en: 'Professional' }) }}</option>
-            <option value="Receptionist">{{ label({ es: 'Recepcionista', en: 'Receptionist' }) }}</option>
-            <option value="Client">{{ label({ es: 'Cliente', en: 'Client' }) }}</option>
+            <option v-for="r in ROLE_OPTIONS" :key="r.value" :value="r.value">{{ label(r.label) }}</option>
           </select>
         </div>
 
@@ -252,11 +261,10 @@ async function submitReset() {
           <label for="new-password" class="text-sm font-semibold">
             {{ label({ es: 'Nueva contraseña', en: 'New password' }) }} <span class="text-destructive">*</span>
           </label>
-          <input
+          <PasswordInput
             id="new-password"
             v-model="resetPassword_"
-            type="password"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           />
         </div>

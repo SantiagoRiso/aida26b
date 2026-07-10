@@ -12,6 +12,8 @@ import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
 import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { isCurrent, canSettle as canSettleAt, transitionFor, showsCurrentCard } from '@/views/staff/dashboard-current';
+import type { SettleAction } from '@/views/staff/dashboard-current';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -45,15 +47,12 @@ async function loadProfessional() {
     }),
     listAppointments({
       professional_user_id: userId.value,
-      limit: 50,
+      state: 'requested',
+      limit: 5,
     }),
   ]);
   if (upcomingRes.ok) proUpcoming.value = upcomingRes.data.slice(0, 5);
-  if (pendingRes.ok) {
-    proPending.value = pendingRes.data
-      .filter((a) => a.state === 'requested')
-      .slice(0, 5);
-  }
+  if (pendingRes.ok) proPending.value = pendingRes.data;
   loadingPro.value = false;
 }
 
@@ -69,19 +68,16 @@ async function loadReceptionist() {
       date_to: todayEnd.toISOString().slice(0, 10),
       limit: 50,
     }),
-    listAppointments({ limit: 50 }),
+    listAppointments({ state: 'requested', limit: 5 }),
   ]);
   if (todayRes.ok) recToday.value = todayRes.data;
-  if (pendingRes.ok) {
-    recPending.value = pendingRes.data
-      .filter((a) => a.state === 'requested')
-      .slice(0, 5);
-  }
+  if (pendingRes.ok) recPending.value = pendingRes.data;
   loadingRec.value = false;
 }
 
-const adminToday = ref<Appointment[]>([]);
-const adminPending = ref<Appointment[]>([]);
+// Stat tiles show totals, so they read the server's count (meta.total), not a capped page length.
+const adminTodayCount = ref(0);
+const adminPendingCount = ref(0);
 const recentAudit = ref<AuditEvent[]>([]);
 const loadingAdmin = ref(false);
 
@@ -91,15 +87,13 @@ async function loadAdmin() {
     listAppointments({
       date_from: todayStart.toISOString().slice(0, 10),
       date_to: todayEnd.toISOString().slice(0, 10),
-      limit: 100,
+      limit: 1,
     }),
-    listAppointments({ limit: 50 }),
+    listAppointments({ state: 'requested', limit: 1 }),
     listAudit({}, 1, 5),
   ]);
-  if (todayRes.ok) adminToday.value = todayRes.data;
-  if (pendingRes.ok) {
-    adminPending.value = pendingRes.data.filter((a) => a.state === 'requested');
-  }
+  if (todayRes.ok) adminTodayCount.value = todayRes.meta?.total ?? 0;
+  if (pendingRes.ok) adminPendingCount.value = pendingRes.meta?.total ?? 0;
   if (auditRes.ok) recentAudit.value = auditRes.data;
   loadingAdmin.value = false;
 }
@@ -110,88 +104,96 @@ onMounted(() => {
   else if (role.value === 'Admin') loadAdmin();
   if (showsCard.value) {
     void loadCurrent();
-    // Re-evaluate the ±5-min window as time passes so the card appears/clears on its own.
+    // Re-evaluate the card window as time passes so cards appear on their own.
     nowTimer = window.setInterval(() => { now.value = new Date(); }, 30_000);
+    // New bookings must surface without a page reload.
+    refetchTimer = window.setInterval(() => { void loadCurrent(); }, 60_000);
   }
 });
 
 onBeforeUnmount(() => {
   if (nowTimer !== undefined) window.clearInterval(nowTimer);
+  if (refetchTimer !== undefined) window.clearInterval(refetchTimer);
 });
 
 // Untitled appointments read as the client's name, not an opaque "Turno #id".
-const { options: clientOptions } = useForeignKeyOptions({
+const { labelFor: clientLabelFor } = useForeignKeyOptions({
   table: 'clients', valueField: 'id', labelField: 'display_name',
 });
 function apptLabel(appt: Appointment): string {
   if (appt.name) return appt.name;
-  const clientName = appt.client_user_id != null
-    ? clientOptions.value.find((o) => o.value === String(appt.client_user_id))?.label
-    : undefined;
-  return clientName ?? `Turno #${appt.id}`;
+  return clientLabelFor(appt.client_user_id) ?? `Turno #${appt.id}`;
 }
 
-// Current-appointment payment card. Scoped to Admin/Professional — the roles that may register a
-// payment (a receptionist can only post appointment charges, which completion already handles).
-const { options: serviceOptions } = useForeignKeyOptions({
+// Current-appointment settle card. Visible to the session's own professional and to
+// receptionists (server scopes their list to granted calendars); admins never see it.
+const { labelFor: serviceLabelFor } = useForeignKeyOptions({
   table: 'services', valueField: 'id', labelField: 'name',
 });
-const showsCard = computed(() => role.value === 'Admin' || role.value === 'Professional');
+const showsCard = computed(() => role.value === 'Professional' || role.value === 'Receptionist');
 
-const todays = ref<Appointment[]>([]);
+const settleCandidates = ref<Appointment[]>([]);
 const now = ref(new Date());
 let nowTimer: number | undefined;
+let refetchTimer: number | undefined;
 // Per-card editable payment amount and in-flight flag, keyed by appointment id.
 const amounts = ref<Record<number, string>>({});
 const processing = ref<Record<number, boolean>>({});
 
-// The turno is "current" from 5 min before it starts until 5 min after it ends.
-const WINDOW_MS = 5 * 60 * 1000;
-function isCurrent(appt: Appointment, at: Date): boolean {
-  if (appt.state !== 'scheduled') return false;
-  const start = new Date(appt.starts_at).getTime();
-  const end = new Date(appt.ends_at).getTime();
-  const t = at.getTime();
-  return t >= start - WINDOW_MS && t <= end + WINDOW_MS;
-}
 const currentAppointments = computed(() =>
-  todays.value
-    .filter((a) => isCurrent(a, now.value))
+  settleCandidates.value
+    .filter((a) => showsCurrentCard(auth.user, a) && isCurrent(a, now.value))
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
 );
 
-// Attendance can't be marked before the turno starts (backend rejects it), so actions stay
-// disabled during the pre-start part of the window.
 function canSettle(appt: Appointment): boolean {
-  return now.value.getTime() >= new Date(appt.starts_at).getTime();
+  return canSettleAt(appt, now.value);
 }
+
+// Cards never expire, so recently-forgotten unresolved sessions must surface too.
+// 7 days back is the product knob for "recent"; anything older is stale noise.
+const LOOKBACK_DAYS = 7;
 
 async function loadCurrent() {
   // Full local day as ISO bounds — a bare date as date_to resolves to that day's midnight and
   // would exclude the whole day (the filter compares starts_at directly).
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
+  from.setDate(from.getDate() - LOOKBACK_DAYS);
+  const to = new Date();
+  to.setHours(23, 59, 59, 999);
   const res = await listAppointments({
-    date_from: todayStart.toISOString(),
-    date_to: todayEnd.toISOString(),
-    limit: 100,
+    date_from: from.toISOString(),
+    date_to: to.toISOString(),
+    // Only unresolved turnos can hold a card; don't spend the page budget on settled ones.
+    state: 'scheduled',
+    limit: 200,
   });
   if (!res.ok) return;
-  todays.value = res.data;
-  for (const a of todays.value) {
+  settleCandidates.value = res.data;
+  for (const a of settleCandidates.value) {
     if (!(a.id in amounts.value)) amounts.value[a.id] = a.price ?? '';
   }
 }
 
 function serviceNameFor(appt: Appointment): string | null {
-  return serviceOptions.value.find((o) => o.value === String(appt.service_id))?.label ?? null;
+  return serviceLabelFor(appt.service_id);
+}
+
+// Receptionists see many professionals' turnos — each row must say whose it is.
+const { labelFor: professionalLabelFor } = useForeignKeyOptions({
+  table: 'professionals', valueField: 'id', labelField: 'display_name',
+});
+function professionalNameFor(appt: Appointment): string | null {
+  return professionalLabelFor(appt.professional_user_id);
 }
 
 // Registering attendance completes the turno (the backend posts the session charge once);
 // "paid" additionally records the payment. "absent" marks a no_show and never charges.
-async function settle(appt: Appointment, action: 'paid' | 'unpaid' | 'absent') {
+async function settle(appt: Appointment, action: SettleAction) {
   processing.value[appt.id] = true;
   try {
-    const to = action === 'absent' ? 'no_show' : 'completed';
-    const res = await transitionAppointment(appt.id, to);
+    const res = await transitionAppointment(appt.id, transitionFor(action));
     if (!res.ok) {
       toast.error('genericError');
       return;
@@ -244,6 +246,7 @@ async function settle(appt: Appointment, action: 'paid' | 'unpaid' | 'absent') {
             <p class="text-sm text-neutral">
               {{ formatDateTime(appt.starts_at) }}
               <span v-if="serviceNameFor(appt)"> · {{ serviceNameFor(appt) }}</span>
+              <span v-if="role === 'Receptionist' && professionalNameFor(appt)"> · {{ professionalNameFor(appt) }}</span>
             </p>
           </div>
           <div class="text-right">
@@ -349,6 +352,7 @@ async function settle(appt: Appointment, action: 'paid' | 'unpaid' | 'absent') {
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
               <span class="ml-2">{{ apptLabel(appt) }}</span>
+              <span v-if="professionalNameFor(appt)" class="ml-2">· {{ professionalNameFor(appt) }}</span>
             </li>
           </ul>
           <EmptyState v-else :heading="label({ es: 'Sin turnos hoy', en: 'No appointments today' })" body="" />
@@ -387,11 +391,11 @@ async function settle(appt: Appointment, action: 'paid' | 'unpaid' | 'absent') {
       <div v-else>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
           <div class="rounded-lg border border-border bg-card p-4 text-center">
-            <div class="text-3xl font-semibold text-heading tabular-nums">{{ adminToday.length }}</div>
+            <div class="text-3xl font-semibold text-heading tabular-nums">{{ adminTodayCount }}</div>
             <div class="mt-1 text-sm text-neutral">{{ label({ es: 'Turnos hoy', en: 'Appointments today' }) }}</div>
           </div>
           <div class="rounded-lg border border-border bg-card p-4 text-center">
-            <div class="text-3xl font-semibold text-heading tabular-nums">{{ adminPending.length }}</div>
+            <div class="text-3xl font-semibold text-heading tabular-nums">{{ adminPendingCount }}</div>
             <div class="mt-1 text-sm text-neutral">{{ label({ es: 'Solicitudes pendientes', en: 'Pending requests' }) }}</div>
           </div>
           <div class="rounded-lg border border-border bg-card p-4 text-center">

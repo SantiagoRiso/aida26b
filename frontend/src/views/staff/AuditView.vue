@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
+import { AUDIT_OUTCOMES } from '@shared/ssot/domain';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
 import { useAuthStore } from '@/stores/auth';
@@ -25,7 +26,7 @@ const page = ref(1);
 const limit = 50;
 const total = ref(0);
 
-// Filter state — each maps 1:1 to /api/audit query params (except outcome, client-side).
+// Filter state — each maps 1:1 to /api/audit query params.
 const filterEntityType = ref('');
 const filterActorId = ref('');
 const filterEventType = ref('');
@@ -44,9 +45,7 @@ const ENTITY_TYPES = [
 
 const OUTCOMES = [
   { value: '', label: { es: 'Todos', en: 'All' } },
-  { value: 'success', label: { es: 'Exitoso', en: 'Success' } },
-  { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
-  { value: 'failure', label: { es: 'Error', en: 'Failure' } },
+  ...AUDIT_OUTCOMES,
 ];
 
 async function load() {
@@ -59,15 +58,13 @@ async function load() {
       event_type: filterEventType.value || undefined,
       date_from: filterDateFrom.value || undefined,
       date_to: filterDateTo.value || undefined,
+      outcome: filterOutcome.value || undefined,
     },
     page.value,
     limit,
   );
   if (result.ok) {
-    // Client-side outcome filter (server does not expose an outcome query param).
-    events.value = filterOutcome.value
-      ? result.data.filter((e) => e.outcome === filterOutcome.value)
-      : result.data;
+    events.value = result.data;
     if (result.meta) total.value = result.meta.total;
   }
   loading.value = false;

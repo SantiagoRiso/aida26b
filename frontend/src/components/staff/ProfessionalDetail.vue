@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRow, listRows, deleteRow } from '@/api/crud';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { useCurrency } from '@/composables/useCurrency';
@@ -9,7 +10,8 @@ import { useLabel } from '@/composables/useLabel';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
-import type { Role } from '@shared/types/types';
+import type { Role, TableRecordMap } from '@shared/types/types';
+import { isOpenAppointmentState } from '@shared/ssot/domain';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -32,16 +34,10 @@ const auth = useAuthStore();
 
 const professionalId = props.professionalId;
 
-interface ProfProfile {
-  id: number;
-  display_name: string;
-  bio: string | null;
-}
-
-const professional = ref<ProfProfile | null>(null);
+const professional = ref<TableRecordMap['professionals'] | null>(null);
 const services = ref<string[]>([]);
 const appointments = ref<Appointment[]>([]);
-const clientNames = ref<Map<string, string>>(new Map());
+const { labelFor: clientLabelFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
 const serviceNames = ref<Map<string, string>>(new Map());
 const loading = ref(true);
 
@@ -58,15 +54,12 @@ const canEditProfile = computed(
 );
 const canDeactivate = computed(() => !!role.value && roleAllowedFor(['Admin'], role.value));
 
-// GenericForm.initial expects a plain record; the typed profile isn't index-signature compatible.
-const profileAsRecord = computed(() => (professional.value ?? undefined) as Record<string, unknown> | undefined);
-
 const now = new Date();
 // The appointments list is server-scoped: Admin/Receptionist see this professional's whole agenda,
 // a Professional viewing their own row sees theirs, and a Professional viewing a colleague sees none.
 const upcoming = computed(() =>
   appointments.value
-    .filter((a) => new Date(a.starts_at) >= now && (a.state === 'scheduled' || a.state === 'requested'))
+    .filter((a) => new Date(a.starts_at) >= now && isOpenAppointmentState(a.state))
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
 );
 // A busy professional can have dozens of upcoming turnos; show the soonest few and summarize the rest.
@@ -74,21 +67,21 @@ const UPCOMING_LIMIT = 8;
 const visibleUpcoming = computed(() => upcoming.value.slice(0, UPCOMING_LIMIT));
 const extraUpcoming = computed(() => Math.max(0, upcoming.value.length - UPCOMING_LIMIT));
 
-const clientName = (id: number) => clientNames.value.get(String(id)) ?? `#${id}`;
+const clientName = (id: number) => clientLabelFor(id) ?? `#${id}`;
 const serviceName = (id: number) => serviceNames.value.get(String(id)) ?? `#${id}`;
 
 async function loadProfile() {
-  const res = await getRow<ProfProfile>('professionals', professionalId);
+  const res = await getRow('professionals', professionalId);
   if (res.ok) professional.value = res.data;
 }
 
 async function loadServices() {
   const [ps, svc] = await Promise.all([
-    listRows<{ service_id: string | number }>('professional_services', {
+    listRows('professional_services', {
       filters: { professional_user_id: String(professionalId) },
       limit: 200,
     }),
-    listRows<{ id: number | string; name: string }>('services', { limit: 500 }),
+    listRows('services', { limit: 500 }),
   ]);
   const svcMap = new Map<string, string>();
   if (svc.ok) for (const s of svc.data) svcMap.set(String(s.id), s.name);
@@ -99,18 +92,19 @@ async function loadServices() {
 }
 
 async function loadAppointments() {
-  const res = await listAppointments({ professional_user_id: professionalId, limit: 200 });
+  // Only upcoming turnos are shown, so bound the fetch from now — otherwise a long past
+  // history could fill the page and push genuine upcoming appointments out of the result.
+  const res = await listAppointments({
+    professional_user_id: professionalId,
+    date_from: new Date().toISOString(),
+    limit: 200,
+  });
   appointments.value = res.ok ? res.data : [];
-}
-
-async function loadClientNames() {
-  const res = await listRows<{ id: number | string; display_name: string }>('clients', { limit: 500 });
-  if (res.ok) clientNames.value = new Map(res.data.map((c) => [String(c.id), c.display_name]));
 }
 
 async function load() {
   loading.value = true;
-  await Promise.all([loadProfile(), loadServices(), loadAppointments(), loadClientNames()]);
+  await Promise.all([loadProfile(), loadServices(), loadAppointments()]);
   loading.value = false;
 }
 
@@ -213,7 +207,7 @@ onMounted(load);
         v-if="professional"
         table-key="professionals"
         mode="edit"
-        :initial="profileAsRecord"
+        :initial="professional ?? undefined"
         @saved="onProfileSaved"
         @cancel="showEditProfile = false"
       />

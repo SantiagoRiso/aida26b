@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
+import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCustomDrag } from '@/composables/useCustomDrag';
@@ -23,7 +23,7 @@ import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import { useCurrency } from '@/composables/useCurrency';
-import { computeValidStarts, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals } from '@/composables/calendarGrid';
+import { computeValidStarts, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals, latticeFromFreeSlots } from '@/composables/calendarGrid';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -100,27 +100,23 @@ async function fetchAppointments() {
 watch(filters, fetchAppointments, { immediate: true, deep: true });
 
 // Untitled events read as the client's name — "Turno #id" says nothing to staff.
-const { options: clientOptions } = useForeignKeyOptions({
+const { labelFor: clientLabelFor } = useForeignKeyOptions({
   table: 'clients', valueField: 'id', labelField: 'display_name',
 });
-const { options: professionalOptions } = useForeignKeyOptions({
+const { labelFor: professionalLabelFor } = useForeignKeyOptions({
   table: 'professionals', valueField: 'id', labelField: 'display_name',
 });
-const { options: serviceOptions } = useForeignKeyOptions({
+const { labelFor: serviceLabelFor } = useForeignKeyOptions({
   table: 'services', valueField: 'id', labelField: 'name',
 });
-function optionLabel(options: { value: string; label: string }[], id: number | null): string | null {
-  if (id == null) return null;
-  return options.find((o) => o.value === String(id))?.label ?? null;
-}
 function clientNameFor(appt: Appointment): string | null {
-  return optionLabel(clientOptions.value, appt.client_user_id);
+  return clientLabelFor(appt.client_user_id);
 }
 function tooltipFor(appt: Appointment): string {
   return [
-    optionLabel(clientOptions.value, appt.client_user_id),
-    optionLabel(professionalOptions.value, appt.professional_user_id),
-    optionLabel(serviceOptions.value, appt.service_id),
+    clientLabelFor(appt.client_user_id),
+    professionalLabelFor(appt.professional_user_id),
+    serviceLabelFor(appt.service_id),
     t(`status.${appt.state}`),
   ].filter(Boolean).join(' · ');
 }
@@ -168,24 +164,9 @@ async function loadSlotsByDay(profId: number, exclude?: number): Promise<Map<str
 
 // A professional's snap lattice from their free slots: real slot starts plus the finest slot
 // length. Null when they have no slots in view.
-function gridFromByDay(byDay: Map<string, { start: string; end: string }[]>): { starts: number[] | null; slotMinutes: number | null } {
-  const startSet = new Set<number>();
-  let minLen = Infinity;
-  for (const slots of byDay.values()) {
-    for (const s of slots) {
-      startSet.add(toMinutes(s.start));
-      minLen = Math.min(minLen, toMinutes(s.end) - toMinutes(s.start));
-    }
-  }
-  return {
-    starts: startSet.size > 0 ? [...startSet].sort((a, b) => a - b) : null,
-    slotMinutes: Number.isFinite(minLen) ? minLen : null,
-  };
-}
-
-function applyGrid(grid: { starts: number[] | null; slotMinutes: number | null }) {
+function applyGrid(grid: { starts: number[] | null; minutes: number | null }) {
   slotStartsMinutes.value = grid.starts;
-  slotMinutes.value = grid.slotMinutes;
+  slotMinutes.value = grid.minutes;
 }
 
 // Free intervals (minutes) per visible day for the selected professional — drives the availability
@@ -197,12 +178,12 @@ const professionalFreeByDay = ref<Map<string, { start: number; end: number }[]>>
 async function refreshSnapGrid() {
   const profId = filters.value.professional_user_id;
   if (profId == null) {
-    applyGrid({ starts: null, slotMinutes: null });
+    applyGrid({ starts: null, minutes: null });
     professionalFreeByDay.value = new Map();
     return;
   }
   const byDay = await loadSlotsByDay(profId);
-  applyGrid(gridFromByDay(byDay));
+  applyGrid(latticeFromFreeSlots([...byDay.values()].flat()));
   const map = new Map<string, { start: number; end: number }[]>();
   for (const [date, slots] of byDay) {
     map.set(date, slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })));
@@ -229,8 +210,10 @@ async function loadResourceAvailability() {
 }
 
 // Per-day availability for the visible month grid, only when a single professional is in view.
-// Drives the "no availability" graying and gates click-to-book on empty days.
-const monthAvailability = ref<Map<string, boolean>>(new Map());
+// Drives the "no availability" graying and gates click-to-book on empty days. 'closed' (doesn't
+// work that day) and 'full' (works, no free slots) are told apart so the block message is honest.
+type DayAvailability = 'free' | 'full' | 'closed';
+const monthAvailability = ref<Map<string, DayAvailability>>(new Map());
 
 async function loadMonthAvailability() {
   const profId = filters.value.professional_user_id;
@@ -247,10 +230,10 @@ async function loadMonthAvailability() {
     d = new Date(d.getTime() + 86400000);
   }
   const results = await Promise.all(dates.map((date) => getAvailability(`prof:${profId}`, date)));
-  const map = new Map<string, boolean>();
+  const map = new Map<string, DayAvailability>();
   dates.forEach((date, i) => {
     const r = results[i];
-    if (r.ok) map.set(date, r.data.slots.length > 0);
+    if (r.ok) map.set(date, r.data.slots.length > 0 ? 'free' : r.data.open ? 'full' : 'closed');
   });
   monthAvailability.value = map;
 }
@@ -520,7 +503,7 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
   const monthAvail = monthAvailability.value;
   // Sobreturno mode makes full days bookable, so they must not read as disabled/greyed either.
   const fine = fineDrag.value;
-  const baseViews = (calendarOptions.value.views ?? {}) as Record<string, Record<string, unknown>>;
+  const baseViews: NonNullable<CalendarOptions['views']> = calendarOptions.value.views ?? {};
   return {
     ...calendarOptions.value,
     // Appointment events, resource availability shading, the open-slot highlights, and the drag target.
@@ -537,10 +520,12 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
       ...baseViews,
       dayGridMonth: {
         ...(baseViews.dayGridMonth ?? {}),
-        // Dim days the selected professional has no free slots on (loaded → explicitly false),
+        // Dim days the selected professional has no free slots on (closed or fully booked),
         // except in sobreturno mode where those days stay bookable.
-        dayCellClassNames: (arg: { date: Date }) =>
-          !fine && monthAvail.get(dayISO(arg.date, 0)) === false ? ['fc-day-unavailable'] : [],
+        dayCellClassNames: (arg: { date: Date }) => {
+          const s = monthAvail.get(dayISO(arg.date, 0));
+          return !fine && (s === 'full' || s === 'closed') ? ['fc-day-unavailable'] : [];
+        },
       },
     },
     datesSet: (info: { startStr: string; endStr: string; view: { type: string } }) => {
@@ -567,9 +552,11 @@ function handleSelect(arg: DateSelectArg) {
     return;
   }
   // Month view: block days the professional has no availability on (matches the graying) —
-  // unless sobreturno is on, which deliberately books outside published availability.
-  if (!fineDrag.value && currentViewType.value === 'dayGridMonth' && monthAvailability.value.get(day) === false) {
-    toast.info('noSlotsThatDay');
+  // unless sobreturno is on, which deliberately books outside published availability. A fully
+  // booked day and a not-worked day get different messages.
+  const dayStatus = monthAvailability.value.get(day);
+  if (!fineDrag.value && currentViewType.value === 'dayGridMonth' && (dayStatus === 'full' || dayStatus === 'closed')) {
+    toast.info(dayStatus === 'full' ? 'dayFullyBooked' : 'noSlotsThatDay');
     return;
   }
   formPrefillDate.value = day;

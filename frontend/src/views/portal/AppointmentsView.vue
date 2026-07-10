@@ -5,11 +5,14 @@ import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { listRows } from '@/api/crud';
+import { getMySettings } from '@/api/business';
+import { canCancelAppointment, DEFAULT_CANCELLATION_CUTOFF_HOURS, isOpenAppointmentState } from '@shared/ssot/domain';
+import type { TableRecordMap } from '@shared/types/types';
 import type { EventClickArg } from '@fullcalendar/core';
 import { PlusIcon } from '@heroicons/vue/24/outline';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
-import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
 import RequestFlow from '@/components/portal/RequestFlow.vue';
@@ -50,12 +53,23 @@ async function onRequestSuccess() {
 }
 
 // For a client, the professional's name is the informative default — their own name
-// (or "Turno #id") says nothing.
-const { options: professionalOptions } = useForeignKeyOptions({
-  table: 'professionals', valueField: 'id', labelField: 'display_name',
+// (or "Turno #id") says nothing. Full rows, not just labels: the detail panel
+// also shows the service name and the professional's bio.
+const professionals = ref<TableRecordMap['professionals'][]>([]);
+const services = ref<TableRecordMap['services'][]>([]);
+onMounted(async () => {
+  const [profRes, svcRes] = await Promise.all([listRows('professionals'), listRows('services')]);
+  if (profRes.ok) professionals.value = profRes.data;
+  if (svcRes.ok) services.value = svcRes.data;
 });
+function professionalFor(appt: Appointment): TableRecordMap['professionals'] | null {
+  return professionals.value.find((p) => String(p.id) === String(appt.professional_user_id)) ?? null;
+}
 function professionalNameFor(appt: Appointment): string | null {
-  return professionalOptions.value.find((o) => o.value === String(appt.professional_user_id))?.label ?? null;
+  return professionalFor(appt)?.display_name ?? null;
+}
+function serviceNameFor(appt: Appointment): string | null {
+  return services.value.find((s) => String(s.id) === String(appt.service_id))?.name ?? null;
 }
 
 // Clicking a calendar event opens a read-only detail (clients can't edit/drag/resize).
@@ -83,28 +97,23 @@ const { calendarOptions } = useAppointmentCalendar(
   },
 );
 
-// Cancel is blocked within cutoff hours of the start. The backend 422 is the real gate;
-// the UI disables as a UX layer only. No client settings endpoint, so fall back to 24h.
-const CUTOFF_HOURS_FALLBACK = 24;
+// Cancel is blocked within the business's cutoff of the start. The backend 422 is the real gate;
+// the UI disables as a UX layer only, reading the same rule (canCancelAppointment) and the real
+// per-business cutoff so the button state can't disagree with what the server will accept.
+const cutoffHours = ref(DEFAULT_CANCELLATION_CUTOFF_HOURS);
+onMounted(async () => {
+  const res = await getMySettings();
+  if (res.ok) cutoffHours.value = res.data.cancellation_cutoff_hours;
+});
 
 function isCancelable(appt: Appointment): boolean {
-  if (appt.state === 'requested') return true; // withdraw anytime
-  if (appt.state !== 'scheduled') return false;
-  const startsAt = new Date(appt.starts_at);
-  const hoursUntil = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
-  return hoursUntil > CUTOFF_HOURS_FALLBACK;
+  return canCancelAppointment(appt.state, appt.starts_at, cutoffHours.value, Date.now());
 }
 
 function cancelBlockedReason(appt: Appointment): string | null {
-  if (appt.state === 'requested') return null;
-  if (appt.state !== 'scheduled') return null;
-  const startsAt = new Date(appt.starts_at);
-  const hoursUntil = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
-  if (hoursUntil <= CUTOFF_HOURS_FALLBACK) {
-    // Visible explanation, not just a tooltip.
-    return `Ya pasó el plazo para cancelar este turno (${CUTOFF_HOURS_FALLBACK}h antes del inicio).`;
-  }
-  return null;
+  if (appt.state !== 'scheduled' || isCancelable(appt)) return null;
+  // Visible explanation, not just a tooltip.
+  return t('portal.cancelCutoffWarning', { hours: cutoffHours.value });
 }
 
 const cancelTarget = ref<Appointment | null>(null);
@@ -128,12 +137,7 @@ async function confirmCancel() {
   if (res.ok) {
     await load();
   } else {
-    const msg =
-      res.code === 'outside_cutoff'
-        ? 'No se puede cancelar: el turno ya está dentro del plazo de cancelación.'
-        : t('toast.genericError');
-    ui.toast('error', 'genericError');
-    console.warn('Cancel failed:', msg);
+    ui.toast('error', res.code === 'outside_cutoff' ? 'cancelOutsideCutoff' : 'genericError');
   }
 }
 
@@ -171,8 +175,8 @@ const past = computed(() =>
     />
 
     <template v-else>
-      <section v-if="upcoming.length > 0" aria-label="Próximos turnos">
-        <h2 class="mb-3 text-lg font-semibold">Próximos turnos</h2>
+      <section v-if="upcoming.length > 0" :aria-label="t('portal.upcomingHeading')">
+        <h2 class="mb-3 text-lg font-semibold">{{ t('portal.upcomingHeading') }}</h2>
         <ul class="space-y-3">
           <li
             v-for="appt in upcoming"
@@ -184,17 +188,17 @@ const past = computed(() =>
                 <div class="flex items-center gap-2 flex-wrap">
                   <StatusBadge :state="appt.state" />
                   <span class="text-sm font-semibold">
-                    {{ appt.state === 'requested' ? 'Pendiente de aprobación' : formatDateTime(appt.starts_at) }}
+                    {{ appt.state === 'requested' ? t('portal.pendingApproval') : formatDateTime(appt.starts_at) }}
                   </span>
                 </div>
                 <p v-if="appt.state !== 'requested'" class="text-xs text-neutral">
                   {{ formatDateTime(appt.starts_at) }} · {{ appt.duration_minutes }}min
                 </p>
                 <p class="text-sm">
-                  {{ professionalNameFor(appt) ?? `Turno #${appt.id}` }}
+                  {{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}
                   <span v-if="appt.name"> · {{ appt.name }}</span>
                 </p>
-                <p class="text-xs text-neutral">Precio: {{ formatARS(appt.price) }}</p>
+                <p class="text-xs text-neutral">{{ t('portal.price') }}: {{ formatARS(appt.price) }}</p>
 
                 <p
                   v-if="cancelBlockedReason(appt)"
@@ -206,14 +210,14 @@ const past = computed(() =>
               </div>
 
               <!-- Cancel only; clients get no reschedule affordance. -->
-              <div v-if="['requested', 'scheduled'].includes(appt.state)" class="flex-shrink-0">
+              <div v-if="isOpenAppointmentState(appt.state)" class="flex-shrink-0">
                 <button
                   v-if="isCancelable(appt)"
                   type="button"
                   class="min-h-[36px] rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
                   @click="requestCancel(appt)"
                 >
-                  {{ appt.state === 'requested' ? 'Retirar solicitud' : 'Cancelar' }}
+                  {{ appt.state === 'requested' ? t('portal.withdrawRequest') : t('actions.cancel') }}
                 </button>
                 <!-- Visible disabled state, not tooltip-only. -->
                 <button
@@ -223,7 +227,7 @@ const past = computed(() =>
                   disabled
                   aria-disabled="true"
                 >
-                  Cancelar
+                  {{ t('actions.cancel') }}
                 </button>
               </div>
             </div>
@@ -231,13 +235,13 @@ const past = computed(() =>
         </ul>
       </section>
 
-      <section aria-label="Calendario de mis turnos">
-        <h2 class="mb-3 text-lg font-semibold">Calendario</h2>
+      <section :aria-label="t('portal.myCalendarLabel')">
+        <h2 class="mb-3 text-lg font-semibold">{{ t('nav.calendar') }}</h2>
         <CalendarView :options="calendarOptions" />
       </section>
 
-      <section v-if="past.length > 0" aria-label="Historial de turnos">
-        <h2 class="mb-3 text-lg font-semibold">Historial</h2>
+      <section v-if="past.length > 0" :aria-label="t('portal.historyLabel')">
+        <h2 class="mb-3 text-lg font-semibold">{{ t('portal.history') }}</h2>
         <ul class="space-y-2">
           <li
             v-for="appt in past"
@@ -247,7 +251,7 @@ const past = computed(() =>
             <div class="flex items-center gap-3 flex-wrap">
               <StatusBadge :state="appt.state" />
               <span class="text-sm">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? `Turno #${appt.id}` }}</span>
+              <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}</span>
               <span class="text-sm text-neutral">{{ formatARS(appt.price) }}</span>
             </div>
           </li>
@@ -268,7 +272,7 @@ const past = computed(() =>
 
   <DetailPanel
     :open="detailOpen"
-    title="Detalle del turno"
+    :title="t('portal.appointmentDetail')"
     variant="side"
     @close="detailOpen = false"
     @after-leave="selectedAppt = null"
@@ -276,48 +280,56 @@ const past = computed(() =>
     <div v-if="selectedAppt" class="space-y-3 text-sm">
       <StatusBadge :state="selectedAppt.state" />
       <div>
-        <p class="text-xs text-neutral">Profesional</p>
-        <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? `Turno #${selectedAppt.id}` }}</p>
+        <p class="text-xs text-neutral">{{ t('portal.professional') }}</p>
+        <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? t('portal.appointmentFallback', { id: selectedAppt.id }) }}</p>
+      </div>
+      <div v-if="serviceNameFor(selectedAppt)">
+        <p class="text-xs text-neutral">{{ t('portal.service') }}</p>
+        <p class="font-semibold">{{ serviceNameFor(selectedAppt) }}</p>
       </div>
       <div v-if="selectedAppt.state !== 'requested'">
-        <p class="text-xs text-neutral">Fecha y hora</p>
+        <p class="text-xs text-neutral">{{ t('portal.dateTime') }}</p>
         <p class="font-semibold">{{ formatDateTime(selectedAppt.starts_at) }} · {{ selectedAppt.duration_minutes }}min</p>
       </div>
       <div v-else>
-        <p class="text-xs text-neutral">Estado</p>
-        <p class="font-semibold">Pendiente de aprobación</p>
+        <p class="text-xs text-neutral">{{ t('portal.state') }}</p>
+        <p class="font-semibold">{{ t('portal.pendingApproval') }}</p>
       </div>
       <div v-if="selectedAppt.name">
-        <p class="text-xs text-neutral">Detalle</p>
+        <p class="text-xs text-neutral">{{ t('portal.detail') }}</p>
         <p>{{ selectedAppt.name }}</p>
       </div>
       <div>
-        <p class="text-xs text-neutral">Precio</p>
+        <p class="text-xs text-neutral">{{ t('portal.price') }}</p>
         <p class="font-semibold">{{ formatARS(selectedAppt.price) }}</p>
+      </div>
+      <div v-if="professionalFor(selectedAppt)?.bio">
+        <p class="text-xs text-neutral">{{ t('portal.professionalBio') }}</p>
+        <p>{{ professionalFor(selectedAppt)?.bio }}</p>
       </div>
       <p v-if="cancelBlockedReason(selectedAppt)" class="text-xs text-destructive" role="alert">
         {{ cancelBlockedReason(selectedAppt) }}
       </p>
       <button
-        v-if="['requested', 'scheduled'].includes(selectedAppt.state) && isCancelable(selectedAppt)"
+        v-if="isOpenAppointmentState(selectedAppt.state) && isCancelable(selectedAppt)"
         type="button"
         class="min-h-[36px] w-full rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
         @click="() => { const a = selectedAppt!; detailOpen = false; requestCancel(a); }"
       >
-        {{ selectedAppt.state === 'requested' ? 'Retirar solicitud' : 'Cancelar turno' }}
+        {{ selectedAppt.state === 'requested' ? t('portal.withdrawRequest') : t('portal.cancelAppointment') }}
       </button>
     </div>
   </DetailPanel>
 
   <ConfirmDialog
     :open="cancelTarget !== null"
-    title="Cancelar turno"
+    :title="t('portal.cancelAppointment')"
     :body="
       cancelTarget?.state === 'requested'
-        ? '¿Retirás tu solicitud de turno? Esta acción no se puede deshacer.'
-        : '¿Cancelás este turno? Esta acción no se puede deshacer.'
+        ? t('portal.withdrawConfirmBody')
+        : t('portal.cancelConfirmBody')
     "
-    :confirm-label="cancelTarget?.state === 'requested' ? 'Retirar solicitud' : 'Cancelar turno'"
+    :confirm-label="cancelTarget?.state === 'requested' ? t('portal.withdrawRequest') : t('portal.cancelAppointment')"
     :destructive="true"
     @confirm="confirmCancel"
     @cancel="dismissCancel"
