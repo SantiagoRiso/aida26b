@@ -1,4 +1,5 @@
 import { structure } from "../ssot/structure";
+import type { Role } from "./roles";
 
 type Response = {
   success: boolean;
@@ -7,8 +8,6 @@ type Response = {
   code?: string;
 }
 
-// Canonical role union. Shared here so SSOT domain files need not import from backend.
-type Role = 'Admin' | 'Professional' | 'Receptionist' | 'Client';
 
 type RoleRequired = {
   create?: Role[];

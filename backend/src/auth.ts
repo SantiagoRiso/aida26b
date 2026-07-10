@@ -17,14 +17,7 @@ export type AuthUser = {
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
 
-export function isRole(value: string): value is Role {
-  return (
-    value === 'Admin' ||
-    value === 'Professional' ||
-    value === 'Receptionist' ||
-    value === 'Client'
-  );
-}
+export { isRole } from '../../shared/src/types/roles';
 
 export async function hashPassword(password: string, salt = crypto.randomBytes(16).toString('hex')) {
   const key = (await scrypt(password, salt, 64)) as Buffer;

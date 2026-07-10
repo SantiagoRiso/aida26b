@@ -81,11 +81,6 @@ function getReferencedRelations(tableName: TableKey): TableKey[]{
   return (Array.isArray(refs) ? refs : []) as TableKey[];
 }
 
-function getRequiredFields(tableName: TableKey){
-  const tableColumns: Record<string, ColumnDef> = structure.tables[tableName].columns;
-  return Object.entries(tableColumns).filter(([fieldName, column]) => column.required);
-}
-
 // Returns columns that carry a referencesUserRole descriptor (i.e. the referenced auth.users
 // row must have a specific role). Used by the generic write path instead of the removed
 // composite-FK role constraint.
@@ -96,4 +91,4 @@ function getRoleCheckedColumns(tableName: TableKey): Array<{ column: string; rol
     .map(([column, def]) => ({ column, role: def.referencesUserRole! }));
 }
 
-export { guardRoute, guardMiddleware, getEntityName, getNotDerivableFields, getRequiredFields, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, getRoleCheckedColumns };
+export { guardRoute, guardMiddleware, getEntityName, getNotDerivableFields, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, getRoleCheckedColumns };

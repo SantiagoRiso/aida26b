@@ -1,4 +1,5 @@
-import type { SoftDeletePolicy, SchedulableCapability, TableStructure } from '../../types/types';
+import type { SoftDeletePolicy, SchedulableCapability, TableStructure, LocalizedText } from '../../types/types';
+import { ROLES, type Role } from '../../types/roles';
 import { pkColumn, businessIdColumn } from './business';
 
 const softDelete: SoftDeletePolicy = {
@@ -6,14 +7,16 @@ const softDelete: SoftDeletePolicy = {
   deletedByColumn: 'deleted_by_user_id',
 };
 
-// The canonical set of user roles, consumed by the users.role column below and by any UI that
-// offers a role choice — so a new/renamed role is a single edit here.
-export const ROLE_OPTIONS = [
-  { value: 'Admin', label: { es: 'Admin', en: 'Admin' } },
-  { value: 'Professional', label: { es: 'Profesional', en: 'Professional' } },
-  { value: 'Receptionist', label: { es: 'Recepcionista', en: 'Receptionist' } },
-  { value: 'Client', label: { es: 'Cliente', en: 'Client' } },
-] as const;
+// Role choices for the users.role column and any UI role picker. The set comes from the single
+// ROLES source; Record<Role,…> forces a label for every role, so adding one is an edit in
+// roles.ts plus its label here (nowhere else).
+const ROLE_LABELS: Record<Role, LocalizedText> = {
+  Admin: { es: 'Admin', en: 'Admin' },
+  Professional: { es: 'Profesional', en: 'Professional' },
+  Receptionist: { es: 'Recepcionista', en: 'Receptionist' },
+  Client: { es: 'Cliente', en: 'Client' },
+};
+export const ROLE_OPTIONS = ROLES.map((value) => ({ value, label: ROLE_LABELS[value] }));
 
 const professionalSchedulable: SchedulableCapability = {
   calendarLabel: { es: 'Profesional', en: 'Professional' },
