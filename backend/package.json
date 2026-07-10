@@ -1,7 +1,7 @@
 {
-  "name": "faculty-management-backend",
+  "name": "professional-agenda-backend",
   "version": "1.0.0",
-  "description": "Backend for Faculty Student Management System",
+  "description": "Backend for the professional agenda and appointment scheduling system",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
