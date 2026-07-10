@@ -24,6 +24,15 @@ export const businessIdColumn = {
   foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
 } satisfies ColumnDef;
 
+export const AUDIT_OUTCOMES = [
+  { value: 'success', label: { es: 'Éxito', en: 'Success' } },
+  { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
+  { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
+] as const;
+
+// The SSOT set for validating an audit outcome filter value.
+export const AUDIT_OUTCOME_VALUES = new Set<string>(AUDIT_OUTCOMES.map((o) => o.value));
+
 export const businessTables = {
   // Admin-only configuration; never exposed through generic CRUD.
   businesses: {
@@ -99,11 +108,7 @@ export const businessTables = {
         validator: { required: true },
         filterable: true,
         sortable: true,
-        options: [
-          { value: 'success', label: { es: 'Éxito', en: 'Success' } },
-          { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
-          { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
-        ],
+        options: AUDIT_OUTCOMES.map((o) => ({ ...o })),
       },
     },
     pk: 'id',
@@ -113,11 +118,7 @@ export const businessTables = {
     protected: true,
     status: {
       column: 'outcome',
-      values: [
-        { value: 'success', label: { es: 'Éxito', en: 'Success' } },
-        { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
-        { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
-      ],
+      values: AUDIT_OUTCOMES.map((o) => ({ ...o })),
     },
   } satisfies TableStructure,
 };

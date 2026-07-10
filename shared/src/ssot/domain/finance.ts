@@ -85,12 +85,9 @@ export const financeTables = {
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'client_user_id', parentPk: 'id' }],
     },
-    roleRequired: {
-      create: ['Admin', 'Receptionist'],
-      read:   ['Admin', 'Receptionist', 'Client'],
-      update: [],
-      delete: [],
-    },
-    ownership: { ownerColumn: 'client_user_id', role: 'Client' },
+    // No roleRequired/ownership: ledger authorization is bespoke (assertLedgerWriteAllowed /
+    // assertLedgerReadAllowed in appointment-authz.ts), not generic-CRUD-driven — a Professional
+    // may bill their own clients, which the declarative role list cannot express. Declaring
+    // inert metadata here would misstate who the backend actually permits.
   } satisfies TableStructure,
 };

@@ -15,6 +15,15 @@ const softDelete: SoftDeletePolicy = {
   deletedByColumn: 'deleted_by_user_id',
 };
 
+// The canonical set of user roles, consumed by the users.role column below and by any UI that
+// offers a role choice — so a new/renamed role is a single edit here.
+export const ROLE_OPTIONS = [
+  { value: 'Admin', label: { es: 'Admin', en: 'Admin' } },
+  { value: 'Professional', label: { es: 'Profesional', en: 'Professional' } },
+  { value: 'Receptionist', label: { es: 'Recepcionista', en: 'Receptionist' } },
+  { value: 'Client', label: { es: 'Cliente', en: 'Client' } },
+] as const;
+
 const professionalSchedulable: SchedulableCapability = {
   calendarLabel: { es: 'Profesional', en: 'Professional' },
   identityField: 'id',
@@ -76,12 +85,7 @@ export const peopleTables = {
         validator: { required: true },
         filterable: true,
         sortable: true,
-        options: [
-          { value: 'Admin', label: { es: 'Admin', en: 'Admin' } },
-          { value: 'Professional', label: { es: 'Profesional', en: 'Professional' } },
-          { value: 'Receptionist', label: { es: 'Recepcionista', en: 'Receptionist' } },
-          { value: 'Client', label: { es: 'Cliente', en: 'Client' } },
-        ],
+        options: ROLE_OPTIONS.map((o) => ({ ...o })),
       },
       is_active: {
         type: 'boolean',
@@ -264,6 +268,8 @@ export const peopleTables = {
     // profile). Reads stay unscoped for every allowed role — Clients need the full
     // professional list to book, Admin/Receptionist need it to manage the calendar.
     ownership: { ownerColumn: 'id', role: 'Professional', ops: ['update', 'delete'] },
+    // A receptionist's world is the calendars they were granted; reads and writes alike.
+    grantScope: { role: 'Receptionist', grantTable: 'calendar_grants', grantRowColumn: 'professional_user_id', granteeColumn: 'grantee_user_id' },
   } satisfies TableStructure,
 
   resources: {

@@ -26,6 +26,36 @@ export function assertValidTransition(
   return { ok: true };
 }
 
+// Still-actionable states: a pending or upcoming turno (not yet resolved). The one source for the
+// "open" set — read as a function in app logic and as a SQL list in availability/conflict queries.
+export const OPEN_APPOINTMENT_STATES = ['requested', 'scheduled'] as const;
+
+export function isOpenAppointmentState(state: string): boolean {
+  return (OPEN_APPOINTMENT_STATES as readonly string[]).includes(state);
+}
+
+// States that void a turno — never real service history. Excluded from the calendar and from
+// relationship / billing-eligibility checks. The one source both sides read that pair from.
+export const VOID_APPOINTMENT_STATES = ['canceled', 'rejected'] as const;
+
+// Business default cancellation window when a business has none set.
+export const DEFAULT_CANCELLATION_CUTOFF_HOURS = 24;
+
+// Whether a client may cancel: a requested turno can be withdrawn anytime; a scheduled one only
+// until `cutoffHours` before it starts; any other state, never. The authoritative gate (backend
+// transition guard) and the portal's button state read this one rule so they cannot disagree.
+export function canCancelAppointment(
+  state: string,
+  startsAtIso: string,
+  cutoffHours: number,
+  nowMs: number,
+): boolean {
+  if (state === 'requested') return true;
+  if (state !== 'scheduled') return false;
+  const hoursUntil = (new Date(startsAtIso).getTime() - nowMs) / 3_600_000;
+  return hoursUntil > cutoffHours;
+}
+
 const APPOINTMENT_STATES = [
   { value: 'requested', label: { es: 'Solicitado', en: 'Requested' } },
   { value: 'scheduled', label: { es: 'Agendado', en: 'Scheduled' } },
@@ -413,15 +443,17 @@ function subtractIntervals(base: MinuteInterval[], blocks: MinuteInterval[]): Mi
   return current;
 }
 
+// Declares the intended class; the checks below are still the real gate because HTTP callers
+// hand us an unverified request-body value.
 export function validateWeeklySchedule(
-  value: unknown,
+  value: WeeklySchedule,
 ): { ok: true; value: WeeklySchedule } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return { ok: false, errors: ['weekly schedule must be an object keyed by weekday'] };
   }
   const out: WeeklySchedule = {};
-  for (const [day, raw] of Object.entries(value as Record<string, unknown>)) {
+  for (const [day, raw] of Object.entries(value)) {
     if (!(WEEKDAYS as readonly string[]).includes(day)) {
       errors.push(`'${day}' is not a valid weekday`);
       continue;
@@ -432,8 +464,8 @@ export function validateWeeklySchedule(
     }
     const minutes: MinuteInterval[] = [];
     for (const iv of raw) {
-      const start = (iv as TimeInterval)?.start;
-      const end = (iv as TimeInterval)?.end;
+      const start = iv?.start;
+      const end = iv?.end;
       if (typeof start !== 'string' || !TIME_RE.test(start) || typeof end !== 'string' || !TIME_RE.test(end)) {
         errors.push(`${day} has an interval with an invalid HH:MM time`);
         continue;
@@ -442,7 +474,7 @@ export function validateWeeklySchedule(
         errors.push(`${day} interval ${start}-${end} must have end after start`);
         continue;
       }
-      const gran = (iv as TimeInterval)?.granularity_minutes;
+      const gran = iv?.granularity_minutes;
       if (gran === undefined || gran === null) {
         errors.push(`${day} interval ${start}-${end} is missing granularity_minutes`);
       } else if (typeof gran !== 'number' || !Number.isInteger(gran) || gran <= 0) {
@@ -463,14 +495,11 @@ export function validateWeeklySchedule(
     }
     // Persist a normalized projection (start/end/granularity only), never the raw input — so
     // unexpected extra keys on an interval object are not written through to the JSONB column.
-    out[day as Weekday] = (raw as unknown[]).map((iv) => {
-      const t = iv as Partial<TimeInterval> | null;
-      return {
-        start: t?.start as string,
-        end: t?.end as string,
-        granularity_minutes: t?.granularity_minutes,
-      };
-    });
+    out[day as Weekday] = raw.map((iv) => ({
+      start: iv?.start,
+      end: iv?.end,
+      granularity_minutes: iv?.granularity_minutes,
+    }));
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }
