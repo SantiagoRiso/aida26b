@@ -1,5 +1,6 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
+import type { ColumnValue } from '@shared/types/types';
 
 export interface AuditEvent {
   id: number;
@@ -9,7 +10,8 @@ export interface AuditEvent {
   entity_id: number | null;
   outcome: string;
   ip: string | null;
-  details: Record<string, unknown> | null;
+  // Mirrors the backend audit row's details JSONB (column-value payloads).
+  details: Record<string, ColumnValue> | null;
   created_at: string;
 }
 
@@ -33,8 +35,7 @@ export function listAudit(
   if (filters.event_type) params.set('event_type', filters.event_type);
   if (filters.date_from) params.set('date_from', filters.date_from);
   if (filters.date_to) params.set('date_to', filters.date_to);
-  // outcome is a client-side filter only (the /api/audit endpoint does not support it);
-  // the view filters the returned rows. This keeps the API contract faithful to the backend.
+  if (filters.outcome) params.set('outcome', filters.outcome);
   if (page > 1) params.set('page', String(page));
   params.set('limit', String(limit));
   const qs = params.toString();

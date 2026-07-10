@@ -12,6 +12,11 @@ export function getSettings(
   return apiFetch<BusinessSettings>(`/businesses/${businessId}/settings`);
 }
 
+// Session-scoped read for any authenticated user (the portal needs the cancellation cutoff).
+export function getMySettings(): Promise<ApiResult<BusinessSettings>> {
+  return apiFetch<BusinessSettings>('/business/settings');
+}
+
 export function updateSettings(
   businessId: string | number,
   body: { cancellation_cutoff_hours: number },

@@ -21,6 +21,7 @@ import type {
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import { snapConfig } from '@/composables/calendarGrid';
+import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 
 // 8-hue palette for multi-professional color coding (per-professional, not per-state).
 // Colors assigned deterministically by professional id so they are stable across sessions.
@@ -51,6 +52,15 @@ export function scopeProfessionalOptions<T extends { id: number | string }>(
     return options.filter((o) => String(o.id) === String(viewer.id));
   }
   return options;
+}
+
+// Canceled bookings and rejected requests no longer occupy time, so they never render as
+// calendar events (they stay reachable through the lists). Completed and no_show remain
+// visible: they happened, and matter for history and billing.
+const HIDDEN_CALENDAR_STATES = new Set<string>(VOID_APPOINTMENT_STATES);
+
+export function calendarVisibleAppointments(appointments: Appointment[]): Appointment[] {
+  return appointments.filter((a) => !HIDDEN_CALENDAR_STATES.has(a.state));
 }
 
 export interface CalendarHandlers {
@@ -118,6 +128,8 @@ export function useAppointmentCalendar(
   // Only authenticated non-Client viewers may drag/resize — null viewer is read-only.
   const editable = computed(() => !!viewer.value && viewer.value.role !== 'Client');
 
+  const visibleAppointments = computed(() => calendarVisibleAppointments(appointments.value));
+
   // Follow the app language: es uses the imported locale bundle; en is FullCalendar's built-in default.
   // Read the shared i18n instance's locale ref (the ui store's single source of truth) rather than
   // useI18n() so the composable works outside a component setup context too.
@@ -139,10 +151,11 @@ export function useAppointmentCalendar(
 
   // Trim the grid to working hours instead of rendering a mostly-empty 24h column,
   // widening it if any loaded appointment (e.g. a sobreturno) falls outside.
+  // Only rendered appointments count — a hidden canceled sobreturno must not stretch the grid.
   const timeBounds = computed(() => {
     let minHour = 7;
     let maxHour = 21;
-    for (const appt of appointments.value) {
+    for (const appt of visibleAppointments.value) {
       const start = new Date(appt.starts_at);
       const end = new Date(appt.ends_at);
       if (start.getHours() < minHour) minHour = start.getHours();
@@ -210,7 +223,7 @@ export function useAppointmentCalendar(
     eventStartEditable: false,
     eventDurationEditable: false,
 
-    events: appointments.value.map((a) => apptToEvent(a, decorators)),
+    events: visibleAppointments.value.map((a) => apptToEvent(a, decorators)),
 
     select: handlers.onSelect,
     eventClick: handlers.onEventClick,

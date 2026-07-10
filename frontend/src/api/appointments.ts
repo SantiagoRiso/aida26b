@@ -25,6 +25,8 @@ export interface AppointmentListFilters {
   date_to?: string;
   professional_user_id?: number;
   resource_id?: number;
+  // Staff-only: narrow to one client's turnos. Ignored for the Client role (already self-scoped).
+  client_user_id?: number;
   state?: string;
   page?: number;
   limit?: number;
@@ -50,11 +52,20 @@ export async function listAppointments(
   if (filters.date_to) params.set('date_to', filters.date_to);
   if (filters.professional_user_id) params.set('professional_user_id', String(filters.professional_user_id));
   if (filters.resource_id) params.set('resource_id', String(filters.resource_id));
+  if (filters.client_user_id) params.set('client_user_id', String(filters.client_user_id));
   if (filters.state) params.set('state', filters.state);
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
   return apiFetch<Appointment[]>(`/appointments${qs ? `?${qs}` : ''}`);
+}
+
+// Distinct client ids the caller has any appointment with, in their role scope. Backs the
+// "clients with a prior relationship" filter without shipping the whole appointment history.
+export async function listRelatedClientIds(): Promise<ApiResult<number[]>> {
+  const result = await apiFetch<{ client_user_ids: number[] }>('/appointments/related-clients');
+  if (!result.ok) return result;
+  return { ok: true, data: result.data.client_user_ids, meta: result.meta };
 }
 
 export async function getAppointment(id: number): Promise<ApiResult<Appointment>> {

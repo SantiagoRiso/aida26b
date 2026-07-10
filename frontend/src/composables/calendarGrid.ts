@@ -81,6 +81,23 @@ export function computeValidStarts(
     });
 }
 
+// Slot-start lattice + finest slot length from a day's free slots — the grid the calendar snaps
+// to and the read-only day view aligns its rows on. Empty slots → nulls (no lattice).
+export function latticeFromFreeSlots(
+  slots: { start: string; end: string }[],
+): { starts: number[] | null; minutes: number | null } {
+  const set = new Set<number>();
+  let minLen = Infinity;
+  for (const s of slots) {
+    set.add(toMinutes(s.start));
+    minLen = Math.min(minLen, toMinutes(s.end) - toMinutes(s.start));
+  }
+  return {
+    starts: set.size > 0 ? [...set].sort((a, b) => a - b) : null,
+    minutes: Number.isFinite(minLen) ? minLen : null,
+  };
+}
+
 function minutesToHms(min: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const clamped = Math.max(0, Math.min(min, 24 * 60));
