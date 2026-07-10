@@ -1,7 +1,10 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { resolveBooking } from '../../../shared/src/ssot/domain';
+import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
 import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
 import { resourceExistsInBusiness, clientExistsInBusiness } from '../db/appointments';
+import { withTransaction } from '../db/core';
+import { recheckConflictsInTx } from './scheduling';
 import { DATE_RE, HHMM_RE, crossesMidnight, buildStartsAt } from '../time';
 
 // Booking input as the endpoints expect it; every field is still format-checked at runtime.
@@ -16,6 +19,42 @@ export type BookingBody = {
   name?: string | null;
   description?: string | null;
 };
+
+export type RecheckInput = {
+  businessId: number;
+  professionalUserId: number;
+  resourceId?: number;
+  date: string;
+  start: string;
+  durationMinutes: number;
+  excludeAppointmentId?: number;
+};
+
+export type SaveResult<T> =
+  | { kind: 'verdict'; verdict: ConflictVerdict }
+  | { kind: 'ok'; result: T };
+
+// The sobreturno-aware save shared by schedule/approve/reschedule. In one transaction: take the
+// per-owner advisory lock + recheck; if the recheck needs an override the caller didn't grant,
+// return the verdict and write nothing; otherwise run the caller's write with `forced` set only
+// when an override actually bypassed a real conflict. All callers here are staff. The write may
+// throw httpError to abort (rolls back); guardRoute maps both that and recheck's structured errors.
+export async function saveWithConflictRecheck<T>(
+  pool: Pool,
+  recheck: RecheckInput,
+  override: boolean,
+  write: (tx: PoolClient, forced: boolean) => Promise<T>,
+): Promise<SaveResult<T>> {
+  return withTransaction(pool, async (tx) => {
+    const verdict = await recheckConflictsInTx(tx, { ...recheck, callerIsStaff: true });
+    if (verdict.requires_override && !override) {
+      return { kind: 'verdict', verdict };
+    }
+    const forced = override && verdict.requires_override;
+    const result = await write(tx, forced);
+    return { kind: 'ok', result };
+  });
+}
 
 // Validates and resolves a booking request into the concrete values a write needs: format-checks
 // the body, business-scopes the service/resource/client (404 to hide cross-tenant existence), and

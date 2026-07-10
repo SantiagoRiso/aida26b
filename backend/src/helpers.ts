@@ -3,7 +3,7 @@ import      { structure } from '../../shared/src/ssot/structure';
 import      { getPkFields } from '../../shared/src/utils/utils';
 import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction, RequestHandler } from 'express';
 import { sendError } from './status_messages';
-import { httpForDbError } from './db/errors';
+import { httpForDbError, httpForStructuredError } from './db/errors';
 
 // Express 4 does not catch rejected async handlers — one uncaught rejection kills the whole
 // process. These wrappers are the crash net; structured error handling stays in the handlers.
@@ -17,6 +17,13 @@ function guardRoute(
       const mapped = httpForDbError(error);
       if (mapped) {
         if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
+        return;
+      }
+      // App errors that carry their own HTTP mapping (httpError / the conflict recheck's
+      // "owner gone mid-transaction") — handlers no longer re-map these by hand.
+      const structured = httpForStructuredError(error);
+      if (structured) {
+        if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);
         return;
       }
       console.error(`Unhandled error in ${req.method} ${req.path}:`, error);

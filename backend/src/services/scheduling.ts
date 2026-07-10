@@ -15,6 +15,7 @@ import {
   acquireOwnerLock,
 } from '../db/scheduling';
 import { BUSINESS_TZ, addMinutes } from '../time';
+import { httpError } from '../db/errors';
 
 // Availability aggregation + the sobreturno-aware conflict recheck. This is domain orchestration
 // over db/scheduling — no HTTP surface — so both the scheduling routes and the appointment write
@@ -150,10 +151,7 @@ export async function recheckConflictsInTx(
   if ('error' in inputs) {
     // Propagate the structured status/code so the caller maps "owner gone from tenant
     // between preview and recheck" to 404/409 rather than a generic 500.
-    const err = new Error(inputs.error.message) as Error & { status?: number; code?: string };
-    err.status = inputs.error.status;
-    err.code = inputs.error.code;
-    throw err;
+    throw httpError(inputs.error.status, inputs.error.code, inputs.error.message);
   }
 
   const end = addMinutes(input.start, input.durationMinutes);

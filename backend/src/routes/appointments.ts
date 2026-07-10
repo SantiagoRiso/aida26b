@@ -12,8 +12,8 @@ import {
   canCancelAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
-import { recheckConflictsInTx } from '../services/scheduling';
 import { BUSINESS_TZ, HHMM_RE, DATE_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
+import { httpError } from '../db/errors';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
 import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
@@ -30,7 +30,7 @@ import {
   listRelatedClientIds,
   type AppointmentRoleScope,
 } from '../db/appointments';
-import { resolveAndLoadService } from '../services/booking';
+import { resolveAndLoadService, saveWithConflictRecheck } from '../services/booking';
 import { insertSessionChargeIfAbsent } from '../db/ledger';
 import { getCancellationCutoffHours } from '../db/businesses';
 import type { ColumnValue } from '../../../shared/src/types/types';
@@ -174,34 +174,18 @@ export function mountAppointmentRoutes(
 
     const override = req.body.override === true;
 
-    try {
-      const outcome = await withTransaction(pool, async (tx) => {
-        const verdict = await recheckConflictsInTx(tx, {
-          businessId,
-          professionalUserId,
-          resourceId,
-          date,
-          start,
-          durationMinutes: effective_duration_minutes,
-          callerIsStaff: true,
-        });
-
-        // Warn first; do NOT write. The client requirement is checked only once we're actually
-        // about to insert a row — a caller probing for conflicts without a client yet chosen
-        // must still see the verdict, not a premature validation error.
-        if (verdict.requires_override && !override) {
-          return { kind: 'verdict' as const, verdict };
-        }
-
-        // appointments.client_user_id is NOT NULL — every booking requires a client.
+    const outcome = await saveWithConflictRecheck(
+      pool,
+      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes },
+      override,
+      async (tx, forced) => {
+        // client_user_id is NOT NULL — checked here (inside the write, after the recheck) so a staff
+        // caller probing a conflicting slot without a chosen client still sees the verdict first.
         if (!Number.isInteger(clientUserId) || (clientUserId as number) <= 0) {
-          return { kind: 'invalid' as const };
+          throw httpError(422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
         }
-
-        // A sobreturno is an override that bypassed a real conflict; a redundant override flag
-        // on a clean booking must not mark the row.
-        const forced = override && verdict.requires_override;
-
+        // `forced` marks a sobreturno — an override that bypassed a real conflict; a redundant
+        // override flag on a clean booking must not mark the row.
         const appt = await insertScheduledAppointment(tx, {
           clientUserId: clientUserId as number,
           professionalUserId,
@@ -216,25 +200,12 @@ export function mountAppointmentRoutes(
           description,
         });
         await auditInTx(tx, user, 'appointment_scheduled', 'success', Number(appt!.id));
-        return { kind: 'ok' as const, appt: appt! };
-      });
+        return appt!;
+      },
+    );
 
-      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
-      if (outcome.kind === 'invalid') {
-        return sendError(res, 422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
-      }
-      return sendData(res, outcome.appt, 201);
-    } catch (err) {
-      // Propagate structured status from recheckConflictsInTx loader errors (e.g. owner gone).
-      if (typeof err === 'object' && err !== null && 'status' in err) {
-        const e = err as { status: number; code: string; message: string };
-        return sendError(res, e.status, e.code, e.message);
-      }
-      // Any other error (e.g. an unexpected DB constraint violation) must never crash the
-      // process — surface it as a 500 instead of rethrowing into an unhandled rejection.
-      console.error('Error scheduling appointment:', err);
-      return sendError(res, 500, 'internal_error', 'Internal server error');
-    }
+    if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+    return sendData(res, outcome.result, 201);
   }));
 
   app.post('/api/appointments/:id/approve', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
@@ -271,42 +242,30 @@ export function mountAppointmentRoutes(
     const dateStr = wall.date;
     const startStr = wall.start;
 
-    try {
-      const outcome = await withTransaction(pool, async (tx) => {
-        const verdict = await recheckConflictsInTx(tx, {
-          businessId,
-          professionalUserId: Number(row.professional_user_id),
-          resourceId,
-          date: dateStr,
-          start: startStr,
-          durationMinutes: Number(row.duration_minutes),
-          callerIsStaff: true,
-          excludeAppointmentId: id,
-        });
-
-        if (verdict.requires_override && !override) {
-          return { kind: 'verdict' as const, verdict };
-        }
-
-        const forced = override && verdict.requires_override;
-
+    const outcome = await saveWithConflictRecheck(
+      pool,
+      {
+        businessId,
+        professionalUserId: Number(row.professional_user_id),
+        resourceId,
+        date: dateStr,
+        start: startStr,
+        durationMinutes: Number(row.duration_minutes),
+        excludeAppointmentId: id,
+      },
+      override,
+      async (tx, forced) => {
         const appt = await approveAppointment(tx, id, {
           overrideConflict: forced,
           overrideActorId: forced ? user.id : (row.override_actor_id ?? null),
         });
         await auditInTx(tx, user, 'appointment_approved', 'success', id);
-        return { kind: 'ok' as const, appt: appt! };
-      });
+        return appt!;
+      },
+    );
 
-      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
-      return sendData(res, outcome.appt);
-    } catch (err) {
-      if (typeof err === 'object' && err !== null && 'status' in err) {
-        const e = err as { status: number; code: string; message: string };
-        return sendError(res, e.status, e.code, e.message);
-      }
-      throw err;
-    }
+    if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+    return sendData(res, outcome.result);
   }));
 
   app.post('/api/appointments/:id/reschedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
@@ -398,25 +357,11 @@ export function mountAppointmentRoutes(
     const override = req.body?.override === true;
     const startsAt = buildStartsAt(date, start);
 
-    try {
-      const outcome = await withTransaction(pool, async (tx) => {
-        const verdict = await recheckConflictsInTx(tx, {
-          businessId,
-          professionalUserId,
-          resourceId,
-          date,
-          start,
-          durationMinutes: effective_duration_minutes,
-          callerIsStaff: true,
-          excludeAppointmentId: id,
-        });
-
-        if (verdict.requires_override && !override) {
-          return { kind: 'verdict' as const, verdict };
-        }
-
-        const forced = override && verdict.requires_override;
-
+    const outcome = await saveWithConflictRecheck(
+      pool,
+      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes, excludeAppointmentId: id },
+      override,
+      async (tx, forced) => {
         const appt = await rescheduleAppointment(tx, id, {
           professionalUserId,
           serviceId,
@@ -430,18 +375,12 @@ export function mountAppointmentRoutes(
           description: body.description ?? null,
         });
         await auditInTx(tx, user, 'appointment_rescheduled', 'success', id);
-        return { kind: 'ok' as const, appt: appt! };
-      });
+        return appt!;
+      },
+    );
 
-      if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
-      return sendData(res, outcome.appt);
-    } catch (err) {
-      if (typeof err === 'object' && err !== null && 'status' in err) {
-        const e = err as { status: number; code: string; message: string };
-        return sendError(res, e.status, e.code, e.message);
-      }
-      throw err;
-    }
+    if (outcome.kind === 'verdict') return sendData(res, outcome.verdict);
+    return sendData(res, outcome.result);
   }));
 
   app.post('/api/appointments/:id/transition', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
