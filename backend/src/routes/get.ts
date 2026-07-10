@@ -106,22 +106,17 @@ async function getListOfTable(
   query: express.Request["query"],
   allowed: ListScope,
 ) {
-  try {
-    const { dataQuery, dataValues, countQuery, countValues, page, limit } =
-      buildListStatement(tableName, query, allowed);
+  const { dataQuery, dataValues, countQuery, countValues, page, limit } =
+    buildListStatement(tableName, query, allowed);
 
-    const [dataRows, countRows] = await Promise.all([
-      runQuery<GenericRow>(pool, dataQuery, dataValues),
-      runQuery<{ count: string }>(pool, countQuery, countValues),
-    ]);
+  const [dataRows, countRows] = await Promise.all([
+    runQuery<GenericRow>(pool, dataQuery, dataValues),
+    runQuery<{ count: string }>(pool, countQuery, countValues),
+  ]);
 
-    const total = parseInt(countRows[0]?.count ?? "0", 10);
+  const total = parseInt(countRows[0]?.count ?? "0", 10);
 
-    return sendList(res, dataRows, { page, limit, total });
-  } catch (error) {
-    console.error(`Error fetching ${tableName}:`, error);
-    return sendError(res, 500, "internal_error", "Internal server error");
-  }
+  return sendList(res, dataRows, { page, limit, total });
 }
 
 async function getRowOfTable(
