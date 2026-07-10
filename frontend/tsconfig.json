@@ -66,5 +66,5 @@
     "test/portal.test.ts",
     "../shared/src/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "e2e", "src/app.ts"]
+  "exclude": ["node_modules", "dist", "e2e"]
 }

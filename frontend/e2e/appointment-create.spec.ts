@@ -44,7 +44,6 @@ test.describe('Appointment creation — full form with client + professional + r
     await expect(serviceSelect.locator('option', { hasText: 'Sesión individual' })).toBeAttached({ timeout: 10_000 });
     await serviceSelect.selectOption({ label: 'Sesión individual' });
 
-    // Sanity baseline before touching the resource field.
     await expect(clientSelect).toHaveValue(String(client.id));
     await expect(profSelect).toHaveValue(String(prof.id));
 

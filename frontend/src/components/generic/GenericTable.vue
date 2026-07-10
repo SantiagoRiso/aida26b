@@ -112,7 +112,6 @@ function onPageChange(p: number) {
   reload();
 }
 
-// Switching entity screens resets sort/filter/paging before reloading.
 watch(() => props.tableKey, () => {
   page.value = 1;
   sortField.value = '';

@@ -122,7 +122,6 @@ function fmtTime(iso: string): string {
   return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// ARS currency: $ X.XXX,XX
 function fmtPrice(price: string): string {
   const n = parseFloat(price);
   if (isNaN(n)) return `$ ${price}`;

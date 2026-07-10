@@ -19,7 +19,8 @@ export const DEMO_ACCOUNTS = {
 export async function login(page: Page, username: string, password: string): Promise<void> {
   await page.goto('/');
   await page.getByLabel('Usuario').fill(username);
-  await page.getByLabel('Contraseña').fill(password);
+  // #password (not getByLabel) — the show/hide toggle's aria-label also contains "Contraseña".
+  await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Ingresar' }).click();
   await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15_000 });
 }

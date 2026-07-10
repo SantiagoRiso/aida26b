@@ -22,7 +22,6 @@ import GenericForm from '@/components/generic/GenericForm.vue';
 const props = defineProps<{ professionalId: number }>();
 const emit = defineEmits<{
   close: [];
-  // Something changed the list should reflect (profile edit, deactivation).
   changed: [];
 }>();
 
@@ -46,7 +45,6 @@ const deactivateConfirmOpen = ref(false);
 
 const role = computed(() => auth.user?.role as Role | undefined);
 const isSelf = computed(() => String(auth.user?.id) === String(professionalId));
-// Admin/Receptionist manage any professional's profile; a Professional may edit only their own.
 const canEditProfile = computed(
   () =>
     !!role.value &&

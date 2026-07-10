@@ -28,7 +28,7 @@ async function submit() {
       credError.value = result.status === 401 ? t('toast.invalidCredentials') : t('toast.serverUnavailable');
       return;
     }
-    // Route by role. If must_change_password is set, the guard will bounce to change-password.
+    // If must_change_password is set, the guard will bounce to change-password.
     if (auth.user?.role === 'Client') {
       await router.push({ name: 'portal-appointments' });
     } else {

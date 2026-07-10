@@ -32,7 +32,6 @@ export interface AppointmentListFilters {
   limit?: number;
 }
 
-// Discriminated result so callers can branch on requires_override vs. saved appointment.
 export type ScheduleResult =
   | { saved: true; appointment: Appointment }
   | { saved: false; verdict: ConflictVerdict };

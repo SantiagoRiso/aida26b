@@ -17,7 +17,6 @@ const { t } = useI18n();
       <p class="text-sm text-neutral">
         {{ t('portal.languageBody') }}
       </p>
-      <!-- The only place the language changes. -->
       <LanguageToggle />
     </section>
   </div>

@@ -26,7 +26,6 @@ const page = ref(1);
 const limit = 50;
 const total = ref(0);
 
-// Filter state — each maps 1:1 to /api/audit query params.
 const filterEntityType = ref('');
 const filterActorId = ref('');
 const filterEventType = ref('');

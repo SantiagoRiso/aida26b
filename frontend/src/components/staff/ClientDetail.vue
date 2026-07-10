@@ -213,7 +213,6 @@ onMounted(load);
       </div>
 
       <div class="grid gap-6 lg:grid-cols-2">
-      <!-- Cuenta corriente — only for viewers allowed to read this client's ledger. -->
       <section v-if="ledgerAccessible" class="space-y-3">
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-semibold">{{ label({ es: 'Cuenta corriente', en: 'Ledger' }) }}</h2>
@@ -270,7 +269,6 @@ onMounted(load);
         </div>
       </section>
 
-      <!-- Turnos — upcoming/pending only; history lives full-width below. -->
       <section class="space-y-3">
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-semibold">{{ label({ es: 'Turnos pendientes', en: 'Pending appointments' }) }}</h2>
@@ -345,12 +343,10 @@ onMounted(load);
       />
     </template>
 
-    <!-- Ledger entry -->
     <DetailPanel :open="showEntryForm" :title="label({ es: 'Nuevo movimiento', en: 'New entry' })" @close="showEntryForm = false">
       <LedgerEntryForm :client-user-id="clientId" @saved="onEntrySaved" @cancelled="showEntryForm = false" />
     </DetailPanel>
 
-    <!-- Book appointment -->
     <DetailPanel :open="showBookForm" :title="label({ es: 'Agendar turno', en: 'Book appointment' })" @close="showBookForm = false">
       <AppointmentForm
         :prefill-client-id="clientId"
@@ -360,7 +356,6 @@ onMounted(load);
       />
     </DetailPanel>
 
-    <!-- Edit profile -->
     <DetailPanel :open="showEditProfile" :title="label({ es: 'Editar perfil', en: 'Edit profile' })" @close="showEditProfile = false">
       <GenericForm
         v-if="client"

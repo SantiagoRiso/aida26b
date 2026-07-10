@@ -67,7 +67,6 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
     const body = await resp.json();
     expect(body.data.notes).toBe(noteText);
 
-    // Prove server persistence, not just in-memory form state: hard-reload and re-filter.
     // Prove SERVER persistence with a fresh read: navigate away and back (remount re-fetches
     // the list from the server), reopen the row, and confirm the note came back from the DB.
     await page.getByRole('link', { name: 'Servicios' }).click();

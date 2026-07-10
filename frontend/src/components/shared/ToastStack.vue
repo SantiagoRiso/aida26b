@@ -7,8 +7,6 @@ import type { Toast } from '@/stores/ui';
 const ui = useUiStore();
 const { t } = useI18n();
 
-// Auto-dismiss info and success toasts after 5 seconds.
-// Error and session-expired toasts persist until dismissed or navigation.
 const AUTO_DISMISS_MS = 5000;
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
 

@@ -13,10 +13,9 @@ const props = withDefaults(
   defineProps<{
     open: boolean;
     title?: string;
-    // 'modal' centers the dialog (default). 'side' slides in from the right — used on the
-    // calendar so the grid stays visible behind the panel.
+    // 'side' slides in from the right — used on the calendar so the grid stays visible behind the panel.
     variant?: 'modal' | 'side';
-    // Modal width. Ignored by the side variant (always max-w-md).
+    // Ignored by the side variant (always max-w-md).
     size?: 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | '7xl';
   }>(),
   { variant: 'modal', size: 'lg' },
@@ -64,7 +63,6 @@ const modalMaxWidth = computed(
         />
       </TransitionChild>
 
-      <!-- Side variant: slide-over anchored to the right. -->
       <div v-if="variant === 'side'" class="fixed inset-y-0 right-0 flex">
         <TransitionChild
           as="template"
@@ -96,7 +94,6 @@ const modalMaxWidth = computed(
         </TransitionChild>
       </div>
 
-      <!-- Modal variant: centered dialog. -->
       <div v-else class="fixed inset-0 flex items-center justify-center p-4">
         <TransitionChild
           as="template"

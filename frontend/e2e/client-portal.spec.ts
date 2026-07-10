@@ -33,7 +33,6 @@ test.describe('Client portal — own appointments, balance, and preferences', ()
     await expect(table).toBeVisible({ timeout: 10_000 });
     await expect(table.locator('tbody tr').first()).toBeVisible({ timeout: 10_000 });
 
-    // Read-only: no mutation affordance anywhere on this screen for a client.
     await expect(page.getByRole('button', { name: /nuevo movimiento|editar|eliminar|borrar/i })).not.toBeVisible();
   });
 

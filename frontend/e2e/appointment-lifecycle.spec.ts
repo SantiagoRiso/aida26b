@@ -6,8 +6,7 @@ import { login, DEMO_ACCOUNTS, navigateCalendarToAppointment } from './helpers';
  * The fixture must be created through POST /api/appointments/request, which is
  * restricted to the Client role — so it's created via a Client-authenticated
  * context, while professional/service ids are looked up via an Admin context first
- * (querying /api/professionals as a Client returns an empty list — see the
- * known cross-tenant-scoping bug documented in client-request-approve.spec.ts).
+ * (querying /api/professionals as a Client returns an empty list).
  * Professional Dra. Edna Krabappel + client Otto Mann are untouched by any other spec.
  */
 test.describe('Appointment state transition via detail panel — approve a requested appointment', () => {
@@ -70,7 +69,6 @@ test.describe('Appointment state transition via detail panel — approve a reque
     expect(body.success).toBe(true);
     expect(body.data.state).toBe('scheduled');
 
-    // UI reflects the new state in the still-open detail panel.
     await expect(page.getByText('Programado')).toBeVisible({ timeout: 10_000 });
 
     // Independent backend confirmation — proves the transition is durable, not just

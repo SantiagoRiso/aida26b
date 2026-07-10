@@ -38,7 +38,6 @@ const loadingOptions = ref(false);
 
 const selectedProfId = ref<number | null>(null);
 const selectedServiceId = ref<string | null>(null);
-// The full row for the chosen service id — the rest of the flow reads its price/duration.
 const selectedService = computed<ServiceRow | null>(() =>
   selectedServiceId.value == null
     ? null
@@ -70,7 +69,6 @@ const serviceNameById = computed(() => {
   return m;
 });
 
-// Names of the services each professional offers — shown in the option and matched by the search.
 const serviceNamesByProf = computed(() => {
   const m = new Map<string, string[]>();
   for (const ps of profServices.value) {
@@ -102,7 +100,6 @@ const recencyByProf = computed(() => {
 
 interface ProfOption { value: string; label: string; bio: string | null; services: string }
 
-// Professionals I've seen most recently first (within a year), then everyone else alphabetically.
 const professionalOptions = computed<ProfOption[]>(() => {
   const recency = recencyByProf.value;
   const ranked = professionals.value.map((p) => {

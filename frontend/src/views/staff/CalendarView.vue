@@ -37,7 +37,6 @@ const loading = ref(false);
 // Ref to the calendar facade — exposes the rendered root element the custom drag reads (via geometry).
 const calendarRef = ref<InstanceType<typeof CalendarViewComponent> | null>(null);
 
-// Updated by FullCalendar datesSet as the user navigates.
 const visibleRange = ref<{ from: string; to: string }>({
   from: new Date().toISOString().slice(0, 10),
   to: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
@@ -58,7 +57,7 @@ const formOpen = ref(false);
 // doesn't blank mid-close; opening flips it true via the watcher below.
 const formMounted = ref(false);
 watch(formOpen, (open) => { if (open) formMounted.value = true; });
-const formAppt = ref<Appointment | undefined>(undefined); // set for reschedule
+const formAppt = ref<Appointment | undefined>(undefined);
 const formPrefillDate = ref<string | undefined>();
 const formPrefillStart = ref<string | undefined>();
 const formPrefillProfId = ref<number | undefined>();
@@ -194,7 +193,6 @@ async function refreshSnapGrid() {
 watch(() => filters.value.professional_user_id, refreshSnapGrid);
 watch(visibleRange, refreshSnapGrid, { deep: true });
 
-// Fetch the filtered resource's free slots for each visible day (cleared when no resource selected).
 async function loadResourceAvailability() {
   const resId = filters.value.resource_id;
   if (resId == null) { resourceFreeByDay.value = new Map(); return; }
@@ -506,7 +504,6 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
   const baseViews: NonNullable<CalendarOptions['views']> = calendarOptions.value.views ?? {};
   return {
     ...calendarOptions.value,
-    // Appointment events, resource availability shading, the open-slot highlights, and the drag target.
     events: [
       ...((calendarOptions.value.events as EventInput[]) ?? []),
       ...pastBgEvents.value,

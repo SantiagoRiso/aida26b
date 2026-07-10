@@ -45,7 +45,7 @@ async function scheduleAt(page: Page, hoursFromNow: number, name: string): Promi
       // a REAL backend bug independently found while writing this suite: the
       // appointments table has client_user_id NOT NULL, but /appointments/schedule
       // never validates it's present before the INSERT — the resulting Postgres
-      // error is unhandled and crashes the entire Node process (see SUMMARY).
+      // error is unhandled and crashes the entire Node process.
       professional_user_id: prof.id,
       service_id: svc.id,
       client_user_id: client.id,

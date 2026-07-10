@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Staff create/edit form. Conflict check happens ON SAVE only — no live preview.
+// Conflict check happens ON SAVE only — no live preview.
 // On requires_override the parent receives the verdict and handles the override dialog.
 
 import { computed, reactive, ref, watch, onMounted } from 'vue';
@@ -80,7 +80,6 @@ const saving = ref(false);
 
 // Hora/duración are normally derived from the picked slot; manual entry is the
 // sobreturno path (booking outside published availability) and stays collapsed.
-// Open it upfront when values arrive without a slot pick (reschedule, drag-select prefill).
 // Reschedule opens manual entry; a clicked cell auto-selects its slot (see SlotPicker), so a bare
 // prefilled start no longer forces manual mode.
 const manualOpen = ref(!!props.appointment);

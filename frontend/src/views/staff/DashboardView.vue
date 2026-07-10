@@ -136,7 +136,6 @@ const settleCandidates = ref<Appointment[]>([]);
 const now = ref(new Date());
 let nowTimer: number | undefined;
 let refetchTimer: number | undefined;
-// Per-card editable payment amount and in-flight flag, keyed by appointment id.
 const amounts = ref<Record<number, string>>({});
 const processing = ref<Record<number, boolean>>({});
 

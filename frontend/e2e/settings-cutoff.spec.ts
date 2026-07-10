@@ -51,7 +51,7 @@ test.describe('Business settings — cancellation cutoff persists and is enforce
     const svc = (await svcRes.json()).data[0];
     const client = (await clientRes.json()).data[0];
 
-    const startAt = new Date(Date.now() + 30 * 60 * 60 * 1000); // ~30h out
+    const startAt = new Date(Date.now() + 30 * 60 * 60 * 1000);
     const date = `${startAt.getFullYear()}-${String(startAt.getMonth() + 1).padStart(2, '0')}-${String(startAt.getDate()).padStart(2, '0')}`;
     const start = `${String(startAt.getHours()).padStart(2, '0')}:${String(startAt.getMinutes()).padStart(2, '0')}`;
 

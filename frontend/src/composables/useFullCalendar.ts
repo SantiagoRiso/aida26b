@@ -26,14 +26,14 @@ import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 // 8-hue palette for multi-professional color coding (per-professional, not per-state).
 // Colors assigned deterministically by professional id so they are stable across sessions.
 const PROF_PALETTE = [
-  { bg: '#3B82F6', border: '#2563EB' }, // blue-500 / blue-600
-  { bg: '#8B5CF6', border: '#7C3AED' }, // violet-500 / violet-600
-  { bg: '#10B981', border: '#059669' }, // emerald-500 / emerald-600
-  { bg: '#F59E0B', border: '#D97706' }, // amber-500 / amber-600
-  { bg: '#F43F5E', border: '#E11D48' }, // rose-500 / rose-600
-  { bg: '#06B6D4', border: '#0891B2' }, // cyan-500 / cyan-600
-  { bg: '#D946EF', border: '#C026D3' }, // fuchsia-500 / fuchsia-600
-  { bg: '#84CC16', border: '#65A30D' }, // lime-500 / lime-600
+  { bg: '#3B82F6', border: '#2563EB' },
+  { bg: '#8B5CF6', border: '#7C3AED' },
+  { bg: '#10B981', border: '#059669' },
+  { bg: '#F59E0B', border: '#D97706' },
+  { bg: '#F43F5E', border: '#E11D48' },
+  { bg: '#06B6D4', border: '#0891B2' },
+  { bg: '#D946EF', border: '#C026D3' },
+  { bg: '#84CC16', border: '#65A30D' },
 ] as const;
 
 export function colorForProfessional(professionalId: number): { bg: string; border: string } {
@@ -79,7 +79,6 @@ export interface CalendarDecorators {
   // Untitled events fall back to this (e.g. client name for staff, professional for
   // clients) before the last-resort "Turno #id".
   fallbackTitle?: (appt: Appointment) => string | null;
-  // Hover tooltip explaining what the block is (who/what/state).
   tooltip?: (appt: Appointment) => string;
 }
 
@@ -199,13 +198,10 @@ export function useAppointmentCalendar(
     slotMaxTime: slotMaxTime.value,
     slotDuration: snap.value.slotDuration,
     slotLabelInterval: snap.value.slotLabelInterval,
-    // Day/week header dates and month day numbers link into the day view.
     navLinks: true,
-    // Month chips render as solid colored blocks (professional hue), not dot+text rows.
     eventDisplay: 'block',
-    // Overlapping events render side by side, not stacked over each other.
     slotEventOverlap: false,
-    // Drag preview snaps to the professional's slot lattice (see `snap`); Shift → 5-min.
+    // Drag preview snaps to the professional's slot lattice (see `snap`); sobreturno mode uses 5-min sub-steps.
     // For mixed views the drop handler still lands the block on the real slot as a backstop.
     snapDuration: snap.value.snapDuration,
 
@@ -241,7 +237,6 @@ export function useAppointmentCalendar(
         info.el.setAttribute('data-appt-state', appt.state);
         const tip = decorators?.tooltip?.(appt);
         if (tip) info.el.setAttribute('title', tip);
-        // Entry point for the custom drag (see onEventPointerDown).
         if (handlers.onEventPointerDown) {
           info.el.addEventListener('pointerdown', (ev) =>
             handlers.onEventPointerDown!(appt, ev as PointerEvent, info.el),
@@ -250,7 +245,6 @@ export function useAppointmentCalendar(
       }
     },
 
-    // Month view: real (compact) event chips capped per day, with a "+n más" popover.
     views: {
       dayGridMonth: {
         dayMaxEvents: 3,

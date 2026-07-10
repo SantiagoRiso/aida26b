@@ -19,7 +19,6 @@ const props = withDefaults(
   defineProps<{
     modelValue: string | null;
     options: T[];
-    // Type-to-filter (typeahead) vs. a plain click-open list.
     searchable?: boolean;
     // A lone option isn't a choice: render it as a read-only label and auto-select it.
     labelIfSingle?: boolean;
@@ -59,7 +58,6 @@ const selectedValue = computed({
 const single = computed(() =>
   props.labelIfSingle && props.options.length === 1 ? props.options[0] : null,
 );
-// Render as a plain label when the value is locked: a forced (readonly) value or a lone option.
 const showAsLabel = computed(() => props.readonly || single.value != null);
 
 function labelFor(value: string | null): string {
@@ -108,7 +106,6 @@ watch(
 </script>
 
 <template>
-  <!-- Locked: a forced value or a lone option renders as read-only text. -->
   <div
     v-if="showAsLabel"
     :id="id"
@@ -117,7 +114,6 @@ watch(
     {{ labelText || placeholder }}
   </div>
 
-  <!-- Searchable: accessible typeahead combobox. -->
   <Combobox
     v-else-if="searchable"
     v-model="selectedValue"
@@ -170,7 +166,6 @@ watch(
     </ComboboxOptions>
   </Combobox>
 
-  <!-- Plain click-open list. -->
   <select
     v-else
     :id="id"

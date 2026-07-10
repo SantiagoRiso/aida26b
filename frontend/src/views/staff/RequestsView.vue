@@ -62,7 +62,7 @@ function serviceName(a: Appointment): string {
   return serviceLabelFor(a.service_id) ?? '—';
 }
 
-// ── Detail drawer: full client context so a request can be triaged without leaving the list ──
+// Detail drawer: full client context so a request can be triaged without leaving the list.
 const detailAppt = ref<Appointment | null>(null);
 const detailOpen = ref(false);
 const clientProfile = ref<TableRecordMap['clients'] | null>(null);
@@ -158,7 +158,6 @@ const dayCalendarOptions = computed(() => ({
   expandRows: true,
   selectable: false,
   editable: false,
-  // Make the request being triaged stand out from the rest of the day's blocks.
   eventClassNames: (arg: EventContentArg) =>
     detailAppt.value && arg.event.id === String(detailAppt.value.id) ? ['fc-current-request'] : [],
 }));
@@ -280,7 +279,6 @@ async function confirmReject() {
       </li>
     </ul>
 
-    <!-- Detail drawer: request + client context (info, debt, history) with in-context actions. -->
     <DetailPanel
       :open="detailOpen"
       :title="label({ es: 'Detalle de la solicitud', en: 'Request detail' })"
@@ -291,7 +289,6 @@ async function confirmReject() {
       <div v-if="detailAppt" class="flex flex-col gap-5">
         <div class="grid gap-6 lg:grid-cols-2">
           <div class="flex flex-col gap-5">
-        <!-- Request -->
         <section class="flex flex-col gap-2">
           <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Solicitud', en: 'Request' }) }}</h3>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -319,14 +316,12 @@ async function confirmReject() {
         </div>
 
         <template v-else>
-          <!-- Client -->
           <section class="flex flex-col gap-2 border-t border-border pt-4">
             <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Cliente', en: 'Client' }) }}</h3>
             <p class="text-base font-semibold text-heading">{{ clientProfile?.display_name ?? clientName(detailAppt) }}</p>
             <p class="text-sm text-neutral">{{ clientProfile?.email ?? '—' }} · {{ clientProfile?.phone ?? '—' }}</p>
           </section>
 
-          <!-- Debt -->
           <section class="flex flex-col gap-2">
             <div
               class="flex items-center justify-between rounded-lg border p-3"
@@ -342,7 +337,6 @@ async function confirmReject() {
             </div>
           </section>
 
-          <!-- History -->
           <section class="flex flex-col gap-2">
             <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Historial', en: 'History' }) }}</h3>
             <div class="flex flex-wrap gap-2 text-xs">
@@ -372,7 +366,6 @@ async function confirmReject() {
         </template>
           </div>
 
-          <!-- Right column: the professional's schedule for the requested day. -->
           <div class="flex min-h-0 flex-col gap-2 lg:h-[72vh]">
             <h3 class="text-sm font-semibold text-neutral">
               {{ label({ es: 'Agenda del día', en: "That day's schedule" }) }}
@@ -383,7 +376,6 @@ async function confirmReject() {
           </div>
         </div>
 
-        <!-- Actions -->
         <div class="flex gap-2 border-t border-border pt-4">
           <AppButton variant="primary" :loading="acting" class="flex-1" @click="approve(detailAppt)">
             {{ label({ es: 'Aprobar', en: 'Approve' }) }}

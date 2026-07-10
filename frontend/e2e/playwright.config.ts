@@ -21,7 +21,6 @@ export default defineConfig({
     viewport: { width: 1280, height: 900 },
   },
 
-  // Local dev spins up the full stack automatically; CI manages it via job steps.
   webServer: reuseServer
     ? undefined
     : {

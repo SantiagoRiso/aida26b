@@ -15,7 +15,6 @@ const selectedId = ref<number | null>(null);
 const detailOpen = ref(false);
 const reloadKey = ref(0);
 
-// GenericTable emits `edit` on row click (for roles allowed to update); route it to the detail modal.
 function openDetail(row: TableRecordMap['professionals']) {
   const id = Number(row.id);
   if (!Number.isFinite(id)) return;

@@ -62,7 +62,6 @@ router.beforeEach((to) => {
     return { name: auth.user.role === 'Client' ? 'portal-appointments' : 'staff-dashboard' };
   }
 
-  // Block ALL navigation until the user updates their password.
   if (auth.user?.must_change_password && to.name !== 'change-password') {
     return { name: 'change-password' };
   }
