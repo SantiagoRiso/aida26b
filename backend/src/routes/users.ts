@@ -2,6 +2,7 @@ import type express from 'express';
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from '../auth';
+import { isRole } from '../../../shared/src/types/roles';
 import { guardRoute } from '../helpers';
 import { readPassword, type AuditWriter } from '../session';
 import { withTransaction } from '../db/core';
@@ -63,7 +64,7 @@ export function mountUserAdminRoutes(
         return res.status(403).json({ error: 'Forbidden' });
       }
 
-      if (!username || !password || !auth.isRole(role)) {
+      if (!username || !password || !isRole(role)) {
         return res.status(400).json({ error: 'Valid username, password and role are required' });
       }
 
