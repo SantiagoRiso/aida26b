@@ -290,6 +290,33 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     expect(res.body.data).toHaveLength(0);
     expect(res.body.meta.total).toBe(0);
   });
+
+  test('?outcome=denied returns only denied events, and meta.total matches the filtered set', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', '/api/audit?outcome=denied');
+    expect(res.status).toBe(200);
+    const rows = res.body.data as any[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.outcome).toBe('denied');
+    // total is the server-side filtered count, not the unfiltered page count.
+    expect(res.body.meta.total).toBe(rows.length);
+  });
+
+  test('?outcome=success excludes the denied event', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', '/api/audit?outcome=success');
+    expect(res.status).toBe(200);
+    const rows = res.body.data as any[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.outcome).toBe('success');
+  });
+
+  test('unknown outcome value → 422 (validated against the SSOT enum)', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('GET', '/api/audit?outcome=bogus');
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
 });
 
 // ── Pagination ────────────────────────────────────────────────────────────────
@@ -309,6 +336,27 @@ describe('GET /api/audit — pagination', () => {
     const res = await auditReq('GET', '/api/audit?limit=9999');
     expect(res.status).toBe(200);
     expect(res.body.meta.limit).toBe(200);
+  });
+});
+
+// ── Session-scoped settings read (portal cancellation cutoff) ─────────────────
+
+describe('GET /api/business/settings — any authenticated role, session-scoped', () => {
+  test('a non-admin (Client) can read the cutoff for their own business', async () => {
+    currentUser = asUser(clientId, 'Client');
+    const res = await auditReq('GET', '/api/business/settings');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveProperty('cancellation_cutoff_hours');
+    // Never exposes other business columns.
+    expect(res.body.data).not.toHaveProperty('name');
+  });
+
+  test('returns the caller\'s own business cutoff (from session, not a request param)', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await auditReq('GET', '/api/business/settings');
+    expect(res.status).toBe(200);
+    expect(Number(res.body.data.id)).toBe(bizId);
+    expect(res.body.data.cancellation_cutoff_hours).toBe(24);
   });
 });
 

@@ -268,6 +268,20 @@ describe('POST /api/appointments/schedule', () => {
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
   });
 
+  test('override=true on a conflict-free slot does not mark the row as a sobreturno', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '11:30',
+      override: true,
+      client_user_id: client2Id,
+    }));
+    expect(res.status).toBe(201);
+    expect(res.body.data.override_conflict).toBe(false);
+    expect(res.body.data.override_actor_id).toBeNull();
+
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+  });
+
   test('professional cannot schedule on another professional calendar (403)', async () => {
     currentUser = asUser(pro2Id, 'Professional');
     const res = await apptReq('POST', '/api/appointments/schedule', requestBody());
@@ -810,6 +824,90 @@ describe('GET /api/appointments — paginated list', () => {
     expect(audit.rows.some((r) => r.event_type === 'appointment_scheduled')).toBe(true);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [apptId]);
+  });
+});
+
+describe('GET /api/appointments — client_user_id filter & related-clients endpoint', () => {
+  let a1: number;
+  let a2: number;
+  let adminId: number;
+
+  beforeAll(async () => {
+    // One appointment each for client1 and client2, both on pro1's calendar.
+    const r1 = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false) RETURNING id`,
+      [clientId, proId, svcId, FAR_FUTURE_TS],
+    );
+    a1 = Number(r1.rows[0].id);
+    const r2 = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1600.00', false) RETURNING id`,
+      [client2Id, proId, svcId, new Date(farFutureDate.getTime() + 3600 * 1000).toISOString()],
+    );
+    a2 = Number(r2.rows[0].id);
+    adminId = await seedUser('appt_admin_rc', 'Admin');
+  });
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[a1, a2]]);
+  });
+
+  test('staff filter by client_user_id returns only that client’s turnos', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', `/api/appointments?client_user_id=${clientId}`);
+    expect(res.status).toBe(200);
+    const rows = res.body.data as any[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
+  });
+
+  test('a Client cannot widen scope via client_user_id (stays self-scoped)', async () => {
+    currentUser = asUser(clientId, 'Client');
+    const res = await apptReq('GET', `/api/appointments?client_user_id=${client2Id}`);
+    expect(res.status).toBe(200);
+    const rows = res.body.data as any[];
+    // The param is ignored for a Client — they still only ever see their own rows.
+    for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
+  });
+
+  test('non-numeric client_user_id → 422', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments?client_user_id=abc');
+    expect(res.status).toBe(422);
+  });
+
+  test('related-clients resolves (not shadowed by /:id) and lists distinct ids', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await apptReq('GET', '/api/appointments/related-clients');
+    expect(res.status).toBe(200);
+    const ids: number[] = res.body.data.client_user_ids;
+    expect(Array.isArray(ids)).toBe(true);
+    expect(ids).toContain(clientId);
+    expect(ids).toContain(client2Id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test('related-clients for a professional is scoped to their own calendar', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', '/api/appointments/related-clients');
+    expect(res.status).toBe(200);
+    expect(res.body.data.client_user_ids).toEqual(expect.arrayContaining([clientId, client2Id]));
+  });
+
+  test('related-clients for a receptionist without a grant is empty', async () => {
+    currentUser = asUser(recepNoGrantId, 'Receptionist');
+    const res = await apptReq('GET', '/api/appointments/related-clients');
+    expect(res.status).toBe(200);
+    expect(res.body.data.client_user_ids).toHaveLength(0);
+  });
+
+  test('related-clients is forbidden for the Client role', async () => {
+    currentUser = asUser(clientId, 'Client');
+    const res = await apptReq('GET', '/api/appointments/related-clients');
+    expect(res.status).toBe(403);
   });
 });
 

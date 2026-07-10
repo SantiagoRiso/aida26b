@@ -2,11 +2,13 @@ import express from 'express';
 import type { Request, RequestHandler } from 'express';
 import { Pool, PoolClient } from 'pg';
 import { sendData, sendError } from '../status_messages';
+import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import {
   computeDailySlots,
   evaluateConflicts,
   resolveBooking,
+  OPEN_APPOINTMENT_STATES,
 } from '../../../shared/src/ssot/domain';
 import type {
   WeeklySchedule,
@@ -14,14 +16,18 @@ import type {
   BookedAppointment,
   ConflictVerdict,
 } from '../../../shared/src/ssot/domain';
+import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
+
+// SQL list literal built from the shared open-states const (code-owned values, not user input).
+const OPEN_STATES_SQL = OPEN_APPOINTMENT_STATES.map((s) => `'${s}'`).join(', ');
 
 type AuditFn = (
   req: Request,
   eventType: string,
   outcome: string,
-  details?: Record<string, unknown>
+  details?: Record<string, ColumnValue>
 ) => Promise<void>;
 
 // A pg Pool or a transaction-bound client — the dry-run runs on the pool, the transactional
@@ -82,11 +88,12 @@ async function loadOwnerState(
   // Column name is code-controlled (never user input), so interpolation here is injection-safe.
   const ownerCol = ref.kind === 'professional' ? 'professional_user_id' : 'resource_id';
 
-  const sched = await q.query<{ weekly: unknown }>(
+  // weekly is only ever written through validateWeeklySchedule, so reading it back as the class holds.
+  const sched = await q.query<{ weekly: WeeklySchedule }>(
     `SELECT weekly FROM schedules WHERE ${ownerCol} = $1`,
     [ref.id]
   );
-  const weekly = (sched.rows[0]?.weekly ?? {}) as WeeklySchedule;
+  const weekly: WeeklySchedule = sched.rows[0]?.weekly ?? {};
 
   const exc = await q.query<{
     is_unavailable: boolean;
@@ -116,7 +123,7 @@ async function loadOwnerState(
             state
      FROM appointments
      WHERE ${ownerCol} = $1
-       AND state IN ('scheduled', 'requested')
+       AND state IN (${OPEN_STATES_SQL})
        AND (starts_at AT TIME ZONE $2)::date = $3::date`,
     [ref.id, BUSINESS_TZ, date]
   );
@@ -230,7 +237,7 @@ export function mountSchedulingRoutes(
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
 ) {
   // Advisory dry-run (D-01/D-03/D-14). REPORT-ONLY — never writes; appointments stay SELECT-only.
-  app.post('/api/conflict-check', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/conflict-check', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'A business context is required to check conflicts');
@@ -310,10 +317,10 @@ export function mountSchedulingRoutes(
     });
 
     return sendData(res, { ...verdict, effective_price, effective_duration_minutes });
-  });
+  }));
 
   // Discrete free slots for one owner on one date (D-15). owner = prof:<id> | res:<id>.
-  app.get('/api/availability', guards.auth, guards.passwordReady, async (req, res) => {
+  app.get('/api/availability', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'A business context is required to read availability');
@@ -336,6 +343,8 @@ export function mountSchedulingRoutes(
     const state = await loadOwnerState(pool, user.business_id, { kind, id: Number(owner![2]) }, date, exclude);
     if (!state) return sendError(res, 404, 'not_found', 'Owner not found in this business');
 
-    return sendData(res, { date, slots: state.freeSlots });
-  });
+    // `open` distinguishes "doesn't work that day" (false) from "works but fully booked"
+    // (true + empty slots) so the UI can say which one it is.
+    return sendData(res, { date, slots: state.freeSlots, open: state.gridSlots.length > 0 });
+  }));
 }

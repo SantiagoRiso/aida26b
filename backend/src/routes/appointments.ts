@@ -2,15 +2,20 @@ import express from 'express';
 import type { Request, RequestHandler } from 'express';
 import type { Pool, PoolClient } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
+import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import {
   resolveBooking,
   TERMINAL_STATES,
   APPOINTMENT_STATE_VALUES,
   assertValidTransition,
+  canCancelAppointment,
+  DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
 import { recheckConflictsInTx } from './scheduling';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
+import { grantedProfessionalScope } from '../grant-queries';
+import type { ColumnValue, SqlParam } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
 
@@ -18,8 +23,43 @@ type AuditFn = (
   req: Request,
   eventType: string,
   outcome: string,
-  details?: Record<string, unknown>,
+  details?: Record<string, ColumnValue>,
 ) => Promise<void>;
+
+// appointments wire row as node-pg returns it: BIGINT and NUMERIC arrive as
+// strings, TIMESTAMPTZ as Date. Matches the DDL, plus staff_note (later migration).
+type AppointmentRow = {
+  id: string;
+  client_user_id: string;
+  professional_user_id: string;
+  resource_id: string | null;
+  service_id: string;
+  starts_at: Date;
+  duration_minutes: number;
+  ends_at: Date;
+  state: string;
+  name: string | null;
+  description: string | null;
+  price: string;
+  override_conflict: boolean;
+  override_actor_id: string | null;
+  staff_note: string | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+// Booking input as the endpoints expect it; every field is still format-checked at runtime.
+type BookingBody = {
+  professional_user_id?: number | string;
+  service_id?: number | string;
+  date?: string;
+  start?: string;
+  duration_minutes?: number | string;
+  resource_id?: number | string | null;
+  client_user_id?: number | string | null;
+  name?: string | null;
+  description?: string | null;
+};
 
 const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
 
@@ -35,16 +75,16 @@ function addMinutes(hhmm: string, minutes: number): string {
 
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
-function stripStaffFields(row: Record<string, unknown>): Record<string, unknown> {
-  const r = { ...row };
+function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, (typeof STAFF_ONLY_FIELDS)[number]> {
+  const r: Partial<AppointmentRow> = { ...row };
   for (const f of STAFF_ONLY_FIELDS) delete r[f];
-  return r;
+  return r as Omit<AppointmentRow, (typeof STAFF_ONLY_FIELDS)[number]>;
 }
 
 async function resolveAndLoadService(
   pool: Pool | PoolClient,
   businessId: number,
-  body: Record<string, unknown>,
+  body: BookingBody,
 ): Promise<
   | {
       ok: true;
@@ -182,8 +222,8 @@ async function loadAppointment(
   pool: Pool,
   id: number,
   businessId: number,
-): Promise<Record<string, unknown> | null> {
-  const r = await pool.query<Record<string, unknown>>(
+): Promise<AppointmentRow | null> {
+  const r = await pool.query<AppointmentRow>(
     `SELECT a.*
      FROM appointments a
      JOIN auth.users u ON u.id = a.professional_user_id
@@ -198,7 +238,7 @@ export function mountAppointmentRoutes(
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
 ) {
-  app.post('/api/appointments/request', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/appointments/request', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.business_id == null) {
@@ -257,7 +297,7 @@ export function mountAppointmentRoutes(
     try {
       await client.query('BEGIN');
 
-      const insert = await client.query<Record<string, unknown>>(
+      const insert = await client.query<AppointmentRow>(
         `INSERT INTO appointments
            (client_user_id, professional_user_id, service_id,
             starts_at, duration_minutes, state, price,
@@ -287,9 +327,9 @@ export function mountAppointmentRoutes(
     } finally {
       client.release();
     }
-  });
+  }));
 
-  app.post('/api/appointments/schedule', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/appointments/schedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.business_id == null) {
@@ -356,7 +396,11 @@ export function mountAppointmentRoutes(
         return sendError(res, 422, 'invalid_request', 'Invalid appointment input', { client_user_id: 'required' });
       }
 
-      const insert = await client.query<Record<string, unknown>>(
+      // A sobreturno is an override that bypassed a real conflict; a redundant
+      // override flag on a clean booking must not mark the row.
+      const forced = override && verdict.requires_override;
+
+      const insert = await client.query<AppointmentRow>(
         `INSERT INTO appointments
            (client_user_id, professional_user_id, resource_id, service_id,
             starts_at, duration_minutes, state, price,
@@ -371,8 +415,8 @@ export function mountAppointmentRoutes(
           startsAt,
           effective_duration_minutes,
           effective_price,
-          override,
-          override ? user.id : null,
+          forced,
+          forced ? user.id : null,
           name,
           description,
         ],
@@ -383,7 +427,7 @@ export function mountAppointmentRoutes(
 
       await client.query('COMMIT');
       return sendData(res, appt, 201);
-    } catch (err: unknown) {
+    } catch (err) {
       await client.query('ROLLBACK');
       // Propagate structured status from recheckConflictsInTx loader errors (e.g. owner gone).
       if (typeof err === 'object' && err !== null && 'status' in err) {
@@ -397,9 +441,9 @@ export function mountAppointmentRoutes(
     } finally {
       client.release();
     }
-  });
+  }));
 
-  app.post('/api/appointments/:id/approve', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/appointments/:id/approve', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -459,14 +503,16 @@ export function mountAppointmentRoutes(
         return sendData(res, verdict);
       }
 
-      const updated = await client.query<Record<string, unknown>>(
+      const forced = override && verdict.requires_override;
+
+      const updated = await client.query<AppointmentRow>(
         `UPDATE appointments
          SET state = 'scheduled',
              override_conflict = $1,
              override_actor_id = $2
          WHERE id = $3
          RETURNING *`,
-        [override, override ? user.id : row.override_actor_id ?? null, id],
+        [forced, forced ? user.id : row.override_actor_id ?? null, id],
       );
       const appt = updated.rows[0];
 
@@ -474,7 +520,7 @@ export function mountAppointmentRoutes(
 
       await client.query('COMMIT');
       return sendData(res, appt);
-    } catch (err: unknown) {
+    } catch (err) {
       await client.query('ROLLBACK');
       if (typeof err === 'object' && err !== null && 'status' in err) {
         const e = err as { status: number; code: string; message: string };
@@ -484,9 +530,9 @@ export function mountAppointmentRoutes(
     } finally {
       client.release();
     }
-  });
+  }));
 
-  app.post('/api/appointments/:id/reschedule', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/appointments/:id/reschedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -614,7 +660,9 @@ export function mountAppointmentRoutes(
         return sendData(res, verdict);
       }
 
-      const updated = await client.query<Record<string, unknown>>(
+      const forced = override && verdict.requires_override;
+
+      const updated = await client.query<AppointmentRow>(
         `UPDATE appointments
          SET professional_user_id = $1,
              service_id            = $2,
@@ -635,8 +683,8 @@ export function mountAppointmentRoutes(
           startsAt,
           effective_duration_minutes,
           effective_price,
-          override,
-          override ? user.id : null,
+          forced,
+          forced ? user.id : null,
           body.name ?? null,
           body.description ?? null,
           id,
@@ -648,7 +696,7 @@ export function mountAppointmentRoutes(
 
       await client.query('COMMIT');
       return sendData(res, appt);
-    } catch (err: unknown) {
+    } catch (err) {
       await client.query('ROLLBACK');
       if (typeof err === 'object' && err !== null && 'status' in err) {
         const e = err as { status: number; code: string; message: string };
@@ -658,9 +706,9 @@ export function mountAppointmentRoutes(
     } finally {
       client.release();
     }
-  });
+  }));
 
-  app.post('/api/appointments/:id/transition', guards.auth, guards.passwordReady, async (req, res) => {
+  app.post('/api/appointments/:id/transition', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -703,10 +751,8 @@ export function mountAppointmentRoutes(
            WHERE u.id = $1 LIMIT 1`,
           [user.id],
         );
-        const cutoffHours = cutoffRow.rows[0]?.cancellation_cutoff_hours ?? 24;
-        const cutoffMs = cutoffHours * 60 * 60 * 1000;
-        const startsAt = new Date(String(row.starts_at)).getTime();
-        if (Date.now() > startsAt - cutoffMs) {
+        const cutoffHours = cutoffRow.rows[0]?.cancellation_cutoff_hours ?? DEFAULT_CANCELLATION_CUTOFF_HOURS;
+        if (!canCancelAppointment('scheduled', String(row.starts_at), cutoffHours, Date.now())) {
           return sendError(
             res, 422, 'outside_cutoff',
             `Cancellation is only allowed at least ${cutoffHours} hour(s) before the appointment`,
@@ -735,7 +781,7 @@ export function mountAppointmentRoutes(
     try {
       await pgClient.query('BEGIN');
 
-      const updated = await pgClient.query<Record<string, unknown>>(
+      const updated = await pgClient.query<AppointmentRow>(
         `UPDATE appointments SET state = $1 WHERE id = $2 RETURNING *`,
         [to, id],
       );
@@ -773,9 +819,9 @@ export function mountAppointmentRoutes(
     } finally {
       pgClient.release();
     }
-  });
+  }));
 
-  app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, async (req, res) => {
+  app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -818,7 +864,7 @@ export function mountAppointmentRoutes(
       !isTerminal && body.description !== undefined ? String(body.description) : undefined;
 
     const setClauses: string[] = [];
-    const params: unknown[] = [];
+    const params: SqlParam[] = [];
     let p = 1;
 
     if (name !== undefined) { setClauses.push(`name = $${p++}`); params.push(name); }
@@ -838,7 +884,7 @@ export function mountAppointmentRoutes(
     try {
       await pgClient.query('BEGIN');
 
-      const updated = await pgClient.query<Record<string, unknown>>(
+      const updated = await pgClient.query<AppointmentRow>(
         `UPDATE appointments SET ${setClauses.join(', ')} WHERE id = $${p} RETURNING *`,
         params,
       );
@@ -855,9 +901,44 @@ export function mountAppointmentRoutes(
     } finally {
       pgClient.release();
     }
-  });
+  }));
 
-  app.get('/api/appointments/:id', guards.auth, guards.passwordReady, async (req, res) => {
+  // Distinct client ids the caller has any appointment with, in their role scope. Backs the
+  // "clients with a prior relationship" list without shipping (and truncating) the whole
+  // appointment history to the browser. Registered before /:id so the literal path wins.
+  app.get('/api/appointments/related-clients', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'Business context required');
+    }
+    if (user.role === 'Client') {
+      return sendError(res, 403, 'forbidden', 'Staff access required');
+    }
+
+    const conditions: string[] = ['u.business_id = $1', 'a.client_user_id IS NOT NULL'];
+    const params: SqlParam[] = [user.business_id];
+    let p = 2;
+
+    if (user.role === 'Professional') {
+      conditions.push(`a.professional_user_id = $${p++}`);
+      params.push(user.id);
+    } else if (user.role === 'Receptionist') {
+      conditions.push(grantedProfessionalScope('a.professional_user_id', `$${p++}`));
+      params.push(user.id);
+    }
+
+    const result = await pool.query<{ client_user_id: string }>(
+      `SELECT DISTINCT a.client_user_id
+       FROM appointments a
+       JOIN auth.users u ON u.id = a.professional_user_id
+       WHERE ${conditions.join(' AND ')}`,
+      params,
+    );
+
+    return sendData(res, { client_user_ids: result.rows.map((r) => Number(r.client_user_id)) });
+  }));
+
+  app.get('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -882,9 +963,9 @@ export function mountAppointmentRoutes(
     }
 
     return sendData(res, row);
-  });
+  }));
 
-  app.get('/api/appointments', guards.auth, guards.passwordReady, async (req, res) => {
+  app.get('/api/appointments', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
       return sendError(res, 400, 'no_business', 'Business context required');
@@ -896,7 +977,7 @@ export function mountAppointmentRoutes(
 
     // All filter values go through parameterized $N — never string-interpolated.
     const conditions: string[] = [`u.business_id = $1`];
-    const params: unknown[] = [user.business_id];
+    const params: SqlParam[] = [user.business_id];
     let p = 2;
 
     if (user.role === 'Client') {
@@ -906,11 +987,7 @@ export function mountAppointmentRoutes(
       conditions.push(`a.professional_user_id = $${p++}`);
       params.push(user.id);
     } else if (user.role === 'Receptionist') {
-      conditions.push(
-        `a.professional_user_id IN (
-           SELECT professional_user_id FROM calendar_grants WHERE grantee_user_id = $${p++}
-         )`,
-      );
+      conditions.push(grantedProfessionalScope('a.professional_user_id', `$${p++}`));
       params.push(user.id);
     }
 
@@ -919,14 +996,14 @@ export function mountAppointmentRoutes(
         return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
       }
       conditions.push(`a.starts_at >= $${p++}`);
-      params.push(req.query.date_from);
+      params.push(String(req.query.date_from));
     }
     if (req.query.date_to) {
       if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
         return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
       }
       conditions.push(`a.starts_at <= $${p++}`);
-      params.push(req.query.date_to);
+      params.push(String(req.query.date_to));
     }
     if (req.query.professional_user_id) {
       conditions.push(`a.professional_user_id = $${p++}`);
@@ -936,6 +1013,16 @@ export function mountAppointmentRoutes(
       conditions.push(`a.resource_id = $${p++}`);
       params.push(Number(req.query.resource_id));
     }
+    if (req.query.client_user_id && user.role !== 'Client') {
+      // Staff narrowing to one client's turnos. A Client is already pinned to their own above,
+      // so this param is meaningless (and must not widen their scope) for that role.
+      const clientId = Number(req.query.client_user_id);
+      if (!Number.isInteger(clientId) || clientId <= 0) {
+        return sendError(res, 422, 'invalid_request', 'client_user_id must be a positive integer');
+      }
+      conditions.push(`a.client_user_id = $${p++}`);
+      params.push(clientId);
+    }
     if (req.query.state) {
       // Requests span the whole future, so the Solicitudes screen filters by state rather than
       // paging through every earlier appointment.
@@ -943,13 +1030,13 @@ export function mountAppointmentRoutes(
         return sendError(res, 422, 'invalid_request', 'Unknown appointment state');
       }
       conditions.push(`a.state = $${p++}`);
-      params.push(req.query.state);
+      params.push(String(req.query.state));
     }
 
     const where = conditions.join(' AND ');
 
     const [rows, count] = await Promise.all([
-      pool.query<Record<string, unknown>>(
+      pool.query<AppointmentRow>(
         `SELECT a.*
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
@@ -973,5 +1060,5 @@ export function mountAppointmentRoutes(
         : rows.rows;
 
     return sendList(res, data, { page, limit, total: Number(count.rows[0].n) });
-  });
+  }));
 }
