@@ -1,6 +1,6 @@
 import { query, queryOne } from './core';
 import type { Queryable } from './core';
-import type { UsersWireRow } from '../auth';
+import { SESSION_DAYS, type UsersWireRow } from '../auth';
 
 // Login row carries the password material (never sent to the client) on top of the wire columns.
 export type LoginUserRow = UsersWireRow & { password_hash: string; password_salt: string };
@@ -20,8 +20,8 @@ export async function createSession(db: Queryable, userId: number, tokenHash: st
   await query(
     db,
     `INSERT INTO auth.sessions (user_id, token_hash, expires_at)
-     VALUES ($1, $2, now() + interval '7 days')`,
-    [userId, tokenHash],
+     VALUES ($1, $2, now() + make_interval(days => $3))`,
+    [userId, tokenHash, SESSION_DAYS],
   );
 }
 

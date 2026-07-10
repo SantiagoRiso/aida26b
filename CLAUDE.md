@@ -130,5 +130,8 @@ tables; INSERT+SELECT only on append-only). Migrations (`migrate.ts`): forward-o
 changed applied file throws), advisory-locked, each in its own tx; cutover creates tables
 dependency-ordered with inline FKs. Seeds are owner-pool, idempotent, not migrations.
 
-**Gotcha:** `SESSION_DAYS=7` (`auth.ts`) and the SQL `interval '7 days'` (`db/auth.ts`) are
-duplicated constants — keep in sync.
+**SSoT ↔ SQL drift:** where a value lives in both TS and SQL, prefer deriving over duplicating —
+`db/auth.ts` binds `SESSION_DAYS` into the session INSERT (`make_interval`), so the 7-day expiry has
+one source. Where the SQL side is an **immutable migration** (roles, appointment states, transition
+edges, ledger types, cancellation-cutoff default), it can't derive — `test/schema-ssot-drift.test.ts`
+asserts the SSoT constants still match the migration literals so drift fails a test, not production.
