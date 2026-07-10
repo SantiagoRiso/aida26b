@@ -7,6 +7,7 @@ import {
   isProtected,
   getCrudPolicy,
   getSoftDeletePolicy,
+  isOwnerScheduledTable,
 } from '../../shared/src/utils/utils';
 import {
   WEEKDAYS,
@@ -774,5 +775,31 @@ describe('clients SSOT: DNI column and secret-free read source', () => {
     expect((structure.tables.clients as any).sqlReadTable).toBe('auth.users_directory');
     expect((structure.tables.professionals as any).sqlReadTable).toBe('auth.users_directory');
     expect((structure.tables.clients as any).sqlTable).toBe('auth.users');
+  });
+});
+
+describe('owner-scheduled tables are derived from schedulable capabilities', () => {
+  // The generic write path fires the own/admin/grant schedule guard for these tables. The set
+  // must come from the descriptors (every schedulable capability's availability sources), not
+  // from names hardcoded in the engine — else a rename silently drops the guard.
+  it('matches exactly the availability sources declared by schedulable capabilities', () => {
+    const expected = new Set<string>();
+    for (const key of Object.keys(structure.tables) as Array<keyof typeof structure.tables>) {
+      const schedulable = getSchedulable(key);
+      if (!schedulable) continue;
+      expected.add(schedulable.availability.weeklySource);
+      expected.add(schedulable.availability.exceptionSource);
+    }
+    expect(expected.size).toBeGreaterThan(0);
+    for (const key of Object.keys(structure.tables)) {
+      expect(isOwnerScheduledTable(key)).toBe(expected.has(key));
+    }
+  });
+
+  it('guards schedules and schedule_exceptions but not appointments or services', () => {
+    expect(isOwnerScheduledTable('schedules')).toBe(true);
+    expect(isOwnerScheduledTable('schedule_exceptions')).toBe(true);
+    expect(isOwnerScheduledTable('appointments')).toBe(false);
+    expect(isOwnerScheduledTable('services')).toBe(false);
   });
 });

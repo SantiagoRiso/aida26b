@@ -14,7 +14,7 @@ import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
 import type { OwnScheduleTarget } from './crud-policy';
 import type { AuthUser } from '../auth';
-import { isBusinessScoped } from '../../../shared/src/utils/utils';
+import { isBusinessScoped, isOwnerScheduledTable } from '../../../shared/src/utils/utils';
 import type { ColumnValue, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
 
@@ -83,7 +83,7 @@ export async function postHandler(
   // Own+Admin+granted enforcement for schedule tables — the owner comes from the body on
   // create. Runs AFTER the generic role/reference checks so it refines (not preempts) their
   // 422 invalid_reference_role semantics; adds the own/grant 403/404 on top.
-  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+  if (isOwnerScheduledTable(tableName)) {
     const owner = req.body as OwnScheduleTarget | undefined;
     const guard = await assertOwnScheduleAllowed(pool, user, {
       professional_user_id: owner?.professional_user_id,

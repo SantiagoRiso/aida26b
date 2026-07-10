@@ -37,3 +37,21 @@ export function getSoftDeletePolicy(tableKey: TableKey): SoftDeletePolicy | unde
 export function getSchedulable(tableKey: TableKey): SchedulableCapability | undefined {
   return tableOf(tableKey).schedulable;
 }
+
+// Tables that store a schedulable owner's weekly/exception rows, derived from every schedulable
+// capability's availability sources — so the set follows the descriptors instead of being named
+// in the generic engine. Writes to these must pass the own/admin/grant schedule guard.
+let ownerScheduledTables: ReadonlySet<string> | null = null;
+export function isOwnerScheduledTable(tableKey: string): boolean {
+  if (ownerScheduledTables == null) {
+    const tables = new Set<string>();
+    for (const key of Object.keys(structure.tables) as TableKey[]) {
+      const schedulable = getSchedulable(key);
+      if (!schedulable) continue;
+      tables.add(schedulable.availability.weeklySource);
+      tables.add(schedulable.availability.exceptionSource);
+    }
+    ownerScheduledTables = tables;
+  }
+  return ownerScheduledTables.has(tableKey);
+}

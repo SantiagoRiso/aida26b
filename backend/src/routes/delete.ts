@@ -2,7 +2,7 @@ import express from 'express';
 import { Pool } from 'pg';
 
 import type { TableKey, TableRecordMap } from '../../../shared/src/types/types';
-import { getPkFields } from '../../../shared/src/utils/utils';
+import { getPkFields, isOwnerScheduledTable } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
@@ -61,7 +61,7 @@ export async function deleteHandler(
   );
 
   // Own+Admin+granted enforcement for schedule tables — owner read from the existing row.
-  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+  if (isOwnerScheduledTable(tableName)) {
     const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0]);
     if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);

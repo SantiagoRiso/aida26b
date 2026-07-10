@@ -1,7 +1,7 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import { getPkFields } from '../../../shared/src/utils/utils';
+import { getPkFields, isOwnerScheduledTable } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
@@ -102,7 +102,7 @@ export async function putHandler(
 
   // Own+Admin+granted enforcement for schedule tables — owner is read from the existing
   // row (authoritative), so a caller cannot edit a peer's row by omitting the owner in the body.
-  if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
+  if (isOwnerScheduledTable(tableName)) {
     const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0]);
     if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);
