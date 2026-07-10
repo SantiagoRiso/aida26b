@@ -147,6 +147,98 @@ describe('Client user creation', () => {
     expect(userRow.rows[0].display_name).toBe('Profile Client');
     expect(userRow.rows[0].role).toBe('Client');
   });
+
+  test('persists optional dni on the created user', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'dniclient1', password: 'clientpass9', role: 'Client', dni: '99887766' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await testPool.query<{ dni: string }>(
+      `SELECT dni FROM auth.users WHERE id = $1`,
+      [(res.body as { id: number }).id]
+    );
+    expect(row.rows[0].dni).toBe('99887766');
+  });
+});
+
+describe('client creation by non-admin staff', () => {
+  let proCookie: string;
+  let recCookie: string;
+  let clientCookie: string;
+
+  beforeAll(async () => {
+    const { passwordHash, passwordSalt } = await hashPassword('staffpass1');
+    await testPool.query(
+      `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+       VALUES
+         ('authzpro1', 'authzpro1@test.com', 'Authz Pro', $1, $2, 'Professional', $3, false),
+         ('authzrec1', 'authzrec1@test.com', 'Authz Rec', $1, $2, 'Receptionist', $3, false),
+         ('authzcli1', 'authzcli1@test.com', 'Authz Cli', $1, $2, 'Client', $3, false)`,
+      [passwordHash, passwordSalt, adminBusinessId]
+    );
+    proCookie = await login('authzpro1', 'staffpass1');
+    recCookie = await login('authzrec1', 'staffpass1');
+    clientCookie = await login('authzcli1', 'staffpass1');
+  });
+
+  test('professional creates a Client (201) stamped with their own business', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: proCookie,
+      body: { username: 'probooked1', password: 'clientpass1', role: 'Client' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await testPool.query<{ role: string; business_id: string }>(
+      `SELECT role, business_id FROM auth.users WHERE id = $1`,
+      [(res.body as { id: number }).id]
+    );
+    expect(row.rows[0].role).toBe('Client');
+    expect(String(row.rows[0].business_id)).toBe(adminBusinessId);
+  });
+
+  test('receptionist creates a Client (201)', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: recCookie,
+      body: { username: 'recbooked1', password: 'clientpass1', role: 'Client' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await testPool.query<{ role: string }>(
+      `SELECT role FROM auth.users WHERE id = $1`,
+      [(res.body as { id: number }).id]
+    );
+    expect(row.rows[0].role).toBe('Client');
+  });
+
+  test('professional requesting a Professional or Admin gets 403 and no row is created', async () => {
+    for (const role of ['Professional', 'Admin']) {
+      const res = await request('/api/admin/users', {
+        method: 'POST',
+        cookie: proCookie,
+        body: { username: `escalate_${role}`, password: 'clientpass1', role },
+      });
+      expect(res.status, `role ${role}`).toBe(403);
+    }
+
+    const rows = await testPool.query(
+      `SELECT 1 FROM auth.users WHERE username LIKE 'escalate_%'`
+    );
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  test('client caller gets 403 even when requesting role Client', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: clientCookie,
+      body: { username: 'selfmade1', password: 'clientpass1', role: 'Client' },
+    });
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('Professional user creation', () => {

@@ -225,4 +225,38 @@ describe('GET /api/availability', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
   });
+
+  test('open distinguishes a not-worked day from a fully booked one', async () => {
+    currentUser = staffUser();
+
+    // Tuesday is not in the weekly schedule: closed.
+    const closed = await request(`/api/availability?owner=prof:${proId}&date=2026-06-30`);
+    expect(closed.body.data.open).toBe(false);
+    expect(closed.body.data.slots).toHaveLength(0);
+
+    // A professional with a single slot that is booked: working day, nothing free.
+    const pro2 = await pool.query<{ id: string }>(
+      `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+       VALUES ('conf_pro_full', 'conf_pro_full@test.local', 'Dr. Lleno', 'h', 's', 'Professional', $1, false) RETURNING id`,
+      [bizId]
+    );
+    const pro2Id = Number(pro2.rows[0].id);
+    await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [
+      pro2Id,
+      JSON.stringify({ mon: [{ start: '09:00', end: '09:15', granularity_minutes: 15 }] }),
+    ]);
+    await pool.query(
+      `INSERT INTO appointments (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price)
+       VALUES ($1, $2, $3, '2026-06-29 09:00:00-03', 15, 'scheduled', 1000.00)`,
+      [clientId, pro2Id, serviceId]
+    );
+
+    const full = await request(`/api/availability?owner=prof:${pro2Id}&date=${MONDAY}`);
+    expect(full.body.data.open).toBe(true);
+    expect(full.body.data.slots).toHaveLength(0);
+
+    // Worked day with free slots stays open.
+    const free = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    expect(free.body.data.open).toBe(true);
+  });
 });

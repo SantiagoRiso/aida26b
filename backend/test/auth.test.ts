@@ -71,10 +71,11 @@ class FakeDb {
         username: params[0],
         email: params[1],
         display_name: params[2],
-        password_hash: params[3],
-        password_salt: params[4],
-        role: params[5],
-        business_id: params[6] ?? null,
+        dni: params[3] ?? null,
+        password_hash: params[4],
+        password_salt: params[5],
+        role: params[6],
+        business_id: params[7] ?? null,
         is_active: true,
         must_change_password: true,
       };
@@ -243,12 +244,18 @@ test('admin can create users and reset passwords', async () => {
   });
 });
 
-test('non-admin cannot manage users', async () => {
+// Professionals/Receptionists may register Clients, but never staff accounts;
+// Clients cannot create users at all.
+test('non-admin cannot create staff users', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const cookie = await login(baseUrl, 'pro', 'propass');
-    const createUser = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie, body: { username: 'other', password: 'otherpass', role: 'Client' } });
-    assert.equal(createUser.status, 403);
+    const createStaff = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie, body: { username: 'other', password: 'otherpass', role: 'Admin' } });
+    assert.equal(createStaff.status, 403);
+
+    const clientCookie = await login(baseUrl, 'client', 'clientpass');
+    const asClient = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: clientCookie, body: { username: 'other2', password: 'otherpass', role: 'Client' } });
+    assert.equal(asClient.status, 403);
   });
 });
 

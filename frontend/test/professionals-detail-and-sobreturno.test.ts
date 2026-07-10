@@ -29,26 +29,37 @@ describe('ProfessionalDetail action gating', () => {
   });
 });
 
-// Mirrors CalendarView.handleSelect's month-view gate (#11): a full day is blocked unless
-// sobreturno mode is on, which deliberately books outside published availability.
-function monthClickBlocked(sobreturno: boolean, view: string, dayHasAvailability: boolean | undefined): boolean {
-  return !sobreturno && view === 'dayGridMonth' && dayHasAvailability === false;
+// Mirrors CalendarView.handleSelect's month-view gate: a day without free slots is blocked
+// unless sobreturno mode is on, and the block message says WHY — fully booked vs not worked.
+type DayAvailability = 'free' | 'full' | 'closed';
+function monthClickVerdict(
+  sobreturno: boolean,
+  view: string,
+  day: DayAvailability | undefined,
+): 'allowed' | 'dayFullyBooked' | 'noSlotsThatDay' {
+  if (sobreturno || view !== 'dayGridMonth' || day === 'free' || day === undefined) return 'allowed';
+  return day === 'full' ? 'dayFullyBooked' : 'noSlotsThatDay';
 }
 
 describe('month-view sobreturno booking gate', () => {
-  it('blocks a full day in month view when sobreturno is off', () => {
-    expect(monthClickBlocked(false, 'dayGridMonth', false)).toBe(true);
+  it('blocks a fully booked day with the fully-booked message', () => {
+    expect(monthClickVerdict(false, 'dayGridMonth', 'full')).toBe('dayFullyBooked');
   });
 
-  it('allows a full day in month view when sobreturno is on', () => {
-    expect(monthClickBlocked(true, 'dayGridMonth', false)).toBe(false);
+  it('blocks a not-worked day with the not-worked message', () => {
+    expect(monthClickVerdict(false, 'dayGridMonth', 'closed')).toBe('noSlotsThatDay');
   });
 
-  it('never blocks a day that has availability', () => {
-    expect(monthClickBlocked(false, 'dayGridMonth', true)).toBe(false);
+  it('allows any day when sobreturno is on', () => {
+    expect(monthClickVerdict(true, 'dayGridMonth', 'full')).toBe('allowed');
+    expect(monthClickVerdict(true, 'dayGridMonth', 'closed')).toBe('allowed');
+  });
+
+  it('never blocks a day with free slots', () => {
+    expect(monthClickVerdict(false, 'dayGridMonth', 'free')).toBe('allowed');
   });
 
   it('does not apply the month gate in other views', () => {
-    expect(monthClickBlocked(false, 'timeGridWeek', false)).toBe(false);
+    expect(monthClickVerdict(false, 'timeGridWeek', 'full')).toBe('allowed');
   });
 });

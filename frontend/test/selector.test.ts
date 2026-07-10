@@ -44,6 +44,25 @@ describe('Selector — searchable (typeahead)', () => {
     expect(rendered[0]).toContain('Nick Riviera');
   });
 
+  it('clears the filter after a selection so reopening shows every option', async () => {
+    const wrapper = mount(Selector, { props: { modelValue: null, options, searchable: true } });
+    await openAndQuery(wrapper, 'lisa');
+    expect(wrapper.findAll('[role=option]')).toHaveLength(1);
+    await wrapper.setProps({ modelValue: '3' });
+    // Close, then reopen without typing: the old query must not still be filtering.
+    await wrapper.get('button').trigger('click');
+    await wrapper.get('button').trigger('click');
+    expect(wrapper.findAll('[role=option]')).toHaveLength(options.length);
+  });
+
+  it('clears the filter when the input is left without choosing', async () => {
+    const wrapper = mount(Selector, { props: { modelValue: null, options, searchable: true } });
+    await openAndQuery(wrapper, 'lisa');
+    await wrapper.get('input').trigger('blur');
+    await wrapper.get('button').trigger('click');
+    expect(wrapper.findAll('[role=option]')).toHaveLength(options.length);
+  });
+
   it('emits update:modelValue with the option value when one is chosen', async () => {
     const wrapper = mount(Selector, { props: { modelValue: null, options, searchable: true } });
     const input = wrapper.get('input');

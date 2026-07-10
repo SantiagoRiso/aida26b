@@ -304,7 +304,18 @@ describe('POST /api/ledger — Receptionist write matrix (D-23/D-24)', () => {
     expect(res.status).toBe(201);
   });
 
-  test('receptionist cannot create a payment (D-24) → 403', async () => {
+  test('receptionist with grant creates appointment-linked payment → 201', async () => {
+    currentUser = asUser(recepWithGrantId, 'Receptionist');
+    const res = await req('POST', '/api/ledger', {
+      client_user_id: clientId,
+      appointment_id: apptId,
+      entry_type: 'payment',
+      amount_ars: '100.00',
+    });
+    expect(res.status).toBe(201);
+  });
+
+  test('receptionist standalone payment (no appointment_id) → 403', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
     const res = await req('POST', '/api/ledger', {
       client_user_id: clientId,

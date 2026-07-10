@@ -254,6 +254,48 @@ describe('useAppointmentCalendar snap grid', () => {
   });
 });
 
+describe('useAppointmentCalendar hides non-events', () => {
+  const viewer = ref<AuthUser | null>(null);
+  const handlers = {
+    onSelect: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onSelect'],
+    onEventClick: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventClick'],
+    onEventDrop: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventDrop'],
+    onEventResize: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventResize'],
+  };
+
+  function appt(id: number, state: string, starts = '2026-07-06T10:00:00Z', ends = '2026-07-06T10:30:00Z'): Appointment {
+    return {
+      id, client_user_id: 1, professional_user_id: 1, resource_id: null, service_id: 1,
+      starts_at: starts, duration_minutes: 30, ends_at: ends, state,
+      name: null, description: null, price: '100.00',
+      override_conflict: false, override_actor_id: null, staff_note: null,
+    };
+  }
+
+  it('canceled and rejected never render as events; completed and no_show stay (history/billing)', () => {
+    const appointments = ref<Appointment[]>([
+      appt(1, 'requested'),
+      appt(2, 'scheduled'),
+      appt(3, 'completed'),
+      appt(4, 'canceled'),
+      appt(5, 'no_show'),
+      appt(6, 'rejected'),
+    ]);
+    const { calendarOptions } = useAppointmentCalendar(appointments, viewer, handlers);
+    const ids = (calendarOptions.value.events as { id: string }[]).map((e) => e.id);
+    expect(ids).toEqual(['1', '2', '3', '5']);
+  });
+
+  it('a hidden appointment does not stretch the grid working hours', () => {
+    // A canceled 05:00 sobreturno renders nothing, so it must not widen the visible grid either.
+    const appointments = ref<Appointment[]>([
+      appt(1, 'canceled', '2026-07-06T05:00:00', '2026-07-06T05:30:00'),
+    ]);
+    const { timeBounds } = useAppointmentCalendar(appointments, viewer, handlers);
+    expect(timeBounds.value.min).toBe('07:00:00');
+  });
+});
+
 describe('useConflictVerdict.describe', () => {
   const { describe: describeConflict } = useConflictVerdict();
 

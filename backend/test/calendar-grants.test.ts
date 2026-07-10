@@ -377,6 +377,11 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
     expect(data).toHaveLength(1);
   });
 
+  test('Client cannot list grants → 403 (staff-internal data)', async () => {
+    const res = await request('/api/calendar-grants', { cookie: clientCookie });
+    expect(res.status).toBe(403);
+  });
+
   test('Cross-business grants are never returned to main-biz admin', async () => {
     const res = await request('/api/calendar-grants', { cookie: adminCookie });
     expect(res.status).toBe(200);
@@ -401,5 +406,56 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
     const data = (res.body as { data: Array<{ professional_user_id: unknown }> }).data;
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
+  });
+});
+
+// Generic CRUD on professionals is grant-scoped for receptionists: their world is
+// the calendars they were granted. Everyone else stays unscoped.
+describe('Grant scoping of professionals (generic CRUD)', () => {
+  beforeAll(async () => {
+    await testPool.query('DELETE FROM calendar_grants');
+    // Grant only P1 to the receptionist; P2 stays ungranted.
+    await testPool.query(
+      `INSERT INTO calendar_grants (professional_user_id, grantee_user_id) VALUES ($1, $2)`,
+      [p1UserId, receptionistUserId]
+    );
+  });
+
+  test('Receptionist lists professionals → only granted (P1)', async () => {
+    const res = await request('/api/professionals', { cookie: receptionistCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    expect(data).toHaveLength(1);
+    expect(String(data[0].id)).toBe(String(p1UserId));
+  });
+
+  test('Receptionist gets a granted professional by id → 200', async () => {
+    const res = await request(`/api/professionals?id=${p1UserId}`, { cookie: receptionistCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: { id: unknown } }).data;
+    expect(String(data.id)).toBe(String(p1UserId));
+  });
+
+  test('Receptionist gets an ungranted professional by id → 404, not 403', async () => {
+    const res = await request(`/api/professionals?id=${p2UserId}`, { cookie: receptionistCookie });
+    expect(res.status).toBe(404);
+  });
+
+  test('Admin lists professionals → all in business (unscoped)', async () => {
+    const res = await request('/api/professionals', { cookie: adminCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    const ids = data.map((p) => String(p.id));
+    expect(ids).toContain(String(p1UserId));
+    expect(ids).toContain(String(p2UserId));
+  });
+
+  test('Client lists professionals → all in business (portal booking depends on this)', async () => {
+    const res = await request('/api/professionals', { cookie: clientCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    const ids = data.map((p) => String(p.id));
+    expect(ids).toContain(String(p1UserId));
+    expect(ids).toContain(String(p2UserId));
   });
 });
