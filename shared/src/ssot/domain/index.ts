@@ -39,7 +39,7 @@ export type {
   ConflictOwner,
   BookedAppointment,
 } from './conflict';
-export { LEDGER_ENTRY_TYPES } from './finance';
+export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES } from './finance';
 export type { LedgerEntryType } from './finance';
 export { AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES };
 export { ROLE_OPTIONS };

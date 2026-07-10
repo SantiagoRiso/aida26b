@@ -1,16 +1,19 @@
 import type { TableStructure } from '../../types/types';
 import { pkColumn } from './business';
 
-// Two adjustment subtypes replace the single 'adjustment': debit increases debt,
-// credit decreases it. Balance = SUM(charge + adjustment_debit) - SUM(payment + adjustment_credit).
+// Each entry's sign drives the balance: debits increase the client's debt, credits reduce it.
+// Balance = Σ(debits) − Σ(credits) — the one place the debit/credit split is declared.
 export const LEDGER_ENTRY_TYPES = [
-  { value: 'charge',             label: { es: 'Cargo',              en: 'Charge' } },
-  { value: 'payment',            label: { es: 'Pago',               en: 'Payment' } },
-  { value: 'adjustment_debit',   label: { es: 'Ajuste (débito)',    en: 'Adjustment (debit)' } },
-  { value: 'adjustment_credit',  label: { es: 'Ajuste (crédito)',   en: 'Adjustment (credit)' } },
+  { value: 'charge',             label: { es: 'Cargo',              en: 'Charge' },              sign: 'debit' },
+  { value: 'payment',            label: { es: 'Pago',               en: 'Payment' },             sign: 'credit' },
+  { value: 'adjustment_debit',   label: { es: 'Ajuste (débito)',    en: 'Adjustment (debit)' },  sign: 'debit' },
+  { value: 'adjustment_credit',  label: { es: 'Ajuste (crédito)',   en: 'Adjustment (credit)' }, sign: 'credit' },
 ] as const;
 
 export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number]['value'];
+
+export const LEDGER_DEBIT_TYPES = LEDGER_ENTRY_TYPES.filter((t) => t.sign === 'debit').map((t) => t.value);
+export const LEDGER_CREDIT_TYPES = LEDGER_ENTRY_TYPES.filter((t) => t.sign === 'credit').map((t) => t.value);
 
 export const financeTables = {
   // Immutable: balance is SUM over entries; corrections are new adjustment rows.

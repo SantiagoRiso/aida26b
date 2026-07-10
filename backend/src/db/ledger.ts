@@ -1,6 +1,7 @@
 import { query, queryOne } from './core';
 import type { Queryable } from './core';
 import type { LedgerEntryRow } from '../../../shared/src/ssot/query-types';
+import { LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES } from '../../../shared/src/ssot/domain';
 
 // Post a session charge for a completed appointment, once. The NOT EXISTS guard keeps it
 // idempotent if a charge for this appointment was already written. Returns the new entry id,
@@ -62,18 +63,19 @@ export function insertLedgerEntry(
   );
 }
 
-// Current-account balance = Σ(charge + adjustment_debit) − Σ(payment + adjustment_credit).
+// Current-account balance = Σ(debits) − Σ(credits); the debit/credit split comes from the SSOT
+// entry-type signs, not literals here.
 export function getClientBalance(db: Queryable, clientUserId: number): Promise<string> {
   return queryOne<{ balance_ars: string }>(
     db,
     `SELECT
-       COALESCE(SUM(amount_ars) FILTER (WHERE entry_type IN ('charge', 'adjustment_debit')),  0)
+       COALESCE(SUM(amount_ars) FILTER (WHERE entry_type = ANY($2)), 0)
        -
-       COALESCE(SUM(amount_ars) FILTER (WHERE entry_type IN ('payment', 'adjustment_credit')), 0)
+       COALESCE(SUM(amount_ars) FILTER (WHERE entry_type = ANY($3)), 0)
        AS balance_ars
      FROM ledger_entries
      WHERE client_user_id = $1`,
-    [clientUserId],
+    [clientUserId, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES],
   ).then((r) => r?.balance_ars ?? '0');
 }
 
