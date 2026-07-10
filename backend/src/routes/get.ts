@@ -20,12 +20,14 @@ import {
   sendError,
 } from "../status_messages";
 
-import { assertCrudAllowed, reNumberFragment, getSqlTable } from "./crud-policy";
+import { assertCrudAllowed, buildScopeConditions, getSqlTable } from "./crud-policy";
 import type { AuthUser } from "../auth";
 
 import type {
   TableKey,
+  TableRecordMap,
   ColumnDef,
+  SqlParam,
   Response as QueryResponse,
 } from "../../../shared/src/types/types";
 
@@ -66,6 +68,8 @@ export async function getHandler(
       businessParams: allowed.businessParams,
       ownerWhere: allowed.ownerWhere,
       ownerParams: allowed.ownerParams,
+      grantWhere: allowed.grantWhere,
+      grantParams: allowed.grantParams,
       discriminatorWhere: allowed.discriminatorWhere,
       discriminatorParams: allowed.discriminatorParams,
     });
@@ -77,49 +81,11 @@ export async function getHandler(
     businessParams: allowed.businessParams,
     ownerWhere: allowed.ownerWhere,
     ownerParams: allowed.ownerParams,
+    grantWhere: allowed.grantWhere,
+    grantParams: allowed.grantParams,
     discriminatorWhere: allowed.discriminatorWhere,
     discriminatorParams: allowed.discriminatorParams,
   });
-}
-
-// Discriminator appears first so the DB can use it for index selection.
-function buildScopeConditions(
-  allowed: {
-    businessWhere: string;
-    businessParams: unknown[];
-    ownerWhere?: string;
-    ownerParams?: unknown[];
-    discriminatorWhere?: string;
-    discriminatorParams?: unknown[];
-  },
-  startIndex: number,
-): { conditions: string[]; values: unknown[]; nextIndex: number } {
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let idx = startIndex;
-
-  if (allowed.discriminatorWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, idx);
-    conditions.push(sql);
-    values.push(...(allowed.discriminatorParams ?? []));
-    idx = nextIndex;
-  }
-
-  if (allowed.businessWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, idx);
-    conditions.push(sql);
-    values.push(...allowed.businessParams);
-    idx = nextIndex;
-  }
-
-  if (allowed.ownerWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, idx);
-    conditions.push(sql);
-    values.push(...(allowed.ownerParams ?? []));
-    idx = nextIndex;
-  }
-
-  return { conditions, values, nextIndex: idx };
 }
 
 export function buildListQuery(
@@ -131,10 +97,10 @@ export function buildListQuery(
   // Pre-built scope conditions (with $N starting at 1) and their values.
   // paramIndex begins AFTER these to avoid numbering collisions.
   scopeConditions: string[] = [],
-  scopeValues: unknown[] = [],
+  scopeValues: SqlParam[] = [],
 ) {
   const conditions: string[] = [...scopeConditions];
-  const values: unknown[] = [...scopeValues];
+  const values: SqlParam[] = [...scopeValues];
   let paramIndex = scopeValues.length + 1;
 
   for (const [key, rawValue] of Object.entries(query)) {
@@ -161,17 +127,19 @@ export function buildListQuery(
       const negated = strVal.startsWith("!");
       const actualVal = negated ? strVal.slice(1) : strVal;
 
-      if (config.type === "string" && !config.options) {
-        conditions.push(
-          `"${fieldName}"::text ${negated ? "NOT " : ""}ILIKE $${paramIndex}`
-        );
-        values.push(`%${actualVal}%`);
-        paramIndex++;
-      } else if (config.options) {
+      // A foreign-key column holds an opaque id, never free text — match it exactly.
+      // Substring (ILIKE) matching an id would let `1` also match `10`, `21`, …
+      if (config.foreignKey || config.options) {
         conditions.push(
           `"${fieldName}" ${negated ? "!=" : "="} $${paramIndex}`
         );
         values.push(actualVal);
+        paramIndex++;
+      } else if (config.type === "string") {
+        conditions.push(
+          `"${fieldName}"::text ${negated ? "NOT " : ""}ILIKE $${paramIndex}`
+        );
+        values.push(`%${actualVal}%`);
         paramIndex++;
       } else if (config.type === "number") {
         const commaIdx = actualVal.indexOf(",");
@@ -427,11 +395,13 @@ async function getListOfTable(
   allowed: {
     sqlTable: string;
     businessWhere: string;
-    businessParams: unknown[];
+    businessParams: SqlParam[];
     ownerWhere?: string;
-    ownerParams?: unknown[];
+    ownerParams?: SqlParam[];
+    grantWhere?: string;
+    grantParams?: SqlParam[];
     discriminatorWhere?: string;
-    discriminatorParams?: unknown[];
+    discriminatorParams?: SqlParam[];
   },
 ) {
   try {
@@ -467,15 +437,17 @@ async function getListOfTable(
 async function getRowByPKs(
   pool: Pool,
   tableName: TableKey,
-  pkValues: unknown[],
+  pkValues: SqlParam[],
   allowed: {
     sqlTable: string;
     businessWhere: string;
-    businessParams: unknown[];
+    businessParams: SqlParam[];
     ownerWhere?: string;
-    ownerParams?: unknown[];
+    ownerParams?: SqlParam[];
+    grantWhere?: string;
+    grantParams?: SqlParam[];
     discriminatorWhere?: string;
-    discriminatorParams?: unknown[];
+    discriminatorParams?: SqlParam[];
   },
 ) {
   const pkFields = getPkFields(tableName);
@@ -483,31 +455,11 @@ async function getRowByPKs(
   const softDelete = softDeleteClause(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
-  const allParams: unknown[] = [...pkValues];
-  const extraConditions: string[] = [];
-
-  // Discriminator before business scope for index efficiency.
-  let nextIdx = pkValues.length + 1;
-
-  if (allowed.discriminatorWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextIdx);
-    extraConditions.push(sql);
-    allParams.push(...(allowed.discriminatorParams ?? []));
-    nextIdx = nextIndex;
-  }
-
-  if (allowed.businessWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextIdx);
-    extraConditions.push(sql);
-    allParams.push(...allowed.businessParams);
-    nextIdx = nextIndex;
-  }
-  if (allowed.ownerWhere) {
-    const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextIdx);
-    extraConditions.push(sql);
-    allParams.push(...(allowed.ownerParams ?? []));
-    nextIdx = nextIndex;
-  }
+  const { conditions: extraConditions, values: scopeValues } = buildScopeConditions(
+    allowed,
+    pkValues.length + 1,
+  );
+  const allParams: SqlParam[] = [...pkValues, ...scopeValues];
 
   const extraClause = extraConditions.length > 0 ? ` AND ${extraConditions.join(" AND ")}` : "";
 
@@ -529,11 +481,13 @@ async function getRowOfTable(
   allowed: {
     sqlTable: string;
     businessWhere: string;
-    businessParams: unknown[];
+    businessParams: SqlParam[];
     ownerWhere?: string;
-    ownerParams?: unknown[];
+    ownerParams?: SqlParam[];
+    grantWhere?: string;
+    grantParams?: SqlParam[];
     discriminatorWhere?: string;
-    discriminatorParams?: unknown[];
+    discriminatorParams?: SqlParam[];
   },
 ) {
   const pk = validateOnlyPk(tableName, query);
@@ -545,7 +499,7 @@ async function getRowOfTable(
   const pkFields = getPkFields(tableName);
 
   const pkValues = pkFields.map(
-    (pkField) => (pk.data as Record<string, unknown>)[pkField]
+    (pkField) => pk.data[pkField as keyof TableRecordMap[TableKey]]
   );
 
   const responseQuery: QueryResponse = await getRowByPKs(

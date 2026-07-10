@@ -6,11 +6,16 @@ import type {
   CrudPolicy,
   RoleRequired,
   OwnershipDescriptor,
+  GrantScopeDescriptor,
   BusinessJoinDescriptor,
   RoleDiscriminator,
   Role,
+  SqlParam,
 } from '../../../shared/src/types/types';
 import type { AuthUser } from '../auth';
+import type { ColumnValue } from '../../../shared/src/types/types';
+import { hasCalendarGrant } from '../grant-queries';
+import { getRoleCheckedColumns } from '../helpers';
 
 // Ordinary configuration entities declare a `crud` policy in the SSOT; protected/workflow
 // entities expose none and are unreachable through these routes.
@@ -53,9 +58,11 @@ export function getCrudPolicy(table: TableKey): CrudPolicy | null {
 
 export type ScopeFragment = {
   businessWhere:  string;    // '' when Admin with no business or no scope needed
-  businessParams: unknown[];
+  businessParams: SqlParam[];
   ownerWhere?:    string;
-  ownerParams?:   unknown[];
+  ownerParams?:   SqlParam[];
+  grantWhere?:    string;
+  grantParams?:   SqlParam[];
 };
 
 export type CrudCheck =
@@ -65,11 +72,13 @@ export type CrudCheck =
       sqlTable: string;                // schema-qualified SQL table for writes
       sqlReadTable: string;            // schema-qualified source for reads (may be a secret-free view)
       businessWhere: string;
-      businessParams: unknown[];
+      businessParams: SqlParam[];
       ownerWhere?: string;
-      ownerParams?: unknown[];
+      ownerParams?: SqlParam[];
+      grantWhere?: string;
+      grantParams?: SqlParam[];
       discriminatorWhere?: string;     // role discriminator clause (renumbered by caller)
-      discriminatorParams?: unknown[]; // single-element array with the discriminator value
+      discriminatorParams?: SqlParam[]; // single-element array with the discriminator value
     }
   | { ok: false; status: number; code: string; message: string };
 
@@ -79,10 +88,51 @@ export function reNumberFragment(template: string, startIndex: number): { sql: s
   return { sql, nextIndex: idx };
 }
 
+export type ScopeConditionsInput = {
+  businessWhere: string;
+  businessParams: SqlParam[];
+  ownerWhere?: string;
+  ownerParams?: SqlParam[];
+  grantWhere?: string;
+  grantParams?: SqlParam[];
+  discriminatorWhere?: string;
+  discriminatorParams?: SqlParam[];
+};
+
+// Renumbers and orders the scope fragments (discriminator → business → owner → grant) starting at
+// `startIndex`, returning the conditions and their bound params. The single source for how a
+// resolved CrudCheck's scope becomes SQL — shared by every generic read/write path so the ordering
+// and param numbering can never drift between them. Discriminator first so the DB can index on it.
+export function buildScopeConditions(
+  allowed: ScopeConditionsInput,
+  startIndex: number,
+): { conditions: string[]; values: SqlParam[]; nextIndex: number } {
+  const conditions: string[] = [];
+  const values: SqlParam[] = [];
+  let idx = startIndex;
+
+  const fragments: Array<[string | undefined, SqlParam[] | undefined]> = [
+    [allowed.discriminatorWhere, allowed.discriminatorParams],
+    [allowed.businessWhere, allowed.businessParams],
+    [allowed.ownerWhere, allowed.ownerParams],
+    [allowed.grantWhere, allowed.grantParams],
+  ];
+
+  for (const [where, params] of fragments) {
+    if (!where) continue;
+    const { sql, nextIndex } = reNumberFragment(where, idx);
+    conditions.push(sql);
+    values.push(...(params ?? []));
+    idx = nextIndex;
+  }
+
+  return { conditions, values, nextIndex: idx };
+}
+
 export function buildBusinessScope(
   tableKey: TableKey,
   user: AuthUser,
-): { businessWhere: string; businessParams: unknown[] } {
+): { businessWhere: string; businessParams: SqlParam[] } {
   // Only a super-admin (Admin with no business) sees every tenant's rows. The DB
   // enforces business_id IS NULL ⟹ role = 'Admin', but gate on role here too so an
   // app-layer bug can never widen scope to a non-admin who somehow lacks a business.
@@ -168,7 +218,7 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
   // but a Client reading `professionals` must NOT be scoped: the descriptor there targets only
   // a Professional editing their own profile, and Clients need the full list to book.
   let ownerWhere: string | undefined;
-  let ownerParams: unknown[] | undefined;
+  let ownerParams: SqlParam[] | undefined;
   if (meta.ownership) {
     const ownership = meta.ownership as OwnershipDescriptor;
     const opsMatch = !ownership.ops || ownership.ops.includes(op);
@@ -176,6 +226,17 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
       ownerWhere = `"${ownership.ownerColumn}" = ?`;
       ownerParams = [user.id];
     }
+  }
+
+  // Grant scoping: rows a grant table names for the caller — scoping, not a new error
+  // path, so ungranted single-row access surfaces as the generic empty/404. Composite-pk
+  // tables are not supported (a grant row names a single pk value).
+  let grantWhere: string | undefined;
+  let grantParams: SqlParam[] | undefined;
+  const gs = meta.grantScope as GrantScopeDescriptor | undefined;
+  if (gs && user.role === gs.role && !Array.isArray(meta.pk)) {
+    grantWhere = `"${meta.pk}" IN (SELECT "${gs.grantRowColumn}" FROM ${gs.grantTable} WHERE "${gs.granteeColumn}" = ?)`;
+    grantParams = [user.id];
   }
 
   const disc = getRoleDiscriminatorFragment(name as TableKey);
@@ -194,6 +255,8 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
     businessParams,
     ownerWhere,
     ownerParams,
+    grantWhere,
+    grantParams,
     discriminatorWhere,
     discriminatorParams,
   };
@@ -264,11 +327,7 @@ export async function assertOwnScheduleAllowed(
         : { ok: false, status: 403, code: 'forbidden', message: 'A Professional may edit only their own schedule' };
     }
     // Receptionist / other staff need an explicit calendar grant for this professional.
-    const grant = await db.query(
-      `SELECT 1 FROM calendar_grants WHERE professional_user_id = $1 AND grantee_user_id = $2`,
-      [professionalUserId, user.id],
-    );
-    return grant.rows.length > 0
+    return (await hasCalendarGrant(db, professionalUserId, user.id))
       ? { ok: true }
       : { ok: false, status: 403, code: 'forbidden', message: 'A calendar grant for this professional is required' };
   }
@@ -276,4 +335,46 @@ export async function assertOwnScheduleAllowed(
   // Resource target: managed by Admin (handled above) + granted staff. The grant model is
   // per-professional only, so non-admin staff cannot manage resources in D1.
   return { ok: false, status: 403, code: 'forbidden', message: 'Only an Admin may manage resource schedules' };
+}
+
+export type ReferenceCheckResult =
+  | { ok: true }
+  | { ok: false; status: number; code: string; message: string; fields: Record<string, string> };
+
+// Verify FK columns with a declared referencesUserRole point to an active user of the right role,
+// and that every such reference shares one business so a row can never mix tenants (enforced even
+// for super-admins). Replaces the removed composite-FK DB constraint; shared by create and update
+// so the tenant-integrity rule lives in exactly one place.
+export async function assertRoleCheckedReferences(
+  db: Pool | PoolClient,
+  table: TableKey,
+  data: Record<string, ColumnValue>,
+  user: AuthUser,
+): Promise<ReferenceCheckResult> {
+  let referencedBusiness: number | undefined;
+  for (const { column, role } of getRoleCheckedColumns(table)) {
+    const refId = data[column];
+    if (refId == null) continue;
+    const check = await db.query<{ business_id: string | null }>(
+      `SELECT business_id FROM auth.users WHERE id = $1 AND role = $2 AND deleted_at IS NULL`,
+      [refId, role],
+    );
+    const refBusiness = check.rows[0]?.business_id;
+    const invalidRef =
+      check.rows.length === 0 ||
+      refBusiness == null ||
+      (user.business_id != null && Number(refBusiness) !== user.business_id) ||
+      (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);
+    if (invalidRef) {
+      return {
+        ok: false,
+        status: 422,
+        code: 'invalid_reference_role',
+        message: `${column} must reference an active ${role} user`,
+        fields: { [column]: `must be an active ${role}` },
+      };
+    }
+    referencedBusiness = Number(refBusiness);
+  }
+  return { ok: true };
 }

@@ -6,13 +6,14 @@ import {
   getNotDerivableFields,
   tryQuery,
   formatTableColumnsForQuery,
-  getRoleCheckedColumns,
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, assertOwnScheduleAllowed } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
+import type { OwnScheduleTarget } from './crud-policy';
 import type { AuthUser } from '../auth';
 import { isBusinessScoped } from '../../../shared/src/utils/utils';
+import type { ColumnValue, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
 
 import {
   validateFullObject,
@@ -48,7 +49,7 @@ export async function postHandler(
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
   // Reject body fields that the server derives from the session.
-  const illegalFields = Object.keys(req.body as Record<string, unknown>).filter(
+  const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
     (k) => SERVER_DERIVED.has(k),
   );
   if (illegalFields.length > 0) {
@@ -67,45 +68,24 @@ export async function postHandler(
     return;
   }
 
-  // Verify FK columns with a declared referencesUserRole point to an active user of the
-  // right role, and derive the row's tenant from that user rather than the caller. Every
-  // role-checked reference must share one business, so no row can mix tenants — enforced
-  // even for super-admins, who would otherwise bypass the business restriction entirely.
-  // This replaces the removed composite-FK DB constraint.
-  const roleChecks = getRoleCheckedColumns(tableName);
-  let referencedBusiness: number | undefined;
-  for (const { column, role } of roleChecks) {
-    const refId = (validated.data as Record<string, unknown>)[column];
-    if (refId == null) continue;
-    const check = await pool.query<{ business_id: string | null }>(
-      `SELECT business_id FROM auth.users
-       WHERE id = $1 AND role = $2 AND deleted_at IS NULL`,
-      [refId, role]
-    );
-    const refBusiness = check.rows[0]?.business_id;
-    const invalidRef =
-      check.rows.length === 0 ||
-      refBusiness == null ||
-      (user.business_id != null && Number(refBusiness) !== user.business_id) ||
-      (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);
-    if (invalidRef) {
-      return sendError(
-        res, 422, 'invalid_reference_role',
-        `${column} must reference an active ${role} user`,
-        { [column]: `must be an active ${role}` }
-      );
-    }
-    referencedBusiness = Number(refBusiness);
+  const refCheck = await assertRoleCheckedReferences(
+    pool,
+    tableName,
+    validated.data as Record<string, ColumnValue>,
+    user,
+  );
+  if (!refCheck.ok) {
+    return sendError(res, refCheck.status, refCheck.code, refCheck.message, refCheck.fields);
   }
 
   // D-16: own+Admin+granted enforcement for schedule tables — the owner comes from the body on
   // create. Runs AFTER the generic role/reference checks so it refines (not preempts) their
   // 422 invalid_reference_role semantics; adds the own/grant 403/404 on top.
   if (tableName === 'schedules' || tableName === 'schedule_exceptions') {
-    const owner = req.body as Record<string, unknown>;
+    const owner = req.body as OwnScheduleTarget | undefined;
     const guard = await assertOwnScheduleAllowed(pool, user, {
-      professional_user_id: owner?.professional_user_id as number | string | null,
-      resource_id: owner?.resource_id as number | string | null,
+      professional_user_id: owner?.professional_user_id,
+      resource_id: owner?.resource_id,
     });
     if (!guard.ok) {
       return sendError(res, guard.status, guard.code, guard.message);
@@ -114,8 +94,8 @@ export async function postHandler(
 
   let notDerivableFields = getNotDerivableFields(tableName);
 
-  const valuesToInsert: unknown[] = notDerivableFields.map(
-    (fieldName) => (validated.data as Record<string, unknown>)[fieldName],
+  const valuesToInsert: SqlParam[] = notDerivableFields.map(
+    (fieldName) => (validated.data as Record<string, ColumnValue>)[fieldName],
   );
 
   // For businessScoped tables the business_id is not in the SSOT non-derivable fields

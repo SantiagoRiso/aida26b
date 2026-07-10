@@ -1,7 +1,7 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import type { Response } from '../../../shared/src/types/types';
+import type { Response, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
 import { getPkFields, getSoftDeletePolicy } from '../../../shared/src/utils/utils';
 
 import {
@@ -11,7 +11,7 @@ import {
 } from '../helpers';
 
 import { sendData, sendError } from '../status_messages';
-import { assertCrudAllowed, assertOwnScheduleAllowed, reNumberFragment } from './crud-policy';
+import { assertCrudAllowed, assertOwnScheduleAllowed, buildScopeConditions } from './crud-policy';
 import type { AuthUser } from '../auth';
 
 import {
@@ -54,7 +54,7 @@ export async function deleteHandler(
   }
 
   const pkValues = pkFields.map(
-    (pkField) => (pk.data as Record<string, unknown>)[pkField]
+    (pkField) => pk.data[pkField as keyof TableRecordMap[TableKey]]
   );
 
   // Own+Admin+granted enforcement for schedule tables — owner read from the existing row.
@@ -75,7 +75,7 @@ export async function deleteHandler(
   const softDelete = getSoftDeletePolicy(tableName);
 
   let query: string;
-  let params: unknown[];
+  let params: SqlParam[];
 
   if (softDelete) {
     // Referenced core records are archived, never physically removed.
@@ -94,26 +94,8 @@ export async function deleteHandler(
     nextParam += pkFields.length;
 
     // AND scope into WHERE so out-of-scope rows yield rowCount 0 → 404.
-    const scopeConditions: string[] = [];
-    if (allowed.discriminatorWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...(allowed.discriminatorParams ?? []));
-      nextParam = nextIndex;
-    }
-    if (allowed.businessWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...allowed.businessParams);
-      nextParam = nextIndex;
-    }
-    if (allowed.ownerWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...(allowed.ownerParams ?? []));
-      nextParam = nextIndex;
-    }
-
+    const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, nextParam);
+    params.push(...scopeValues);
     const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
 
     query = `
@@ -125,28 +107,9 @@ export async function deleteHandler(
   } else {
     const whereArguments = columnNamesEqualsNumber(pkFields, 1, ' AND ');
     params = [...pkValues];
-    let nextParam = pkValues.length + 1;
 
-    const scopeConditions: string[] = [];
-    if (allowed.discriminatorWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.discriminatorWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...(allowed.discriminatorParams ?? []));
-      nextParam = nextIndex;
-    }
-    if (allowed.businessWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.businessWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...allowed.businessParams);
-      nextParam = nextIndex;
-    }
-    if (allowed.ownerWhere) {
-      const { sql, nextIndex } = reNumberFragment(allowed.ownerWhere, nextParam);
-      scopeConditions.push(sql);
-      params.push(...(allowed.ownerParams ?? []));
-      nextParam = nextIndex;
-    }
-
+    const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, pkValues.length + 1);
+    params.push(...scopeValues);
     const scopeClause = scopeConditions.length > 0 ? ` AND ${scopeConditions.join(' AND ')}` : '';
 
     query = `

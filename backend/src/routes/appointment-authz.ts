@@ -1,5 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
 import type { AuthUser } from '../auth';
+import type { ColumnValue } from '../../../shared/src/types/types';
+import { hasCalendarGrant, grantedAppointmentJoin } from '../grant-queries';
+import { VOID_APPOINTMENT_STATES } from '../../../shared/src/ssot/domain';
+
+// SQL list literal of the void states, built from the shared SSOT const (values are code-owned,
+// never user input) so the "real service history" filter can never drift from the calendar's.
+const VOID_STATES_SQL = VOID_APPOINTMENT_STATES.map((s) => `'${s}'`).join(', ');
 
 export type AuthzResult =
   | { ok: true }
@@ -14,7 +21,7 @@ export async function auditInTx(
   outcome: 'success' | 'failure' | 'denied',
   entityId?: number,
   entityType = 'appointments',
-  details: Record<string, unknown> = {},
+  details: Record<string, ColumnValue | string[]> = {},
 ): Promise<void> {
   if (user.business_id == null) return;
   await client.query(
@@ -53,11 +60,7 @@ export async function assertAppointmentActionAllowed(
       : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only act on own appointments' };
   }
   // Receptionist: explicit calendar grant required.
-  const grant = await db.query(
-    `SELECT 1 FROM calendar_grants WHERE professional_user_id = $1 AND grantee_user_id = $2`,
-    [professionalUserId, user.id],
-  );
-  return grant.rows.length > 0
+  return (await hasCalendarGrant(db, professionalUserId, user.id))
     ? { ok: true }
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required for this professional' };
 }
@@ -99,22 +102,21 @@ export async function assertLedgerWriteAllowed(
     return { ok: true };
   }
 
-  // Receptionist: only appointment-linked charges on a granted calendar — no payments,
-  // adjustments, or standalone charges.
-  if (entryType !== 'charge') {
-    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists may only create charges' };
+  // Receptionist: appointment-linked charges and payments on a granted calendar — the front
+  // desk collects money for sessions. Adjustments and standalone entries stay admin-only.
+  if (entryType !== 'charge' && entryType !== 'payment') {
+    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists may only create appointment-linked charges and payments' };
   }
   if (appointmentId == null) {
-    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists must provide an appointment_id for charges' };
+    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists must provide an appointment_id' };
   }
   const r = await db.query<{ allowed: boolean }>(
     `SELECT EXISTS (
        SELECT 1
        FROM appointments a
-       JOIN calendar_grants g ON g.professional_user_id = a.professional_user_id
+       ${grantedAppointmentJoin('$3')}
        WHERE a.id             = $1
          AND a.client_user_id = $2
-         AND g.grantee_user_id = $3
      ) AS allowed`,
     [appointmentId, clientUserId, user.id],
   );
@@ -167,10 +169,9 @@ export async function assertLedgerReadAllowed(
     `SELECT EXISTS (
        SELECT 1
        FROM appointments a
-       JOIN calendar_grants g ON g.professional_user_id = a.professional_user_id
+       ${grantedAppointmentJoin('$2')}
        WHERE a.client_user_id  = $1
-         AND g.grantee_user_id = $2
-         AND a.state NOT IN ('canceled', 'rejected')
+         AND a.state NOT IN (${VOID_STATES_SQL})
      ) AS allowed`,
     [clientUserId, user.id],
   );
