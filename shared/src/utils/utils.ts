@@ -55,3 +55,14 @@ export function isOwnerScheduledTable(tableKey: string): boolean {
   }
   return ownerScheduledTables.has(tableKey);
 }
+
+// The FK columns that identify a schedule row's owner, from every schedulable capability — so the
+// generic engine's owner-reassignment guard follows the descriptors, not hardcoded column names.
+export function getScheduleOwnerForeignKeys(): string[] {
+  const fks = new Set<string>();
+  for (const key of Object.keys(structure.tables) as TableKey[]) {
+    const schedulable = getSchedulable(key);
+    if (schedulable) fks.add(schedulable.ownerForeignKey);
+  }
+  return [...fks];
+}

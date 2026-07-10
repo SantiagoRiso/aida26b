@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import {
   getEntityName,
   getNotDerivableFields,
+  getServerDerivedFields,
 } from '../helpers';
 
 import { buildInsertStatement } from '../db/generic';
@@ -24,9 +25,6 @@ import {
 } from '../validation/validate';
 
 type AuthedRequest = express.Request & { user?: AuthUser };
-
-// Fields whose values are always derived server-side and must never come from the request body.
-const SERVER_DERIVED = new Set(['business_id']);
 
 export async function postHandler(
   req: express.Request,
@@ -51,8 +49,9 @@ export async function postHandler(
   const entityName = getEntityName(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
+  const serverDerived = new Set(getServerDerivedFields(tableName));
   const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
-    (k) => SERVER_DERIVED.has(k),
+    (k) => serverDerived.has(k),
   );
   if (illegalFields.length > 0) {
     return sendError(

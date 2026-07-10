@@ -83,6 +83,11 @@ function getNotDerivableFields(table: TableKey): string[]{
   return notDerivableEntries.map(([fieldName, column]) => fieldName);
 }
 
+// Derivable columns are server-stamped and must never be accepted from the request body.
+function getServerDerivedFields(table: TableKey): string[]{
+  return getDerivableFields(table).map(([name]) => name);
+}
+
 function getReferencedRelations(tableName: TableKey): TableKey[]{
   const refs = (structure.tables[tableName] as TableStructure).referencedTables;
   return (Array.isArray(refs) ? refs : []) as TableKey[];
@@ -98,4 +103,4 @@ function getRoleCheckedColumns(tableName: TableKey): Array<{ column: string; rol
     .map(([column, def]) => ({ column, role: def.referencesUserRole! }));
 }
 
-export { guardRoute, guardMiddleware, getEntityName, getNotDerivableFields, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, getRoleCheckedColumns };
+export { guardRoute, guardMiddleware, getEntityName, getNotDerivableFields, getServerDerivedFields, getReferencedRelations, getDerivableFields, getFilterableColumns, getSortableColumns, getRoleCheckedColumns };

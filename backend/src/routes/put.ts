@@ -1,11 +1,12 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import { getPkFields, isOwnerScheduledTable } from '../../../shared/src/utils/utils';
+import { getPkFields, isOwnerScheduledTable, getScheduleOwnerForeignKeys } from '../../../shared/src/utils/utils';
 
 import {
   getEntityName,
   getNotDerivableFields,
+  getServerDerivedFields,
 } from '../helpers';
 
 import { query as runQuery } from '../db/core';
@@ -27,9 +28,6 @@ import {
 } from '../validation/validate';
 
 type AuthedRequest = express.Request & { user?: AuthUser };
-
-// Fields whose values are always derived server-side and must never come from the request body.
-const SERVER_DERIVED = new Set(['business_id']);
 
 // clients/professionals are logical views over auth.users. Even if the SSOT ever marks one
 // of these editable, generic writes must never touch privileged auth columns — enforced here
@@ -68,8 +66,9 @@ export async function putHandler(
   const entityName = getEntityName(tableName);
   const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
+  const serverDerived = new Set(getServerDerivedFields(tableName));
   const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
-    (k) => SERVER_DERIVED.has(k),
+    (k) => serverDerived.has(k),
   );
   if (illegalFields.length > 0) {
     return sendError(
@@ -110,14 +109,16 @@ export async function putHandler(
 
     // The owner is identity, not a mutable attribute: forbid reassigning a schedule row to another
     // owner through generic update. Without this, a caller authorized for the existing owner could
-    // hand the row to a peer (the guard below only validates the existing owner).
-    const body = validatedBody.data as Partial<TableRecordMap['schedules'] | TableRecordMap['schedule_exceptions']>;
-    const bodyProf = body.professional_user_id != null ? Number(body.professional_user_id) : null;
-    const bodyRes = body.resource_id != null ? Number(body.resource_id) : null;
-    const rowProf = existingRow.professional_user_id != null ? Number(existingRow.professional_user_id) : null;
-    const rowRes = existingRow.resource_id != null ? Number(existingRow.resource_id) : null;
-    if ((bodyProf != null && bodyProf !== rowProf) || (bodyRes != null && bodyRes !== rowRes)) {
-      return sendError(res, 403, 'forbidden', 'The owner of a schedule row cannot be changed');
+    // hand the row to a peer (the guard below only validates the existing owner). Owner FK columns
+    // come from the schedulable descriptors, not hardcoded here.
+    const body = validatedBody.data as Record<string, ColumnValue>;
+    const existing = existingRow as Record<string, string | null>;
+    for (const fk of getScheduleOwnerForeignKeys()) {
+      const bodyOwner = body[fk] != null ? Number(body[fk]) : null;
+      const rowOwner = existing[fk] != null ? Number(existing[fk]) : null;
+      if (bodyOwner != null && bodyOwner !== rowOwner) {
+        return sendError(res, 403, 'forbidden', 'The owner of a schedule row cannot be changed');
+      }
     }
 
     const guard = await assertOwnScheduleAllowed(pool, user, existingRow);
