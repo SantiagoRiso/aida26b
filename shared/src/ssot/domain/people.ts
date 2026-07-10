@@ -1,15 +1,6 @@
 import type { SoftDeletePolicy, SchedulableCapability, TableStructure } from '../../types/types';
 import { pkColumn, businessIdColumn } from './business';
 
-// Column allow-list for client/professional views of auth.users.
-// password_hash, password_salt, and username are deliberately excluded from the exposed set.
-// username stays out of the generic layer because it is auth-sensitive (login identity).
-const authUsersAllowedColumns = [
-  'id', 'business_id', 'role', 'display_name', 'email', 'phone', 'dni', 'bio', 'notes',
-  'is_active', 'must_change_password', 'deleted_at', 'deleted_by_user_id',
-  'created_at', 'updated_at',
-] as const;
-
 const softDelete: SoftDeletePolicy = {
   deletedAtColumn: 'deleted_at',
   deletedByColumn: 'deleted_by_user_id',
@@ -200,14 +191,10 @@ export const peopleTables = {
     uiName: { es: 'Cliente', en: 'Client' },
     title: { es: 'Clientes', en: 'Clients' },
     addButtonLabel: { es: 'Agregar Cliente', en: 'Add Client' },
-    // Physical table is auth.users; role discriminator limits reads/writes to Client rows.
     sqlTable: 'auth.users',
-    // Reads project the secret-free view (no password_hash/password_salt).
     sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Client' },
-    // Business is on auth.users directly; the discriminated table carries business_id.
     businessScoped: true,
-    // create: false — creation via POST /api/admin/users only.
     crud: { create: false, read: true, update: true, delete: true },
     softDelete,
     roleRequired: {
@@ -223,7 +210,7 @@ export const peopleTables = {
   // Logical entity backed by auth.users WHERE role='Professional'.
   // No separate table exists; sqlTable + roleDiscriminator redirect all generic SQL to auth.users.
   // Create is disabled — professionals are created only via POST /api/admin/users.
-  // Update is limited to profile fields (display_name, bio); see updateAllowedColumns.
+  // Update is limited to profile fields (display_name, bio).
   professionals: {
     columns: {
       id: pkColumn,
@@ -247,14 +234,10 @@ export const peopleTables = {
     uiName: { es: 'Profesional', en: 'Professional' },
     title: { es: 'Profesionales', en: 'Professionals' },
     addButtonLabel: { es: 'Agregar Profesional', en: 'Add Professional' },
-    // Physical table is auth.users; role discriminator limits reads/writes to Professional rows.
     sqlTable: 'auth.users',
-    // Reads project the secret-free view (no password_hash/password_salt).
     sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Professional' },
-    // Business is on auth.users directly; the discriminated table carries business_id.
     businessScoped: true,
-    // create: false — creation via POST /api/admin/users only.
     crud: { create: false, read: true, update: true, delete: true },
     softDelete,
     schedulable: professionalSchedulable,

@@ -2,7 +2,7 @@ import { detectOverlap } from './scheduling';
 import type { TimeInterval } from './scheduling';
 
 // Language-neutral conflict classes. The frontend localizes from `type` + `entity`; the API
-// never builds a display string (D-05).
+// never builds a display string.
 export type ConflictType =
   | 'professional_overlap'
   | 'resource_overlap'
@@ -55,14 +55,14 @@ function mergeMinutes(intervals: Array<{ start: number; end: number }>): Array<{
   return out;
 }
 
-// Whole-appointment containment (D-10): the proposed range must sit inside a single available window.
+// Whole-appointment containment: the proposed range must sit inside a single available window.
 function containedInGrid(pStart: number, pEnd: number, slots: TimeInterval[]): boolean {
   const merged = mergeMinutes(slots.map((s) => ({ start: toMin(s.start), end: toMin(s.end) })));
   return merged.some((iv) => iv.start <= pStart && pEnd <= iv.end);
 }
 
 // A normal booking must equal one whole grid slot (start AND length). Off-grid ⇒ slot_alignment,
-// the class staff override as a sobreturno (D-07b).
+// the class staff override as a sobreturno.
 function matchesGridSlot(pStart: number, pEnd: number, slots: TimeInterval[]): boolean {
   return slots.some((s) => toMin(s.start) === pStart && toMin(s.end) === pEnd);
 }

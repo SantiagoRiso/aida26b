@@ -4,13 +4,11 @@ import { pkColumn } from './business';
 // States from which no further transition is permitted; price captured at booking is frozen here.
 export const TERMINAL_STATES = new Set(['completed', 'canceled', 'no_show', 'rejected']);
 
-// Legal outgoing transitions per source state. Terminal states have no entry.
 export const TRANSITION_MAP: Record<string, readonly string[]> = {
   requested: ['scheduled', 'rejected', 'canceled'],
   scheduled: ['completed', 'canceled', 'no_show'],
 };
 
-// Returns { ok: true } on a valid edge, or { ok: false, message } otherwise.
 // Used by route handlers (422) and the frontend (hide illegal actions).
 export function assertValidTransition(
   from: string,
@@ -379,7 +377,6 @@ export const schedulingTables = {
   } satisfies TableStructure,
 };
 
-// Availability is computed, not stored: weekly pattern minus dated exceptions minus booked.
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
@@ -392,7 +389,7 @@ export type ScheduleExceptionInput = {
   is_unavailable: boolean;
   start_time?: string | null;
   end_time?: string | null;
-  // Slot size for a changed-hours "available" exception; null for full-day/blocked (D-07c).
+  // Slot size for a changed-hours "available" exception; null for full-day/blocked.
   granularity_minutes?: number | null;
 };
 
@@ -432,7 +429,7 @@ function subtractIntervals(base: MinuteInterval[], blocks: MinuteInterval[]): Mi
     const next: MinuteInterval[] = [];
     for (const iv of current) {
       if (block.end <= iv.start || block.start >= iv.end) {
-        next.push(iv); // no overlap
+        next.push(iv);
         continue;
       }
       if (block.start > iv.start) next.push({ start: iv.start, end: block.start });
@@ -535,8 +532,6 @@ function availableMinuteIntervals(
   return subtractIntervals(base, blocks);
 }
 
-// Free intervals for one owner on one date: weekly base, widened by "available" exceptions,
-// then narrowed by "unavailable" exceptions and booked appointments. End-exclusive throughout.
 export function computeDailyAvailability(input: {
   date: string; // 'YYYY-MM-DD'
   weekly: WeeklySchedule;
@@ -568,7 +563,7 @@ export function computeDailySlots(input: {
   const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
 
   // Slots come from weekly blocks AND changed-hours "available" exceptions, each chopped at its
-  // own granularity — so an exception opening hours outside the weekly pattern is bookable (D-07c).
+  // own granularity — so an exception opening hours outside the weekly pattern is bookable.
   const sources: Array<{ start: number; end: number; gran: number }> = [];
   for (const block of weekly[weekday] ?? []) {
     const gran = block.granularity_minutes;

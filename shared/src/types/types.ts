@@ -67,7 +67,6 @@ type MyTypeNames = keyof TypeMap;
 // What node-pg can serialize as a query parameter.
 type SqlParam = string | number | boolean | Date | null | SqlParam[];
 
-// Any runtime value an SSOT column can hold.
 type ColumnValue = TypeMap[MyTypeNames] | null;
 
 type ColumnValidator = {

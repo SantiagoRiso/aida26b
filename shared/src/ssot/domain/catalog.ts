@@ -104,7 +104,6 @@ export const catalogTables = {
     title: { es: 'Precios por Cliente', en: 'Client Prices' },
     addButtonLabel: { es: 'Agregar Precio', en: 'Add Price' },
     crud: { create: true, read: true, update: true, delete: false },
-    // Business is derived via the client's auth.users record.
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'client_user_id', parentPk: 'id' }],
     },
@@ -146,7 +145,6 @@ export const catalogTables = {
     title: { es: 'Servicios del Profesional', en: 'Professional Services' },
     addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
     crud: { create: true, read: true, update: false, delete: true },
-    // Business is derived via the professional's auth.users record.
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
     },
@@ -161,7 +159,7 @@ export const catalogTables = {
 
 // Resolves the booking's captured price and duration. Price = per-client override else the
 // service default. Duration = the staff-provided sobreturno duration when set, else the chosen
-// slot's granularity. The dry-run and the Phase 4 save call this so preview never drifts from
+// slot's granularity. The dry-run and the save call this so preview never drifts from
 // the saved value. Prices stay decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'.
 export function resolveBooking(input: {
   serviceDefaultPriceArs: string;
