@@ -18,7 +18,6 @@ export function crossesMidnight(start: string, durationMinutes: number): boolean
   return startMin + durationMinutes > 24 * 60;
 }
 
-// TIMESTAMPTZ literal for a local wall-clock date + HH:MM in the business timezone.
 export function buildStartsAt(date: string, start: string): string {
   return `${date} ${start}:00 ${BUSINESS_TZ}`;
 }

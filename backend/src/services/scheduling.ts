@@ -17,9 +17,8 @@ import {
 import { BUSINESS_TZ, addMinutes } from '../time';
 import { httpError } from '../db/errors';
 
-// Availability aggregation + the sobreturno-aware conflict recheck. This is domain orchestration
-// over db/scheduling — no HTTP surface — so both the scheduling routes and the appointment write
-// path consume it from here instead of one route importing another.
+// Domain orchestration with no HTTP surface, so both the scheduling routes and the appointment
+// write path consume it from here rather than one route importing another.
 
 export type OwnerState = {
   id: number;
