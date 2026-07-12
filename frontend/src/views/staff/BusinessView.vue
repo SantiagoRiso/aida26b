@@ -8,6 +8,8 @@ import { useLabel } from '@/composables/useLabel';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import CrudSection from '@/components/generic/CrudSection.vue';
+import AccordionSection from '@/components/shared/AccordionSection.vue';
+import ResourcesSection from '@/components/settings/ResourcesSection.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -77,11 +79,8 @@ async function saveSettings() {
       {{ label({ es: 'Negocio', en: 'Business' }) }}
     </h1>
 
-    <section class="max-w-2xl">
-      <h2 class="text-lg font-semibold text-heading mb-4">
-        {{ label({ es: 'Configuración del negocio', en: 'Business settings' }) }}
-      </h2>
-      <div class="rounded-lg border border-border bg-card p-5 space-y-5">
+    <AccordionSection :title="label({ es: 'General', en: 'General' })" default-open>
+      <div class="max-w-2xl space-y-5">
         <div>
           <label for="biz-cutoff" class="block text-sm font-semibold text-heading mb-1">
             {{ label({ es: 'Plazo de cancelación (horas)', en: 'Cancellation cutoff (hours)' }) }}
@@ -122,24 +121,18 @@ async function saveSettings() {
           {{ t('actions.save') }}
         </AppButton>
       </div>
-    </section>
+    </AccordionSection>
 
-    <section>
-      <h2 class="text-lg font-semibold text-heading mb-4">
-        {{ label({ es: 'Servicios', en: 'Services' }) }}
-      </h2>
+    <AccordionSection :title="label({ es: 'Servicios', en: 'Services' })">
       <CrudSection
         table-key="services"
         :panel-title="{ es: 'Servicio', en: 'Service' }"
         :delete-label="{ es: 'Eliminar servicio', en: 'Delete service' }"
         :delete-body="{ es: 'Esta acción no se puede deshacer. ¿Confirmás?', en: 'This action cannot be undone. Confirm?' }"
       />
-    </section>
+    </AccordionSection>
 
-    <section>
-      <h2 class="text-lg font-semibold text-heading mb-4">
-        {{ label({ es: 'Servicios por profesional', en: 'Service bindings' }) }}
-      </h2>
+    <AccordionSection :title="label({ es: 'Servicios por profesional', en: 'Service bindings' })">
       <p class="mb-3 text-sm text-neutral">
         {{ label({ es: 'Qué servicios ofrece cada profesional. Para cambiar un vínculo, eliminá y volvé a crear.', en: 'Which services each professional offers. To change a binding, remove and re-create it.' }) }}
       </p>
@@ -149,6 +142,10 @@ async function saveSettings() {
         :delete-label="{ es: 'Eliminar vínculo', en: 'Remove binding' }"
         :delete-body="{ es: 'Se quitará este servicio del profesional. ¿Confirmás?', en: 'This service will be removed from the professional. Confirm?' }"
       />
-    </section>
+    </AccordionSection>
+
+    <AccordionSection :title="label({ es: 'Recursos', en: 'Resources' })">
+      <ResourcesSection />
+    </AccordionSection>
   </div>
 </template>

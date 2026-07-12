@@ -73,6 +73,7 @@ async function confirmDelete() {
         @saved="onSaved"
         @cancel="panelOpen = false"
       />
+      <!-- A per-resource schedule ("Horario") entry will be added here in a later task (resource-schedule editor). -->
       <div v-if="editingRow" class="mt-6 border-t border-border pt-4">
         <button
           type="button"
