@@ -16,6 +16,12 @@ const staffRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-calendar'] as Role[] },
   },
   {
+    path: '/staff/schedule',
+    name: 'staff-schedule',
+    component: () => import('@/views/staff/ScheduleEditorView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-schedule'] as Role[] },
+  },
+  {
     path: '/staff/requests',
     name: 'staff-requests',
     component: () => import('@/views/staff/RequestsView.vue'),
@@ -34,10 +40,10 @@ const staffRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-professionals'] as Role[] },
   },
   {
-    path: '/staff/services',
-    name: 'staff-services',
-    component: () => import('@/views/staff/ServicesView.vue'),
-    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-services'] as Role[] },
+    path: '/staff/business',
+    name: 'staff-business',
+    component: () => import('@/views/staff/BusinessView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-business'] as Role[] },
   },
   {
     path: '/staff/resources',

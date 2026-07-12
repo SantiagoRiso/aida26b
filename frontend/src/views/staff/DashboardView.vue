@@ -125,6 +125,15 @@ function apptLabel(appt: Appointment): string {
   return clientLabelFor(appt.client_user_id) ?? `Turno #${appt.id}`;
 }
 
+// Pending requests are triaged by who's asking, so they show the client (name-first; the
+// free-text request title is noise here) plus DNI to disambiguate same-named clients.
+const { labelFor: clientDniFor } = useForeignKeyOptions({
+  table: 'clients', valueField: 'id', labelField: 'dni',
+});
+function pendingClientName(appt: Appointment): string {
+  return clientLabelFor(appt.client_user_id) ?? appt.name ?? `Turno #${appt.id}`;
+}
+
 // Current-appointment settle card. Visible to the session's own professional and to
 // receptionists (server scopes their list to granted calendars); admins never see it.
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({
@@ -321,7 +330,10 @@ async function settle(appt: Appointment, action: SettleAction) {
               class="text-sm text-neutral border-b border-border pb-2 last:border-0 last:pb-0"
             >
               <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
-              <span class="ml-2">{{ apptLabel(appt) }}</span>
+              <span class="ml-2">{{ pendingClientName(appt) }}</span>
+              <span v-if="clientDniFor(appt.client_user_id)" class="ml-2 text-xs">
+                DNI {{ clientDniFor(appt.client_user_id) }}
+              </span>
             </li>
           </ul>
           <EmptyState

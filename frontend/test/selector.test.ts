@@ -5,7 +5,7 @@ import Selector from '@/components/shared/Selector.vue';
 interface ProfOpt { value: string; label: string; services: string }
 
 const options: ProfOpt[] = [
-  { value: '1', label: 'Dra. Marge Bouvier', services: 'Sesión individual' },
+  { value: '1', label: 'Dra. Marge Bouvier', services: 'Sesión de Psicología Infantil' },
   { value: '2', label: 'Dr. Nick Riviera', services: 'Sesión de kinesiología' },
   { value: '3', label: 'Dra. Lisa Simpson', services: 'Consulta nutricional' },
 ];

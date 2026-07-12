@@ -13,7 +13,7 @@ async function importFresh() {
   return { apiFetch, useUiStore };
 }
 
-function mockFetch(status: number, body: unknown, headers?: Record<string, string>) {
+function mockFetch<T>(status: number, body: T, headers?: Record<string, string>) {
   const responseBody = body === undefined ? '' : JSON.stringify(body);
   const res = new Response(responseBody || null, {
     status,

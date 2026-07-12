@@ -22,12 +22,13 @@ export function canAccessRoute(user: { role: Role } | null, meta: { roles?: Role
 export const SCREEN_ROLES: Record<string, Role[]> = {
   'staff-dashboard': ['Admin', 'Professional', 'Receptionist'],
   'staff-calendar': ['Admin', 'Professional', 'Receptionist'],
+  'staff-schedule': ['Admin', 'Professional', 'Receptionist'],
   'staff-requests': ['Admin', 'Professional', 'Receptionist'],
   'staff-clients': ['Admin', 'Professional', 'Receptionist'],
   'staff-professionals': ['Admin', 'Professional', 'Receptionist'],
-  // Catalog management is not front-desk work; receptionists consume services/resources
-  // through the booking form, not these screens.
-  'staff-services': ['Admin', 'Professional'],
+  // Business config (catalog, bindings, booking policy) is admin-owned; receptionists and
+  // professionals consume services/resources through the booking form, not these screens.
+  'staff-business': ['Admin'],
   'staff-resources': ['Admin', 'Professional'],
   'staff-users': ['Admin'],
   'staff-audit': ['Admin'],

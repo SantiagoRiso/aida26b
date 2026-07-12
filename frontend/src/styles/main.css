@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@vuepic/vue-datepicker/dist/main.css";
 
 @theme {
   /* Semantic surface tokens — light theme only; dark mode layers on later without rework. */
@@ -19,4 +20,31 @@
   --color-neutral: #6B7280;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Match the shared DateField (vue-datepicker) to the app's input styling and palette. */
+.dp--theme-light {
+  --dp-background-color: #FFFFFF;
+  --dp-text-color: #1E293B;
+  --dp-border-color: #E2E8F0;
+  --dp-border-color-hover: #2563EB;
+  --dp-border-color-focus: #2563EB;
+  --dp-primary-color: #2563EB;
+  --dp-primary-text-color: #FFFFFF;
+  --dp-icon-color: #6B7280;
+  --dp-hover-color: #F1F5F9;
+  --dp-danger-color: #DC2626;
+  --dp-border-radius: 0.375rem;
+  --dp-font-size: 0.875rem;
+  --dp-input-padding: 0.5rem 0.75rem;
+}
+
+/* Full-width to match the surrounding form inputs. */
+.dp--main {
+  width: 100%;
+}
+
+/* Invalid state mirrors the destructive border used elsewhere. */
+.dp--input.dp-invalid {
+  border-color: #DC2626;
 }

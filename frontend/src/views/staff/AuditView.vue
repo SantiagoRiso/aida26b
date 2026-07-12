@@ -11,6 +11,7 @@ import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Pagination from '@/components/generic/Pagination.vue';
+import DateField from '@/components/shared/DateField.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -137,24 +138,14 @@ if (isAdmin.value) {
           <label for="audit-date-from" class="text-xs font-semibold text-neutral shrink-0">
             {{ label({ es: 'Desde', en: 'From' }) }}
           </label>
-          <input
-            id="audit-date-from"
-            v-model="filterDateFrom"
-            type="date"
-            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
+          <DateField id="audit-date-from" v-model="filterDateFrom" />
         </div>
 
         <div class="flex items-center gap-2">
           <label for="audit-date-to" class="text-xs font-semibold text-neutral shrink-0">
             {{ label({ es: 'Hasta', en: 'To' }) }}
           </label>
-          <input
-            id="audit-date-to"
-            v-model="filterDateTo"
-            type="date"
-            class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
+          <DateField id="audit-date-to" v-model="filterDateTo" />
         </div>
 
         <select
