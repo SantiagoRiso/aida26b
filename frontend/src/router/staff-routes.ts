@@ -46,12 +46,6 @@ const staffRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-business'] as Role[] },
   },
   {
-    path: '/staff/resources',
-    name: 'staff-resources',
-    component: () => import('@/views/staff/ResourcesView.vue'),
-    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-resources'] as Role[] },
-  },
-  {
     path: '/staff/users',
     name: 'staff-users',
     component: () => import('@/views/staff/UsersView.vue'),
@@ -62,6 +56,12 @@ const staffRoutes: RouteRecordRaw[] = [
     name: 'staff-audit',
     component: () => import('@/views/staff/AuditView.vue'),
     meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-audit'] as Role[] },
+  },
+  {
+    path: '/staff/profile',
+    name: 'staff-profile',
+    component: () => import('@/views/staff/ProfileView.vue'),
+    meta: { requiresAuth: true, roles: SCREEN_ROLES['staff-profile'] as Role[] },
   },
   {
     path: '/staff/settings',

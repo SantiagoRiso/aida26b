@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import * as auth from '../auth';
 import { sendData, sendError } from '../status_messages';
 import { getSessionToken, loadSession, readPassword, type AuditWriter } from '../session';
+import { guardRoute } from '../helpers';
 import {
   findUserForLogin,
   createSession,
@@ -12,8 +13,11 @@ import {
   updateUserPassword,
   deleteOtherSessions,
 } from '../db/auth';
+import { getSelfProfile, updateSelfProfile } from '../db/users';
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Fixed dummy salt/hash for the login path: verifying against these when the username
 // is unknown keeps scrypt cost identical to the real-account path (anti-enumeration).
@@ -146,4 +150,31 @@ export function mountAuthRoutes(
       return sendError(res, 500, 'internal_error', 'Internal server error');
     }
   });
+
+  app.get('/api/auth/me/profile', requireAuth, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    const profile = await getSelfProfile(pool, user.id);
+    if (!profile) return sendError(res, 404, 'not_found', 'Profile not found');
+    return sendData(res, { profile });
+  }));
+
+  app.patch('/api/auth/me/profile', requireAuth, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    const displayName = typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
+    const email = typeof req.body.email === 'string' ? req.body.email.trim() : '';
+    const bio = typeof req.body.bio === 'string' && req.body.bio.trim() !== '' ? req.body.bio : null;
+    const phone = typeof req.body.phone === 'string' && req.body.phone.trim() !== '' ? req.body.phone.trim() : null;
+
+    if (!displayName) return sendError(res, 400, 'invalid_request', 'Display name is required');
+    if (!EMAIL_RE.test(email)) return sendError(res, 400, 'invalid_request', 'A valid email is required');
+
+    // Duplicate email -> DbError(23505) -> guardRoute maps to 409.
+    const updated = await updateSelfProfile(pool, { userId: user.id, displayName, bio, email, phone });
+    if (!updated) return sendError(res, 404, 'not_found', 'Profile not found');
+
+    // email is part of the session identity; refresh it so the header/store stay in sync.
+    (req as AuthedRequest).user = { ...user, email: updated.email };
+    await audit(req, 'profile_updated', 'success');
+    return sendData(res, { profile: updated, user: (req as AuthedRequest).user });
+  }));
 }

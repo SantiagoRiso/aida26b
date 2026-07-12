@@ -21,9 +21,9 @@ const navItems = [
   { name: 'staff-clients',       labelKey: 'nav.clients',        roles: SCREEN_ROLES['staff-clients'] },
   { name: 'staff-professionals', labelKey: 'nav.professionals',  roles: SCREEN_ROLES['staff-professionals'] },
   { name: 'staff-business',      labelKey: 'nav.business',       roles: SCREEN_ROLES['staff-business'] },
-  { name: 'staff-resources',     labelKey: 'nav.resources',      roles: SCREEN_ROLES['staff-resources'] },
   { name: 'staff-users',         labelKey: 'nav.users',          roles: SCREEN_ROLES['staff-users'] },
   { name: 'staff-audit',         labelKey: 'nav.audit',          roles: SCREEN_ROLES['staff-audit'] },
+  { name: 'staff-profile',       labelKey: 'nav.profile',        roles: SCREEN_ROLES['staff-profile'] },
   { name: 'staff-settings',      labelKey: 'nav.settings',       roles: SCREEN_ROLES['staff-settings'] },
 ] as const;
 

@@ -25,11 +25,12 @@ export const SCREEN_ROLES: Record<string, Role[]> = {
   'staff-schedule': ['Admin', 'Professional', 'Receptionist'],
   'staff-requests': ['Admin', 'Professional', 'Receptionist'],
   'staff-clients': ['Admin', 'Professional', 'Receptionist'],
-  'staff-professionals': ['Admin', 'Professional', 'Receptionist'],
+  // A Professional manages themself through Perfil, not the professionals roster.
+  'staff-professionals': ['Admin', 'Receptionist'],
+  'staff-profile': ['Professional'],
   // Business config (catalog, bindings, booking policy) is admin-owned; receptionists and
   // professionals consume services/resources through the booking form, not these screens.
   'staff-business': ['Admin'],
-  'staff-resources': ['Admin', 'Professional'],
   'staff-users': ['Admin'],
   'staff-audit': ['Admin'],
   'staff-settings': ['Admin', 'Professional', 'Receptionist'],
