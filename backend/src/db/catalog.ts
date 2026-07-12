@@ -15,6 +15,21 @@ export function getServiceDefaultPrice(db: Queryable, serviceId: number, busines
   ).then((r) => r?.default_price_ars ?? null);
 }
 
+// Service defaults (duration + price), business-scoped; null when absent/archived. duration is
+// INTEGER (pg number); price is NUMERIC (kept as a decimal string, per the no-coercion contract).
+export function getServiceDefaults(
+  db: Queryable,
+  serviceId: number,
+  businessId: number,
+): Promise<{ default_duration_minutes: number; default_price_ars: string } | null> {
+  return queryOne<{ default_duration_minutes: number; default_price_ars: string }>(
+    db,
+    `SELECT default_duration_minutes, default_price_ars FROM services
+      WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
+    [serviceId, businessId],
+  );
+}
+
 // Per-client override price, business-scoped to prevent cross-tenant price reads; null when none.
 export function getClientOverridePrice(
   db: Queryable,

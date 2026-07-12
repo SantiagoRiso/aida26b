@@ -59,6 +59,23 @@ export const businessTables = {
         filterable: false,
         sortable: false,
       },
+      // Booking window: a client may request a turno from today+min up to today+max days.
+      min_booking_days: {
+        type: 'number',
+        label: { es: 'Anticipación mínima (días)', en: 'Min booking days' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 0 },
+        filterable: false,
+        sortable: false,
+      },
+      max_booking_days: {
+        type: 'number',
+        label: { es: 'Anticipación máxima (días)', en: 'Max booking days' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 0 },
+        filterable: false,
+        sortable: false,
+      },
     },
     pk: 'id',
     uiName: { es: 'Negocio', en: 'Business' },

@@ -4,6 +4,8 @@ import type { ApiResult } from '@/api/client';
 export interface BusinessSettings {
   id: string;
   cancellation_cutoff_hours: number;
+  min_booking_days: number;
+  max_booking_days: number | null;
 }
 
 export function getSettings(
@@ -19,7 +21,7 @@ export function getMySettings(): Promise<ApiResult<BusinessSettings>> {
 
 export function updateSettings(
   businessId: string | number,
-  body: { cancellation_cutoff_hours: number },
+  body: { cancellation_cutoff_hours: number; min_booking_days: number; max_booking_days: number | null },
 ): Promise<ApiResult<BusinessSettings>> {
   return apiFetch<BusinessSettings>(
     `/businesses/${businessId}/settings`,

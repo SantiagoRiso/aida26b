@@ -5,23 +5,24 @@ import type { BusinessSettingsRow } from '../../../shared/src/ssot/query-types';
 export function getBusinessSettings(db: Queryable, businessId: number): Promise<BusinessSettingsRow | null> {
   return queryOne<BusinessSettingsRow>(
     db,
-    `SELECT id, cancellation_cutoff_hours FROM businesses WHERE id = $1`,
+    `SELECT id, cancellation_cutoff_hours, min_booking_days, max_booking_days
+       FROM businesses WHERE id = $1`,
     [businessId],
   );
 }
 
-export function updateBusinessCutoff(
+export function updateBusinessSettings(
   db: Queryable,
   businessId: number,
-  cutoffHours: number,
+  s: { cancellation_cutoff_hours: number; min_booking_days: number; max_booking_days: number | null },
 ): Promise<BusinessSettingsRow | null> {
   return queryOne<BusinessSettingsRow>(
     db,
     `UPDATE businesses
-        SET cancellation_cutoff_hours = $1
-      WHERE id = $2
-      RETURNING id, cancellation_cutoff_hours`,
-    [cutoffHours, businessId],
+        SET cancellation_cutoff_hours = $1, min_booking_days = $2, max_booking_days = $3
+      WHERE id = $4
+      RETURNING id, cancellation_cutoff_hours, min_booking_days, max_booking_days`,
+    [s.cancellation_cutoff_hours, s.min_booking_days, s.max_booking_days, businessId],
   );
 }
 

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="K extends TableKey">
 import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { deleteRow } from '@/api/crud';
@@ -6,32 +6,42 @@ import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
 import { structure } from '@shared/ssot/structure';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TableKey, TableRecordMap, TableStructure, LocalizedText, ColumnValue } from '@shared/types/types';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 
+const props = defineProps<{
+  tableKey: K;
+  panelTitle: LocalizedText;
+  deleteLabel: LocalizedText;
+  deleteBody: LocalizedText;
+}>();
+
 const { label } = useLabel();
 const { toast } = useToast();
 const auth = useAuthStore();
 
-const TABLE_KEY = 'services' as const;
-
 const panelOpen = ref(false);
-const editingRow = ref<TableRecordMap['services'] | null>(null);
+const editingRow = ref<TableRecordMap[K] | null>(null);
 const mode = ref<'create' | 'edit'>('create');
 const confirmOpen = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 const reloadKey = ref(0);
 
 function canDelete(): boolean {
-  const spec = structure.tables[TABLE_KEY];
-  const required = spec.roleRequired?.delete;
+  const required = (structure.tables[props.tableKey] as TableStructure).roleRequired?.delete;
   return auth.user ? roleAllowedFor(required, auth.user.role) : false;
 }
 
-function onEdit(row: TableRecordMap['services']) {
+function rowId(row: TableRecordMap[K]): string {
+  const pk = (structure.tables[props.tableKey] as TableStructure).pk;
+  const pkKey = Array.isArray(pk) ? pk[0] : pk;
+  return String((row as Record<string, ColumnValue>)[pkKey]);
+}
+
+function onEdit(row: TableRecordMap[K]) {
   editingRow.value = row;
   mode.value = 'edit';
   panelOpen.value = true;
@@ -49,38 +59,34 @@ function onSaved() {
   reloadKey.value++;
 }
 
-function requestDelete(row: TableRecordMap['services']) {
-  pendingDeleteId.value = String(row.id);
+// Read editingRow in the script (not the template) — passing the ref-unwrapped generic value
+// through the template confuses vue-tsc's generic-component inference.
+function onDeleteClick() {
+  if (editingRow.value) requestDelete(editingRow.value);
+}
+
+function requestDelete(row: TableRecordMap[K]) {
+  pendingDeleteId.value = rowId(row);
   confirmOpen.value = true;
 }
 
 async function confirmDelete() {
   if (!pendingDeleteId.value) return;
   confirmOpen.value = false;
-  const result = await deleteRow(TABLE_KEY, pendingDeleteId.value);
-  if (result.ok) {
-    reloadKey.value++;
-  } else {
-    toast('error', 'genericError');
-  }
+  const result = await deleteRow(props.tableKey, pendingDeleteId.value);
+  if (result.ok) reloadKey.value++;
+  else toast('error', 'genericError');
   pendingDeleteId.value = null;
 }
-
-const panelTitle = label({ es: 'Servicio', en: 'Service' });
 </script>
 
 <template>
   <div>
-    <GenericTable
-      :key="reloadKey"
-      :table-key="TABLE_KEY"
-      @create="onCreate"
-      @edit="onEdit"
-    />
+    <GenericTable :key="reloadKey" :table-key="tableKey" @create="onCreate" @edit="onEdit" />
 
-    <DetailPanel :open="panelOpen" :title="panelTitle" @close="panelOpen = false">
+    <DetailPanel :open="panelOpen" :title="label(panelTitle)" @close="panelOpen = false">
       <GenericForm
-        :table-key="TABLE_KEY"
+        :table-key="tableKey"
         :mode="mode"
         :initial="editingRow ?? undefined"
         @saved="onSaved"
@@ -90,17 +96,17 @@ const panelTitle = label({ es: 'Servicio', en: 'Service' });
         <button
           type="button"
           class="w-full rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-white hover:bg-destructive-hover"
-          @click="requestDelete(editingRow)"
+          @click="onDeleteClick"
         >
-          {{ label({ es: 'Eliminar servicio', en: 'Delete service' }) }}
+          {{ label(deleteLabel) }}
         </button>
       </div>
     </DetailPanel>
 
     <ConfirmDialog
       :open="confirmOpen"
-      :title="label({ es: 'Eliminar servicio', en: 'Delete service' })"
-      :body="label({ es: 'Esta acción no se puede deshacer. ¿Confirmás?', en: 'This action cannot be undone. Confirm?' })"
+      :title="label(deleteLabel)"
+      :body="label(deleteBody)"
       :confirm-label="label({ es: 'Eliminar', en: 'Delete' })"
       :destructive="true"
       @confirm="confirmDelete"

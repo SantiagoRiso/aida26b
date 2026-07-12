@@ -88,7 +88,7 @@ describe('GenericForm — advisory validateField on blur', () => {
 
     const errors = wrapper.findAllComponents(FieldError);
     const nameError = errors.find((e) => {
-      const msg = (e.props as (name: string) => unknown)('message') as string | undefined;
+      const msg = (e.props as (name: string) => string | undefined)('message');
       return msg && msg.length > 0;
     });
     expect(nameError).toBeDefined();
@@ -112,7 +112,7 @@ describe('GenericForm — advisory validateField on blur', () => {
 
     const errors = wrapper.findAllComponents(FieldError);
     const nonEmptyErrors = errors.filter((e) => {
-      const msg = (e.props as (name: string) => unknown)('message') as string | undefined;
+      const msg = (e.props as (name: string) => string | undefined)('message');
       return msg && msg.length > 0;
     });
     expect(nonEmptyErrors.length).toBe(0);
@@ -142,7 +142,7 @@ describe('GenericForm — backend field error mapping', () => {
 
     const errors = wrapper.findAllComponents(FieldError);
     const nameErr = errors.find((e) => {
-      const msg = (e.props as (name: string) => unknown)('message') as string | undefined;
+      const msg = (e.props as (name: string) => string | undefined)('message');
       return typeof msg === 'string' && msg.includes('name');
     });
     expect(nameErr).toBeDefined();

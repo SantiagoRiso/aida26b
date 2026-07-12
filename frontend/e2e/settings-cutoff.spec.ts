@@ -44,7 +44,7 @@ test.describe('Business settings — cancellation cutoff persists and is enforce
 
     const [profRes, svcRes, clientRes] = await Promise.all([
       page.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Dra. Marge Bouvier')}`),
-      page.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión individual')}`),
+      page.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión de Psicología Infantil')}`),
       page.request.get(`/api/clients?filter_display_name=${encodeURIComponent('Homero Simpson')}`),
     ]);
     const prof = (await profRes.json()).data[0];

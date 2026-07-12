@@ -9,6 +9,7 @@ import { structure } from '@shared/ssot/structure';
 import type { TableKey, TableRecordMap, ColumnDef, ColumnValue } from '@shared/types/types';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import DateField from '@/components/shared/DateField.vue';
 
 const props = defineProps<{
   tableKey: K;
@@ -191,13 +192,12 @@ async function onSubmit() {
         @blur="onBlur(field)"
       />
 
-      <input
+      <DateField
         v-else-if="col.input === 'date' || col.type === 'date'"
         :id="field"
-        type="date"
-        v-model="values[field] as string"
-        class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-        :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :model-value="(values[field] as string | null) ?? null"
+        :invalid="!!fieldErrors[field]"
+        @update:model-value="values[field] = $event as ColumnValue"
         @blur="onBlur(field)"
       />
 

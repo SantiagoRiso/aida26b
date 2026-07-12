@@ -18,7 +18,7 @@ function availableServices(all: Service[], profServices: ProfService[], profId: 
 }
 
 const services: Service[] = [
-  { id: 1, name: 'Sesión individual' },
+  { id: 1, name: 'Sesión de Psicología Infantil' },
   { id: 2, name: 'Consulta nutricional' },
   { id: 3, name: 'Sesión de kinesiología' },
 ];
@@ -35,7 +35,7 @@ describe('portal service filter (availableServices)', () => {
 
   it('narrows to the chosen professional’s offerings', () => {
     const out = availableServices(services, profServices, 10).map((s) => s.name);
-    expect(out).toEqual(['Sesión individual', 'Consulta nutricional']);
+    expect(out).toEqual(['Sesión de Psicología Infantil', 'Consulta nutricional']);
   });
 
   it('returns a single service for a professional who offers one', () => {

@@ -56,10 +56,10 @@ export const catalogTables = {
     crud: { create: true, read: true, update: true, delete: true },
     softDelete,
     roleRequired: {
-      create: ['Admin', 'Receptionist'],
+      create: ['Admin'],
       read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
-      update: ['Admin', 'Receptionist'],
-      delete: ['Admin', 'Receptionist'],
+      update: ['Admin'],
+      delete: ['Admin'],
     },
   } satisfies TableStructure,
 
@@ -116,7 +116,8 @@ export const catalogTables = {
   } satisfies TableStructure,
 
   // Which services a professional offers. A pure link table; business derived via the professional.
-  // No update (change = remove + add), so generic update is withheld.
+  // Update is scoped to the per-service booking-window override only (FKs are editable:false);
+  // reassigning owner/service is still remove + add, not an update.
   professional_services: {
     columns: {
       id: pkColumn,
@@ -129,6 +130,8 @@ export const catalogTables = {
         sortable: false,
         foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
+        editable: false,
+        readonlyOnEdit: true,
       },
       service_id: {
         type: 'string',
@@ -138,49 +141,79 @@ export const catalogTables = {
         filterable: true,
         sortable: false,
         foreignKey: { table: 'services', valueField: 'id', labelField: 'name' },
+        editable: false,
+        readonlyOnEdit: true,
+      },
+      // Per-service booking-window override; null → falls back to the business window.
+      min_booking_days: {
+        type: 'number',
+        label: { es: 'Anticipación mínima (días)', en: 'Min booking days' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 0 },
+        filterable: false,
+        sortable: false,
+      },
+      max_booking_days: {
+        type: 'number',
+        label: { es: 'Anticipación máxima (días)', en: 'Max booking days' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 0 },
+        filterable: false,
+        sortable: false,
       },
     },
     pk: 'id',
     uiName: { es: 'Servicio del Profesional', en: 'Professional Service' },
     title: { es: 'Servicios del Profesional', en: 'Professional Services' },
     addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
-    crud: { create: true, read: true, update: false, delete: true },
+    crud: { create: true, read: true, update: true, delete: true },
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
     },
     roleRequired: {
       create: ['Admin'],
       read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
-      update: [],
+      update: ['Admin', 'Professional', 'Receptionist'],
       delete: ['Admin'],
     },
+    // Update is the scoped per-service booking-window edit: Admin any in-business, a Professional
+    // their own, a granted Receptionist within their grant. create/delete stay Admin-only.
+    professionalOwnerGuard: { ops: ['update'] },
   } satisfies TableStructure,
 };
 
-// Resolves the booking's captured price and duration. Price = per-client override else the
-// service default. Duration = the staff-provided sobreturno duration when set, else the chosen
-// slot's granularity. The dry-run and the save call this so preview never drifts from
-// the saved value. Prices stay decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'.
+// Resolves the booking's captured price and duration.
+//   Price    = client override > per-block/service override > service default.
+//   Duration = staff sobreturno > per-block/service override > service default > (legacy) slot.
+// The dry-run and the save call this so preview never drifts from the saved value. Prices stay
+// decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'. slotGranularityMinutes is a legacy
+// fallback for pre-block callers and is retained until every caller supplies a service default.
 export function resolveBooking(input: {
   serviceDefaultPriceArs: string;
+  serviceDefaultDurationMinutes?: number | null;
   clientOverridePriceArs?: string | null;
+  blockServicePriceArs?: string | null;
+  blockServiceDurationMinutes?: number | null;
   slotGranularityMinutes?: number | null;
   sobreturnoDurationMinutes?: number | null;
 }): { effective_price: string; effective_duration_minutes: number } {
-  const override = input.clientOverridePriceArs;
+  const price = (v?: string | null): string | undefined =>
+    v !== null && v !== undefined && v !== '' ? v : undefined;
   const effective_price =
-    override !== null && override !== undefined && override !== '' ? override : input.serviceDefaultPriceArs;
+    price(input.clientOverridePriceArs) ??
+    price(input.blockServicePriceArs) ??
+    input.serviceDefaultPriceArs;
 
-  const sobreturno = input.sobreturnoDurationMinutes;
-  const slot = input.slotGranularityMinutes;
-  let effective_duration_minutes: number;
-  if (typeof sobreturno === 'number' && Number.isInteger(sobreturno) && sobreturno > 0) {
-    effective_duration_minutes = sobreturno;
-  } else if (typeof slot === 'number' && Number.isInteger(slot) && slot > 0) {
-    effective_duration_minutes = slot;
-  } else {
+  const dur = (v?: number | null): number | undefined =>
+    typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
+  const effective_duration_minutes =
+    dur(input.sobreturnoDurationMinutes) ??
+    dur(input.blockServiceDurationMinutes) ??
+    dur(input.serviceDefaultDurationMinutes) ??
+    dur(input.slotGranularityMinutes);
+  if (effective_duration_minutes === undefined) {
     throw new Error(
-      'resolveBooking requires a duration source: slotGranularityMinutes or sobreturnoDurationMinutes',
+      'resolveBooking requires a duration source: service default, block override, slot, or sobreturno',
     );
   }
 
