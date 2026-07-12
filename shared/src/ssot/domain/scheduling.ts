@@ -294,9 +294,9 @@ export const schedulingTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Excepción de Horario', en: 'Schedule Exception' },
-    title: { es: 'Excepciones de Horario', en: 'Schedule Exceptions' },
-    addButtonLabel: { es: 'Agregar Excepción', en: 'Add Exception' },
+    uiName: { es: 'Licencia', en: 'Time off' },
+    title: { es: 'Licencias', en: 'Time off' },
+    addButtonLabel: { es: 'Agregar licencia', en: 'Add time off' },
     crud: { create: true, read: true, update: true, delete: true },
     // Business is derived via whichever owner is set (professional or resource).
     businessJoin: {
