@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ref } from 'vue';
 import { i18n } from '@/i18n';
 import { colorForProfessional, scopeProfessionalOptions, useAppointmentCalendar } from '@/composables/useFullCalendar';
-import type { DragTuning } from '@/composables/useFullCalendar';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
@@ -197,50 +196,11 @@ describe('useAppointmentCalendar snap grid', () => {
     onEventResize: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventResize'],
   };
 
-  it('a uniform 30-min professional grid snaps at 30 min', () => {
-    // Working day starts 07:00 (timeBounds.min with no out-of-hours appts). Slots at 09:00/09:30/10:00.
-    const tuning: DragTuning = {
-      fine: ref(false),
-      slotStartsMinutes: ref([540, 570, 600]),
-      slotMinutes: ref(30),
-    };
-    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers, undefined, tuning);
-    expect(calendarOptions.value.snapDuration).toBe('00:30:00');
+  it('uses a plain 30-min base grid with a 10-min snap, independent of any professional lattice', () => {
+    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
     expect(calendarOptions.value.slotDuration).toBe('00:30:00');
-  });
-
-  it('phase-aligns slotMinTime to the professional slot anchor so live-snap lands on real slots', () => {
-    // Marge-like: 50-min slots at 09:00/09:50/10:40, working floor 07:00. An unaligned origin
-    // would force a finer off-slot snap; alignment makes the snap step the true granularity.
-    const tuning: DragTuning = {
-      fine: ref(false),
-      slotStartsMinutes: ref([540, 590, 640]),
-      slotMinutes: ref(50),
-    };
-    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers, undefined, tuning);
-    expect(calendarOptions.value.slotMinTime).toBe('06:30:00');
-    expect(calendarOptions.value.snapDuration).toBe('00:50:00');
-  });
-
-  it('fine mode (sobreturno) overrides to 5-min snapping', () => {
-    const tuning: DragTuning = {
-      fine: ref(true),
-      slotStartsMinutes: ref([540, 570, 600]),
-      slotMinutes: ref(30),
-    };
-    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers, undefined, tuning);
-    expect(calendarOptions.value.snapDuration).toBe('00:05:00');
-  });
-
-  it('mixed view (null slots) falls back to 5-min snapping on a 30-min grid', () => {
-    const tuning: DragTuning = {
-      fine: ref(false),
-      slotStartsMinutes: ref(null),
-      slotMinutes: ref(null),
-    };
-    const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers, undefined, tuning);
-    expect(calendarOptions.value.snapDuration).toBe('00:05:00');
-    expect(calendarOptions.value.slotDuration).toBe('00:30:00');
+    expect(calendarOptions.value.slotLabelInterval).toBe('01:00:00');
+    expect(calendarOptions.value.snapDuration).toBe('00:10:00');
   });
 
   it('wires eventDragStart/eventDragStop when handlers are provided', () => {

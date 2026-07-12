@@ -9,11 +9,9 @@ import { getRow } from '@/api/crud';
 import { getBalance } from '@/api/ledger';
 import { listAppointments, approveAppointment, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
-import { getAvailability } from '@/api/scheduling';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { TableRecordMap } from '@shared/types/types';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
-import { latticeFromFreeSlots } from '@/composables/calendarGrid';
 import type { AuthUser } from '@/stores/auth';
 import type { EventContentArg } from '@fullcalendar/core';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -73,9 +71,6 @@ const loadingDetail = ref(false);
 // The professional's whole day around the requested slot — shown as a read-only day calendar
 // so the request can be judged against that day's existing schedule.
 const dayAppts = ref<Appointment[]>([]);
-// The professional's slot lattice for that day, so the day-calendar grid rows land on real slots.
-const daySlotStarts = ref<number[] | null>(null);
-const daySlotMinutes = ref<number | null>(null);
 
 function dayAfter(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -90,14 +85,12 @@ async function openDetail(appt: Appointment) {
   clientBalance.value = null;
   clientAppts.value = [];
   dayAppts.value = [];
-  daySlotStarts.value = null;
-  daySlotMinutes.value = null;
   const cid = appt.client_user_id;
   loadingDetail.value = true;
   const day = appt.starts_at.slice(0, 10);
   // Ledger reads are allowed for anyone who can see the request (the request itself is the
   // relationship). The appointment history is the caller's own scoped view of this client.
-  const [prof, bal, appts, proDay, avail] = await Promise.all([
+  const [prof, bal, appts, proDay] = await Promise.all([
     cid != null ? getRow('clients', cid) : Promise.resolve(null),
     cid != null ? getBalance(cid) : Promise.resolve(null),
     cid != null ? listAppointments({ client_user_id: cid, limit: 500 }) : Promise.resolve(null),
@@ -107,17 +100,11 @@ async function openDetail(appt: Appointment) {
       date_to: dayAfter(day),
       limit: 200,
     }),
-    getAvailability(`prof:${appt.professional_user_id}`, day),
   ]);
   if (prof && prof.ok) clientProfile.value = prof.data;
   clientBalance.value = bal && bal.ok ? bal.data.balance_ars : null;
   clientAppts.value = appts && appts.ok ? appts.data : [];
   dayAppts.value = proDay.ok ? proDay.data : [];
-  if (avail.ok) {
-    const grid = latticeFromFreeSlots(avail.data.slots);
-    daySlotStarts.value = grid.starts;
-    daySlotMinutes.value = grid.minutes;
-  }
   loadingDetail.value = false;
 }
 
@@ -133,20 +120,16 @@ function onDetailAfterLeave() {
   clientBalance.value = null;
   clientAppts.value = [];
   dayAppts.value = [];
-  daySlotStarts.value = null;
-  daySlotMinutes.value = null;
 }
 
 // Read-only day calendar for the request's professional + date. Null viewer keeps it
 // non-editable; a fresh :key per request re-applies initialDate on open.
 const nullViewer = ref<AuthUser | null>(null);
-const fineDrag = ref(false);
 const { calendarOptions: dayCalendarBase } = useAppointmentCalendar(
   dayAppts,
   nullViewer,
   { onSelect: () => {}, onEventClick: () => {}, onEventDrop: () => {}, onEventResize: () => {} },
   { fallbackTitle: (a) => clientLabelFor(a.client_user_id) },
-  { fine: fineDrag, slotStartsMinutes: daySlotStarts, slotMinutes: daySlotMinutes },
 );
 const dayCalendarOptions = computed(() => ({
   ...dayCalendarBase.value,

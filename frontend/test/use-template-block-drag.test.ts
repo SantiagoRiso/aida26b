@@ -51,7 +51,7 @@ describe('useTemplateBlockDrag', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
-    document.querySelectorAll('.fc-template-ghost').forEach((g) => g.remove());
+    document.querySelectorAll('.fc-drag-ghost').forEach((g) => g.remove());
   });
 
   function makeDrag() {
@@ -74,7 +74,7 @@ describe('useTemplateBlockDrag', () => {
     pointer('pointermove', 795, document);
 
     expect(onBegin).toHaveBeenCalled();
-    const ghostLabel = document.querySelector('.fc-template-ghost .fc-event-time')?.textContent;
+    const ghostLabel = document.querySelector('.fc-drag-ghost .fc-event-time')?.textContent;
     expect(ghostLabel).toBe('13:10 - 17:20'); // snapped flush, shown live
 
     pointer('pointerup', 795, document);
@@ -89,7 +89,7 @@ describe('useTemplateBlockDrag', () => {
 
     expect(onBegin).not.toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
-    expect(document.querySelector('.fc-template-ghost')).toBeNull();
+    expect(document.querySelector('.fc-drag-ghost')).toBeNull();
   });
 
   it('moves the whole block and cannot overlap the neighbour (clamped into the free window)', () => {

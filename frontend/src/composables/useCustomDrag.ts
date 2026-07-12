@@ -2,6 +2,7 @@ import type { Ref } from 'vue';
 import type { Appointment } from '@/api/appointments';
 import { snapDragMinutes } from '@/composables/calendarGrid';
 import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
+import { createDragGhost, type DragGhost } from '@/composables/dragGhost';
 
 // A drag we drive ourselves instead of FullCalendar's. FC moves an event by a snapped delta from its
 // original start, so a block that begins off the lattice (a sobreturno) can never step onto real slots
@@ -14,6 +15,9 @@ const DRAG_THRESHOLD_PX = 4;
 export interface CustomDragDeps {
   geometry: TimegridGeometry;
   fine: Ref<boolean>;
+  // Where the ghost is appended — the calendar root, so it inherits the event's scoped CSS 1:1. Falls
+  // back to <body> when absent.
+  ghostParent?: () => HTMLElement | null;
   // Valid slot starts (minutes-of-day) for a day, for coarse snapping. Empty when unknown or none.
   validStartsFor: (date: string) => number[];
   // A real drag started (threshold crossed) — the view loads slots and shows highlights.
@@ -34,7 +38,9 @@ interface Session {
   grabOffsetPx: number; // pointer Y minus the block's top edge at press
   heightPx: number;
   dragging: boolean;
-  ghost: HTMLElement | null;
+  ghost: DragGhost | null;
+  lastLeft: number;
+  lastWidth: number;
   lastDate: string;
   lastStart: number; // snapped minutes-of-day
 }
@@ -54,37 +60,18 @@ export function useCustomDrag(deps: CustomDragDeps): {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('keydown', onKey);
-    if (session?.ghost) session.ghost.remove();
-    if (session) session.el.style.opacity = '';
+    session?.ghost?.destroy();
     session = null;
-  }
-
-  function makeGhost(el: HTMLElement, rect: DOMRect): HTMLElement {
-    const ghost = el.cloneNode(true) as HTMLElement;
-    ghost.classList.add('fc-drag-ghost');
-    Object.assign(ghost.style, {
-      position: 'fixed',
-      margin: '0',
-      transform: 'none',
-      transition: 'none',
-      left: `${rect.left}px`,
-      top: `${rect.top}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-      pointerEvents: 'none',
-      zIndex: '9999',
-    });
-    document.body.appendChild(ghost);
-    return ghost;
   }
 
   function begin(ev: PointerEvent) {
     if (!session) return;
     const rect = session.el.getBoundingClientRect();
     session.heightPx = rect.height;
+    session.lastLeft = rect.left;
+    session.lastWidth = rect.width;
     session.dragging = true;
-    session.ghost = makeGhost(session.el, rect);
-    session.el.style.opacity = '0.35';
+    session.ghost = createDragGhost(session.el, rect, deps.ghostParent?.() ?? document.body);
     deps.onBegin(session.appt);
     ev.preventDefault();
   }
@@ -102,11 +89,11 @@ export function useCustomDrag(deps: CustomDragDeps): {
     if (y === null) return;
 
     if (col) {
-      session.ghost.style.left = `${col.left + 2}px`;
-      session.ghost.style.width = `${col.width - 4}px`;
+      session.lastLeft = col.left + 2;
+      session.lastWidth = col.width - 4;
     }
-    session.ghost.style.top = `${y}px`;
-    session.ghost.style.height = `${session.heightPx}px`;
+    session.ghost.move({ top: y, left: session.lastLeft, width: session.lastWidth, height: session.heightPx });
+    session.ghost.setLabel(hhmm(snapped));
 
     session.lastDate = date;
     session.lastStart = snapped;
@@ -156,6 +143,8 @@ export function useCustomDrag(deps: CustomDragDeps): {
       heightPx: el.getBoundingClientRect().height,
       dragging: false,
       ghost: null,
+      lastLeft: 0,
+      lastWidth: 0,
       lastDate: `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`,
       lastStart: startDate.getHours() * 60 + startDate.getMinutes(),
     };

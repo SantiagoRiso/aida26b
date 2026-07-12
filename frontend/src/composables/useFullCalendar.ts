@@ -20,7 +20,6 @@ import type {
 } from '@fullcalendar/interaction';
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
-import { snapConfig } from '@/composables/calendarGrid';
 import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 import { classifyException, type ExceptionRow } from '@/composables/scheduleExceptions';
 
@@ -83,22 +82,6 @@ export interface CalendarDecorators {
   tooltip?: (appt: Appointment) => string;
 }
 
-// When a single professional is in view we know their slot lattice, so the drag snaps onto real
-// slots: snapDuration is the GCD of their slot starts (+ the row size), which lands every grid
-// line on a real slot. `fine` (sobreturno mode) overrides to 5-min sub-steps. Mixed 'Todos'
-// view has no shared lattice → null → a plain 30-min grid with fine 5-min snapping; the drop
-// handler still resolves against the dragged professional's real slots.
-export interface DragTuning {
-  fine: Ref<boolean>;
-  slotStartsMinutes: Ref<number[] | null>;
-  slotMinutes: Ref<number | null>;
-}
-
-function hmsToMinutes(hms: string): number {
-  const [h, m] = hms.split(':').map(Number);
-  return h * 60 + m;
-}
-
 function apptToEvent(appt: Appointment, decorators?: CalendarDecorators): EventInput {
   const colors = colorForProfessional(appt.professional_user_id);
   return {
@@ -123,7 +106,6 @@ export function useAppointmentCalendar(
   viewer: Ref<AuthUser | null>,
   handlers: CalendarHandlers,
   decorators?: CalendarDecorators,
-  dragTuning?: DragTuning,
 ): { calendarOptions: Ref<CalendarOptions>; timeBounds: Ref<{ min: string; max: string }> } {
   // Only authenticated non-Client viewers may drag/resize — null viewer is read-only.
   const editable = computed(() => !!viewer.value && viewer.value.role !== 'Client');
@@ -134,20 +116,6 @@ export function useAppointmentCalendar(
   // Read the shared i18n instance's locale ref (the ui store's single source of truth) rather than
   // useI18n() so the composable works outside a component setup context too.
   const locale = i18n.global.locale;
-
-  // Snap the live drag preview to the professional's slot lattice: grid rows ARE the slots
-  // (row height + labels = the step) and slotMinTime aligns so rows sit on real slot starts,
-  // so a drag jumps slot-to-slot. Sobreturno mode → 5-min sub-steps. No lattice (mixed
-  // 'Todos' view) → a plain 30-min grid with a coarse snap; the drop handler still lands the
-  // block on the real slot.
-  const snap = computed(() =>
-    snapConfig(
-      dragTuning?.slotStartsMinutes.value ?? null,
-      dragTuning?.slotMinutes.value ?? null,
-      hmsToMinutes(timeBounds.value.min),
-      dragTuning?.fine.value ?? false,
-    ),
-  );
 
   // Trim the grid to working hours instead of rendering a mostly-empty 24h column,
   // widening it if any loaded appointment (e.g. a sobreturno) falls outside.
@@ -166,19 +134,6 @@ export function useAppointmentCalendar(
     return { min: `${pad(minHour)}:00:00`, max: `${pad(maxHour)}:00:00` };
   });
 
-  // Round the grid's bottom UP to the professional's slot lattice. Otherwise the last lattice row
-  // (e.g. 20:40–21:30 on a 50-min grid) is only partly valid time below a non-aligned slotMaxTime
-  // (21:00), leaving a dead sub-row the availability overlay can't cover.
-  const slotMaxTime = computed(() => {
-    const gran = hmsToMinutes(snap.value.slotDuration);
-    const origin = hmsToMinutes(snap.value.slotMinTime);
-    const rawMax = hmsToMinutes(timeBounds.value.max);
-    if (!gran || rawMax <= origin) return timeBounds.value.max;
-    const aligned = Math.min(origin + Math.ceil((rawMax - origin) / gran) * gran, 24 * 60);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${pad(Math.floor(aligned / 60))}:${pad(aligned % 60)}:00`;
-  });
-
   const calendarOptions = computed<CalendarOptions>(() => ({
     plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
     initialView: 'timeGridWeek',
@@ -195,16 +150,19 @@ export function useAppointmentCalendar(
     height: 'auto',
     expandRows: true,
     nowIndicator: true,
-    slotMinTime: snap.value.slotMinTime,
-    slotMaxTime: slotMaxTime.value,
-    slotDuration: snap.value.slotDuration,
-    slotLabelInterval: snap.value.slotLabelInterval,
+    // A plain regular scale from working-start to working-end — a clean 30-min base with hourly labels,
+    // independent of the professional's blocks so it never looks busy or chases an off-phase block. The
+    // real schedule slots are drawn on top as a dotted overlay (see the staff view); the fine 10-min
+    // precision lives in the drag snap, not in the visible grid.
+    slotMinTime: timeBounds.value.min,
+    slotMaxTime: timeBounds.value.max,
+    slotDuration: '00:30:00',
+    slotLabelInterval: '01:00:00',
     navLinks: true,
     eventDisplay: 'block',
     slotEventOverlap: false,
-    // Drag preview snaps to the professional's slot lattice (see `snap`); sobreturno mode uses 5-min sub-steps.
-    // For mixed views the drop handler still lands the block on the real slot as a backstop.
-    snapDuration: snap.value.snapDuration,
+    // 10-min snap so a turno can be nudged off the slot lattice (into gaps / sobreturno) in fine steps.
+    snapDuration: '00:10:00',
 
     // Compact one-line-first rendering so short events show "HH:MM Título" instead of
     // clipping the time and title mid-letter.

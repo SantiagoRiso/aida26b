@@ -38,11 +38,19 @@ watch(
     if (result.ok) {
       slots.value = result.data.slots;
       dayOpen.value = result.data.open;
-      // Auto-select the slot matching a preset start (e.g. the calendar cell the user clicked) so
-      // its duration flows to the parent without a second click.
-      const preset = slots.value.find((s) => s.start === props.modelValue);
-      if (preset) emit('slotSelected', preset);
     }
+  },
+  { immediate: true },
+);
+
+// Auto-select the slot matching a preset start (e.g. the calendar slot the user clicked) so its
+// duration flows to the parent without a second click. Runs whenever either the slots or the preset
+// start settle — the two arrive on different ticks when a click opens the form.
+watch(
+  [slots, () => props.modelValue],
+  () => {
+    const preset = slots.value.find((s) => s.start === props.modelValue);
+    if (preset) emit('slotSelected', preset);
   },
   { immediate: true },
 );

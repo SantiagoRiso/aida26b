@@ -2,6 +2,7 @@ import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
 import { otherBlockEdges, type TemplateBlock } from '@/composables/scheduleTemplateGrid';
 import type { Weekday } from '@shared/ssot/domain';
 import { placeMove, placeResizeTop, placeResizeBottom, freeWindows, type MinuteInterval } from '@/composables/templateBlockPlacement';
+import { createDragGhost, type DragGhost } from '@/composables/dragGhost';
 
 // A move/resize we drive ourselves instead of FullCalendar's. FC only snaps a drag to its fixed time
 // lattice and can never pull an edge onto a *neighbouring block's* boundary, so we own the interaction:
@@ -44,7 +45,7 @@ interface Session {
   widthPx: number;
   pxPerMin: number;
   dragging: boolean;
-  ghost: HTMLElement | null;
+  ghost: DragGhost | null;
   last: { weekday: Weekday; start: number; end: number };
 }
 
@@ -83,44 +84,15 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('keydown', onKey);
-    if (session?.ghost) session.ghost.remove();
-    if (session) session.el.style.opacity = '';
+    session?.ghost?.destroy();
     document.body.style.cursor = '';
     session = null;
-  }
-
-  // A flat, in-place clone appended to the calendar root so the block's scoped :deep() CSS (colour,
-  // radius, label padding) applies to it exactly as to the real block — no style copying needed. The
-  // original is hidden during the drag, so what the user sees is the block itself resize/move in place.
-  function makeGhost(el: HTMLElement, rect: DOMRect): HTMLElement {
-    const ghost = el.cloneNode(true) as HTMLElement;
-    ghost.classList.add('fc-template-ghost');
-    Object.assign(ghost.style, {
-      position: 'fixed',
-      margin: '0',
-      transform: 'none',
-      transition: 'none',
-      boxShadow: 'none',
-      // Slightly translucent so it reads as a live preview, not the committed block — but flat and
-      // in-place (no shadow/lift), so it still tracks the cursor predictably.
-      opacity: '0.7',
-      left: `${rect.left}px`,
-      top: `${rect.top}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-      pointerEvents: 'none',
-      zIndex: '5',
-    });
-    (deps.ghostParent?.() ?? document.body).appendChild(ghost);
-    return ghost;
   }
 
   function begin(ev: PointerEvent) {
     if (!session) return;
     session.dragging = true;
-    session.ghost = makeGhost(session.el, session.el.getBoundingClientRect());
-    // Fully hide the real block so only the flat in-place ghost shows — reads as the block resizing.
-    session.el.style.opacity = '0';
+    session.ghost = createDragGhost(session.el, session.el.getBoundingClientRect(), deps.ghostParent?.() ?? document.body);
     document.body.style.cursor = session.mode === 'move' ? 'grabbing' : 'ns-resize';
     deps.onBegin();
     ev.preventDefault();
@@ -129,14 +101,14 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
   // Render the ghost at the given minutes span, keeping the original column unless a move supplies a new one.
   function paint(startMin: number, endMin: number, col?: { left: number; width: number }) {
     if (!session?.ghost) return;
-    session.ghost.style.top = `${yAt(startMin)}px`;
-    session.ghost.style.height = `${(endMin - startMin) * session.pxPerMin}px`;
-    session.ghost.style.left = `${col?.left ?? session.leftPx}px`;
-    session.ghost.style.width = `${col?.width ?? session.widthPx}px`;
-    // The ghost is a frozen clone; rewrite its time label so it reads the range it will commit to,
-    // making the snap visible (e.g. "13:10 - 17:20" the instant the top edge snaps onto a boundary).
-    const label = session.ghost.querySelector('.fc-event-time');
-    if (label) label.textContent = `${hhmm(startMin)} - ${hhmm(endMin)}`;
+    session.ghost.move({
+      top: yAt(startMin),
+      height: (endMin - startMin) * session.pxPerMin,
+      left: col?.left ?? session.leftPx,
+      width: col?.width ?? session.widthPx,
+    });
+    // Rewrite the label live so the snap is visible (e.g. "13:10 - 17:20" the instant the top edge snaps).
+    session.ghost.setLabel(`${hhmm(startMin)} - ${hhmm(endMin)}`);
   }
 
   function position(ev: PointerEvent) {

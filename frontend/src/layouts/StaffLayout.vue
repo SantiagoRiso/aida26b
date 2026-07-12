@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
+import { ArrowRightOnRectangleIcon } from '@heroicons/vue/24/outline';
 import SidebarNav from '@/components/staff/SidebarNav.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
 const router = useRouter();
-
-const sidebarOpen = ref(true);
 
 async function logout() {
   await auth.logout();
@@ -19,47 +17,30 @@ async function logout() {
 
 <template>
   <div class="flex min-h-screen bg-surface">
-    <aside
-      class="flex flex-col border-r border-border bg-card transition-all duration-200"
-      :class="sidebarOpen ? 'w-56' : 'w-0 overflow-hidden'"
-    >
-      <div class="flex h-14 items-center justify-between px-4 border-b border-border">
+    <aside class="flex w-56 flex-col border-r border-border bg-card">
+      <div class="flex h-14 items-center px-4 border-b border-border">
         <span class="text-sm font-semibold text-current truncate">Agenda</span>
       </div>
       <SidebarNav class="flex-1 overflow-y-auto" />
-    </aside>
 
-    <div class="flex flex-1 flex-col overflow-hidden">
-      <header class="flex h-14 items-center justify-between border-b border-border bg-card px-6">
+      <div class="border-t border-border p-4">
+        <div class="mb-2 truncate text-sm text-neutral">
+          {{ auth.user?.username }}
+          <span v-if="auth.user" class="ml-1 text-xs">({{ t(`roles.${auth.user.role}`) }})</span>
+        </div>
         <button
           type="button"
-          class="rounded-md p-1 text-neutral hover:bg-surface"
-          aria-label="Toggle sidebar"
-          @click="sidebarOpen = !sidebarOpen"
+          class="flex w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-semibold hover:bg-surface"
+          @click="logout"
         >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
+          <ArrowRightOnRectangleIcon class="h-4 w-4" aria-hidden="true" />
+          {{ t('nav.logout') }}
         </button>
+      </div>
+    </aside>
 
-        <div class="flex items-center gap-4">
-          <span class="text-sm text-neutral">
-            {{ auth.user?.username }}
-            <span v-if="auth.user" class="ml-1 text-xs">({{ t(`roles.${auth.user.role}`) }})</span>
-          </span>
-          <button
-            type="button"
-            class="rounded-md border border-border px-3 py-1.5 text-sm font-semibold hover:bg-surface"
-            @click="logout"
-          >
-            {{ t('nav.logout') }}
-          </button>
-        </div>
-      </header>
-
-      <main class="flex-1 overflow-y-auto p-6">
-        <RouterView />
-      </main>
-    </div>
+    <main class="flex-1 overflow-y-auto p-6">
+      <RouterView />
+    </main>
   </div>
 </template>

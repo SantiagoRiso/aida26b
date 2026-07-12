@@ -62,6 +62,23 @@ defineExpose({
   padding: 0;
 }
 
+/* Permanent dotted outline for every real schedule slot inside a working block. Sits behind the
+   appointments; makes the block's slot structure visible without cluttering the time axis. */
+:deep(.fc-slot-outline) {
+  background: transparent !important;
+  border: 1px dashed rgba(100, 116, 139, 0.45);
+  border-radius: 6px;
+  margin: 1px 3px;
+  opacity: 1 !important;
+}
+
+/* The dotted slot outlines (inside blocks) and the grey non-working shading carry the structure now,
+   so the uniform row lines are irrelevant — hide them (both the on-the-hour and half-hour lanes). The
+   hour LABELS on the axis stay; only the horizontal grid lines go. */
+:deep(.fc-timegrid-slot) {
+  border-top-color: transparent;
+}
+
 /* Valid drop target while dragging: a distinct dotted, rounded box per open slot. */
 :deep(.fc-slot-free) {
   background: rgba(16, 185, 129, 0.12) !important;
@@ -137,6 +154,9 @@ defineExpose({
    since the timegrid has no per-cell element). Month: the whole day cell, which is one cell. */
 :deep(.fc-slot-hover) {
   background: rgba(37, 99, 235, 0.13) !important;
+  border: 1px solid rgba(37, 99, 235, 0.55);
+  border-radius: 6px;
+  margin: 1px 3px;
   opacity: 1 !important;
 }
 
@@ -161,12 +181,7 @@ defineExpose({
   background: rgba(100, 116, 139, 0.14);
 }
 
-/* The block we drag ourselves (cloned onto <body> during a custom drag). */
-:global(.fc-drag-ghost) {
-  opacity: 0.85;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  cursor: grabbing;
-}
+/* The flat, in-place drag preview (createDragGhost) — its look is set inline; nothing to add here. */
 
 /* State is visible on the block itself, not only in the detail panel:
    pending requests read as tentative; closed states fade out. */

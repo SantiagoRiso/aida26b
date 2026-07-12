@@ -49,7 +49,7 @@ function proFullTimeSesion(): ProWeekly {
 function proMargeSchedule(): ProWeekly {
   const week = [
     { start: '09:00', end: '13:10', offers: [offer('sesion')] },
-    { start: '14:00', end: '17:20', offers: [offer('sesion')] },
+    { start: '13:50', end: '17:10', offers: [offer('sesion')] },
   ];
   return {
     mon: week, tue: week, wed: week, thu: week,
