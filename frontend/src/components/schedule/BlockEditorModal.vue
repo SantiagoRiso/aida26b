@@ -6,13 +6,15 @@ import AppButton from '@/components/shared/AppButton.vue';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean;
   block: TemplateBlock | null;
   // Validates + persists the block window; resolves true on success. The modal orchestrates the
   // full submit (times then services) so Guardar commits everything and Cancelar discards.
   submitTimes: (times: { startTime: string; endTime: string }) => Promise<boolean>;
-}>();
+  // Resource-owned blocks have no services to attach; default true (professional blocks).
+  showServices?: boolean;
+}>(), { showServices: true });
 const emit = defineEmits<{
   delete: [];
   close: [];
@@ -98,7 +100,7 @@ const liveMinutes = computed(() => {
             </div>
 
             <BlockServicesPanel
-              v-if="block"
+              v-if="block && showServices"
               ref="servicesRef"
               :key="block.id"
               :block="block"

@@ -8,6 +8,7 @@ import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import ScheduleBlockEditor from '@/components/schedule/ScheduleBlockEditor.vue';
 
 const { label } = useLabel();
 const { toast } = useToast();
@@ -20,11 +21,20 @@ const mode = ref<'create' | 'edit'>('create');
 const confirmOpen = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 const reloadKey = ref(0);
+const scheduleOpen = ref(false);
+const scheduleResourceId = ref<number | null>(null);
 
 function onEdit(row: TableRecordMap['resources']) {
   editingRow.value = row;
   mode.value = 'edit';
   panelOpen.value = true;
+}
+
+function openSchedule(row: TableRecordMap['resources']) {
+  const id = Number(row.id);
+  if (!Number.isFinite(id)) return;
+  scheduleResourceId.value = id;
+  scheduleOpen.value = true;
 }
 
 function onCreate() {
@@ -63,7 +73,17 @@ async function confirmDelete() {
       :table-key="TABLE_KEY"
       @create="onCreate"
       @edit="onEdit"
-    />
+    >
+      <template #row-actions="{ row }">
+        <button
+          type="button"
+          class="mr-2 text-accent hover:underline text-xs"
+          @click.stop="openSchedule(row)"
+        >
+          {{ label({ es: 'Horario', en: 'Schedule' }) }}
+        </button>
+      </template>
+    </GenericTable>
 
     <DetailPanel :open="panelOpen" :title="label({ es: 'Recurso', en: 'Resource' })" @close="panelOpen = false">
       <GenericForm
@@ -73,7 +93,6 @@ async function confirmDelete() {
         @saved="onSaved"
         @cancel="panelOpen = false"
       />
-      <!-- A per-resource schedule ("Horario") entry will be added here in a later task (resource-schedule editor). -->
       <div v-if="editingRow" class="mt-6 border-t border-border pt-4">
         <button
           type="button"
@@ -83,6 +102,19 @@ async function confirmDelete() {
           {{ label({ es: 'Eliminar recurso', en: 'Delete resource' }) }}
         </button>
       </div>
+    </DetailPanel>
+
+    <DetailPanel
+      :open="scheduleOpen"
+      size="7xl"
+      :title="label({ es: 'Horario del recurso', en: 'Resource schedule' })"
+      @close="scheduleOpen = false"
+      @after-leave="scheduleResourceId = null"
+    >
+      <ScheduleBlockEditor
+        v-if="scheduleResourceId !== null"
+        :owner="{ kind: 'resource', id: scheduleResourceId }"
+      />
     </DetailPanel>
 
     <ConfirmDialog
