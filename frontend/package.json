@@ -18,6 +18,8 @@
     "@fullcalendar/vue3": "6.1",
     "@headlessui/vue": "^1.7.0",
     "@heroicons/vue": "^2.2.0",
+    "@vuepic/vue-datepicker": "^14.0.0",
+    "date-fns": "^4.4.0",
     "pinia": "^3.0.0",
     "vue": "^3.5.0",
     "vue-i18n": "^11.4.0",

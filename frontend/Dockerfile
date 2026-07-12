@@ -10,6 +10,7 @@ RUN npm ci
 # the copy in dev so host edits hot-reload.
 COPY frontend/src ./src
 COPY frontend/styles ./styles
+COPY frontend/public ./public
 COPY frontend/index.html ./
 COPY frontend/tsconfig.json ./
 COPY frontend/vite.config.ts ./

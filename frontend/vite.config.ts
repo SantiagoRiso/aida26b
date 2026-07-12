@@ -15,6 +15,9 @@ export default defineConfig({
     // host:true binds 0.0.0.0 so the dev server is reachable from outside the container.
     host: true,
     port: 8080,
+    // Bind-mounted source from a Windows host doesn't emit inotify events inside the
+    // Linux container, so the native watcher never fires. Poll instead so edits hot-reload.
+    watch: { usePolling: true, interval: 300 },
     proxy: {
       // Dev-only: Express serves the API; Vite proxies /api so cookies stay same-site.
       // Target is the backend host — 'backend' inside Docker, localhost for bare-metal dev.

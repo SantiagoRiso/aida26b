@@ -81,6 +81,7 @@ services:
     volumes:
       - ./frontend/src:/app/frontend/src
       - ./frontend/styles:/app/frontend/styles
+      - ./frontend/public:/app/frontend/public
       - ./frontend/index.html:/app/frontend/index.html
       - ./frontend/tsconfig.json:/app/frontend/tsconfig.json
       - ./frontend/vite.config.ts:/app/frontend/vite.config.ts

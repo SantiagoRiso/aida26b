@@ -6,6 +6,7 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: 'jsdom',
+      setupFiles: ['./test/setup.ts'],
       // Vitest only — never pulls in e2e/ specs (Playwright runs those exclusively).
       include: ['test/**/*.test.ts'],
       globals: false,
