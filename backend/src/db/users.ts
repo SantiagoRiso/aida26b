@@ -93,6 +93,36 @@ export function insertUser(
   );
 }
 
+// Contact-only client: no login credentials (username/password stay NULL). Bookable, cannot log in.
+export function insertContactOnlyClient(
+  db: Queryable,
+  u: { email: string; displayName: string; dni: string | null; businessId: number },
+): Promise<{ id: string } | null> {
+  return queryOne<{ id: string }>(
+    db,
+    `INSERT INTO auth.users (email, display_name, dni, role, business_id)
+     VALUES ($1, $2, $3, 'Client', $4)
+     RETURNING id`,
+    [u.email, u.displayName, u.dni, u.businessId],
+  );
+}
+
+// Activate login on a contact-only client (username IS NULL guards against overwriting an
+// existing login). Forces a password change on first login. Duplicate username -> DbError 23505.
+export function enableClientLogin(
+  db: Queryable,
+  opts: { userId: number; businessId: number; username: string; passwordHash: string; passwordSalt: string },
+): Promise<{ id: string; username: string } | null> {
+  return queryOne<{ id: string; username: string }>(
+    db,
+    `UPDATE auth.users
+        SET username = $1, password_hash = $2, password_salt = $3, must_change_password = true, updated_at = now()
+      WHERE id = $4 AND business_id = $5 AND role = 'Client' AND is_active = true AND username IS NULL
+      RETURNING id, username`,
+    [opts.username, opts.passwordHash, opts.passwordSalt, opts.userId, opts.businessId],
+  );
+}
+
 // Deactivate (never delete) a user in the caller's business, stamping who did it. Null when no
 // matching active user exists in that business.
 export function deactivateUser(

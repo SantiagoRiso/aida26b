@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRow, deleteRow } from '@/api/crud';
+import { enableClientLogin } from '@/api/admin-users';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { getBalance, getLedger } from '@/api/ledger';
 import type { LedgerEntry } from '@/api/ledger';
@@ -21,6 +22,8 @@ import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import FieldError from '@/components/shared/FieldError.vue';
+import PasswordInput from '@/components/shared/PasswordInput.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import LedgerEntryForm from '@/components/ledger/LedgerEntryForm.vue';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
@@ -52,6 +55,10 @@ const loading = ref(true);
 const showEntryForm = ref(false);
 const showBookForm = ref(false);
 const showEditProfile = ref(false);
+const showEnableLogin = ref(false);
+const enableLoginSubmitting = ref(false);
+const enableLoginError = ref('');
+const enableLoginForm = reactive({ username: '', password: '' });
 
 const cancelId = ref<number | null>(null);
 const cancelConfirmOpen = ref(false);
@@ -65,6 +72,8 @@ const role = computed(() => auth.user?.role as Role | undefined);
 const canCreateLedger = computed(() => !!role.value && roleAllowedFor(['Admin', 'Receptionist', 'Professional'], role.value));
 const canEditProfile = computed(() => !!role.value && roleAllowedFor(['Admin', 'Receptionist'], role.value));
 const canDeactivate = computed(() => !!role.value && roleAllowedFor(['Admin'], role.value));
+// Contact-only client (no username) — offer to turn it into a logging-in account.
+const canEnableLogin = computed(() => client.value != null && client.value.username == null);
 
 // Ledger reads are server-scoped: an Admin sees any client in the business, but a Professional or
 // Receptionist only clients they've actually seen. Gate the whole Cuenta Corriente section on that
@@ -184,6 +193,27 @@ async function confirmDeactivate() {
   }
 }
 
+async function submitEnableLogin() {
+  enableLoginSubmitting.value = true;
+  enableLoginError.value = '';
+  try {
+    const res = await enableClientLogin(clientId, {
+      username: enableLoginForm.username,
+      password: enableLoginForm.password,
+    });
+    if (res.ok) {
+      showEnableLogin.value = false;
+      toast.success('saved');
+      emit('changed');
+      await loadProfile();
+    } else {
+      enableLoginError.value = res.message ?? label({ es: 'Error creando usuario', en: 'Error creating user' });
+    }
+  } finally {
+    enableLoginSubmitting.value = false;
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -203,6 +233,9 @@ onMounted(load);
           <p v-if="client.notes" class="mt-1 text-sm text-neutral italic">{{ client.notes }}</p>
         </div>
         <div class="flex gap-2">
+          <AppButton v-if="canEnableLogin" variant="neutral" @click="showEnableLogin = true">
+            {{ label({ es: 'Crear usuario', en: 'Create user' }) }}
+          </AppButton>
           <AppButton v-if="canEditProfile" variant="neutral" @click="showEditProfile = true">
             {{ label({ es: 'Editar perfil', en: 'Edit profile' }) }}
           </AppButton>
@@ -365,6 +398,46 @@ onMounted(load);
         @saved="onProfileSaved"
         @cancel="showEditProfile = false"
       />
+    </DetailPanel>
+
+    <DetailPanel :open="showEnableLogin" :title="label({ es: 'Crear usuario', en: 'Create user' })" @close="showEnableLogin = false">
+      <form class="space-y-4" @submit.prevent="submitEnableLogin" novalidate>
+        <FieldError :message="enableLoginError" />
+
+        <div class="flex flex-col gap-1">
+          <label for="enable-login-username" class="text-sm font-semibold">
+            {{ label({ es: 'Usuario', en: 'Username' }) }} <span class="text-destructive">*</span>
+          </label>
+          <input
+            id="enable-login-username"
+            v-model="enableLoginForm.username"
+            type="text"
+            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            required
+          />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label for="enable-login-password" class="text-sm font-semibold">
+            {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
+          </label>
+          <PasswordInput
+            id="enable-login-password"
+            v-model="enableLoginForm.password"
+            input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            required
+          />
+        </div>
+
+        <div class="flex justify-end gap-3 pt-2">
+          <AppButton variant="neutral" type="button" @click="showEnableLogin = false">
+            {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+          </AppButton>
+          <AppButton type="submit" :loading="enableLoginSubmitting">
+            {{ label({ es: 'Guardar', en: 'Save' }) }}
+          </AppButton>
+        </div>
+      </form>
     </DetailPanel>
 
     <ConflictOverrideDialog

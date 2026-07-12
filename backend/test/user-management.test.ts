@@ -604,6 +604,144 @@ describe('self-protection', () => {
   });
 });
 
+describe('contact-only clients', () => {
+  test('creates a client with no username/password; row has null credentials', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Walk In Client', email: 'walkin1@test.com' },
+    });
+    expect(res.status).toBe(201);
+
+    const body = res.body?.data as { id: string; role: string };
+    expect(body.role).toBe('Client');
+
+    const row = await testPool.query<{
+      username: string | null;
+      password_hash: string | null;
+      password_salt: string | null;
+      display_name: string;
+      email: string;
+      role: string;
+      business_id: string;
+    }>(
+      `SELECT username, password_hash, password_salt, display_name, email, role, business_id FROM auth.users WHERE id = $1`,
+      [body.id]
+    );
+    expect(row.rows[0].username).toBeNull();
+    expect(row.rows[0].password_hash).toBeNull();
+    expect(row.rows[0].password_salt).toBeNull();
+    expect(row.rows[0].display_name).toBe('Walk In Client');
+    expect(row.rows[0].email).toBe('walkin1@test.com');
+    expect(row.rows[0].role).toBe('Client');
+    expect(String(row.rows[0].business_id)).toBe(adminBusinessId);
+  });
+
+  test('requires display_name and a valid email', async () => {
+    const noDisplayName = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', email: 'nodisplay@test.com' },
+    });
+    expect(noDisplayName.status).toBe(400);
+
+    const badEmail = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Bad Email Client', email: 'not-an-email' },
+    });
+    expect(badEmail.status).toBe(400);
+  });
+
+  test('a contact-only client cannot be logged into and is indistinguishable from unknown (401 invalid_credentials)', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'No Login Client', email: 'nologin1@test.com' },
+    });
+    expect(res.status).toBe(201);
+
+    // No username was ever assigned, so any guess is a login attempt against an unknown account.
+    const attempt = await request('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'nologin1@test.com', password: 'whatever12' },
+    });
+    expect(attempt.status).toBe(401);
+    expect(attempt.body?.error?.code).toBe('invalid_credentials');
+
+    const unknownAttempt = await request('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'definitely-does-not-exist', password: 'whatever12' },
+    });
+    expect(unknownAttempt.status).toBe(401);
+    expect(unknownAttempt.body?.error?.code).toBe('invalid_credentials');
+  });
+
+  test('enable-login activates a contact-only client; row gets username+hash+must_change_password, and login then succeeds', async () => {
+    const createRes = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Activate Me', email: 'activateme1@test.com' },
+    });
+    expect(createRes.status).toBe(201);
+    const clientId = (createRes.body.data as { id: number }).id;
+
+    const enableRes = await request(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'activateme1', password: 'activatepass1' },
+    });
+    expect(enableRes.status).toBe(200);
+
+    const row = await testPool.query<{
+      username: string;
+      password_hash: string;
+      password_salt: string;
+      must_change_password: boolean;
+    }>(
+      `SELECT username, password_hash, password_salt, must_change_password FROM auth.users WHERE id = $1`,
+      [clientId]
+    );
+    expect(row.rows[0].username).toBe('activateme1');
+    expect(row.rows[0].password_hash).toBeTruthy();
+    expect(row.rows[0].password_salt).toBeTruthy();
+    expect(row.rows[0].must_change_password).toBe(true);
+
+    const loginRes = await request('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'activateme1', password: 'activatepass1' },
+    });
+    expect(loginRes.status).toBe(200);
+  });
+
+  test('duplicate username on activation returns 409', async () => {
+    const createRes = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Dup Target', email: 'duptarget1@test.com' },
+    });
+    expect(createRes.status).toBe(201);
+    const clientId = (createRes.body.data as { id: number }).id;
+
+    // 'testadmin' already exists (seeded in beforeAll) — activation must collide on it.
+    const enableRes = await request(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'testadmin', password: 'attemptpass1' },
+    });
+    expect(enableRes.status).toBe(409);
+  });
+
+  test('enable-login on an unknown/foreign/already-active user returns 404', async () => {
+    const res = await request('/api/admin/users/999999/enable-login', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'ghostuser1', password: 'ghostpass12' },
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('role immutability', () => {
   test('no admin route accepts a role change (PUT/PATCH to role-change path returns 404)', async () => {
     const createRes = await request('/api/admin/users', {

@@ -8,9 +8,18 @@ import { sendData, sendError } from '../status_messages';
 import { readPassword, type AuditWriter } from '../session';
 import { withTransaction } from '../db/core';
 import { DbError } from '../db/errors';
-import { insertUser, deactivateUser, resetUserPassword, deleteUserSessions } from '../db/users';
+import {
+  insertUser,
+  deactivateUser,
+  resetUserPassword,
+  deleteUserSessions,
+  insertContactOnlyClient,
+  enableClientLogin,
+} from '../db/users';
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // eslint-disable-next-line no-restricted-syntax -- catch-boundary: narrows an unverified thrown error into DbError
 function isUniqueViolation(error: unknown): error is DbError {
@@ -64,6 +73,45 @@ export function mountUserAdminRoutes(
       if (!mayCreate) {
         await audit(req, 'permission_denied', 'denied', { path: req.path, method: req.method });
         return sendError(res, 403, 'forbidden', 'Forbidden');
+      }
+
+      // Contact-only client (walk-in / phone booking): no username or password supplied.
+      // Bookable immediately; login is enabled later via /enable-login.
+      if (role === 'Client' && !username && !password) {
+        if (sessionUser.business_id == null) {
+          return sendError(res, 400, 'no_business', 'A business context is required to manage users');
+        }
+        const businessId = sessionUser.business_id;
+
+        const contactDisplayName =
+          typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
+
+        if (!contactDisplayName || !emailRaw || !EMAIL_RE.test(emailRaw)) {
+          return sendError(res, 400, 'invalid_request', 'Valid display name and email are required');
+        }
+
+        try {
+          const newUserId = await withTransaction(pool, async (tx) => {
+            const inserted = await insertContactOnlyClient(tx, {
+              email: emailRaw, displayName: contactDisplayName, dni, businessId,
+            });
+            return Number(inserted!.id);
+          });
+
+          await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+
+          return sendData(res, { id: newUserId, role }, 201);
+        } catch (error) {
+          if (isUniqueViolation(error)) {
+            return sendError(
+              res,
+              409,
+              'conflict',
+              error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : 'Email already exists',
+            );
+          }
+          throw error;
+        }
       }
 
       if (!username || !password || !isRole(role)) {
@@ -193,6 +241,61 @@ export function mountUserAdminRoutes(
       await audit(req, 'password_reset', 'success', { user_id: userId });
 
       return sendData(res, { user: reset });
+    }),
+  );
+
+  // "Enable login" turns a contact-only client (username IS NULL) into a client who can log
+  // in. Same authz as creating a Client: Admin, or Professional/Receptionist for their own business.
+  app.post(
+    '/api/admin/users/:id/enable-login',
+    requireAuth,
+    requirePasswordReady,
+    guardRoute(async (req, res) => {
+      const userId = Number(req.params.id);
+      const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+      const password = readPassword(req.body.password);
+      const sessionUser = (req as AuthedRequest).user!;
+
+      const mayManage =
+        sessionUser.role === 'Admin' || sessionUser.role === 'Professional' || sessionUser.role === 'Receptionist';
+
+      if (!mayManage) {
+        await audit(req, 'permission_denied', 'denied', { path: req.path, method: req.method });
+        return sendError(res, 403, 'forbidden', 'Forbidden');
+      }
+
+      if (!Number.isInteger(userId) || !username || !password) {
+        return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required');
+      }
+
+      if (sessionUser.business_id == null) {
+        return sendError(res, 400, 'no_business', 'A business context is required to manage users');
+      }
+
+      const { passwordHash, passwordSalt } = await auth.hashPassword(password);
+
+      try {
+        const enabled = await enableClientLogin(pool, {
+          userId,
+          businessId: sessionUser.business_id,
+          username,
+          passwordHash,
+          passwordSalt,
+        });
+
+        if (!enabled) {
+          return sendError(res, 404, 'not_found', 'Client not found');
+        }
+
+        await audit(req, 'login_enabled', 'success', { user_id: userId });
+
+        return sendData(res, { id: enabled.id, username: enabled.username });
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          return sendError(res, 409, 'conflict', 'Username already exists');
+        }
+        throw error;
+      }
     }),
   );
 }

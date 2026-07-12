@@ -174,6 +174,15 @@ export const peopleTables = {
         filterable: true,
         sortable: true,
       },
+      username: {
+        type: 'string',
+        label: { es: 'Usuario', en: 'Username' },
+        validator: { nullable: true },
+        filterable: false,
+        sortable: false,
+        // Login identity; set via enable-login, never through generic PUT. Null = contact-only client.
+        editable: false,
+      },
       phone: {
         type: 'string',
         label: { es: 'Teléfono', en: 'Phone' },

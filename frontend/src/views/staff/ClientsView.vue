@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { useToast } from '@/composables/useToast';
 import { listRows } from '@/api/crud';
 import { listRelatedClientIds } from '@/api/appointments';
-import { createUser } from '@/api/admin-users';
 import type { TableRecordMap } from '@shared/types/types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ClientDetail from '@/components/staff/ClientDetail.vue';
-import FieldError from '@/components/shared/FieldError.vue';
+import CreateClientForm from '@/components/staff/CreateClientForm.vue';
 import AppButton from '@/components/shared/AppButton.vue';
-import PasswordInput from '@/components/shared/PasswordInput.vue';
 
 const { label } = useLabel();
 const { success } = useToast();
@@ -61,44 +59,15 @@ function openClient(id: number) {
 // Staff-registered clients (walk-ins, phone bookings); the route already limits
 // this view to Admin/Professional/Receptionist, and the server re-checks the role.
 const createPanelOpen = ref(false);
-const createSubmitting = ref(false);
-const createError = ref('');
-const createForm = reactive({
-  username: '',
-  password: '',
-  display_name: '',
-  email: '',
-  dni: '',
-});
 
 function openCreate() {
-  Object.assign(createForm, { username: '', password: '', display_name: '', email: '', dni: '' });
-  createError.value = '';
   createPanelOpen.value = true;
 }
 
-async function submitCreate() {
-  createSubmitting.value = true;
-  createError.value = '';
-  try {
-    const result = await createUser({
-      username: createForm.username,
-      password: createForm.password,
-      role: 'Client',
-      display_name: createForm.display_name || undefined,
-      email: createForm.email || undefined,
-      dni: createForm.dni || undefined,
-    });
-    if (result.ok) {
-      createPanelOpen.value = false;
-      success('saved');
-      await load();
-    } else {
-      createError.value = result.message ?? label({ es: 'Error creando cliente', en: 'Error creating client' });
-    }
-  } finally {
-    createSubmitting.value = false;
-  }
+async function onClientCreated() {
+  createPanelOpen.value = false;
+  success('saved');
+  await load();
 }
 
 onMounted(load);
@@ -193,75 +162,7 @@ onMounted(load);
       :title="label({ es: 'Nuevo cliente', en: 'New client' })"
       @close="createPanelOpen = false"
     >
-      <form class="space-y-4" @submit.prevent="submitCreate" novalidate>
-        <FieldError :message="createError" />
-
-        <div class="flex flex-col gap-1">
-          <label for="client-username" class="text-sm font-semibold">
-            {{ label({ es: 'Usuario', en: 'Username' }) }} <span class="text-destructive">*</span>
-          </label>
-          <input
-            id="client-username"
-            v-model="createForm.username"
-            type="text"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-            required
-          />
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label for="client-password" class="text-sm font-semibold">
-            {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
-          </label>
-          <PasswordInput
-            id="client-password"
-            v-model="createForm.password"
-            input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-            required
-          />
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label for="client-display-name" class="text-sm font-semibold">
-            {{ label({ es: 'Nombre visible', en: 'Display name' }) }}
-          </label>
-          <input
-            id="client-display-name"
-            v-model="createForm.display_name"
-            type="text"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label for="client-email" class="text-sm font-semibold">{{ label({ es: 'Email', en: 'Email' }) }}</label>
-          <input
-            id="client-email"
-            v-model="createForm.email"
-            type="email"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label for="client-dni" class="text-sm font-semibold">{{ label({ es: 'DNI', en: 'DNI' }) }}</label>
-          <input
-            id="client-dni"
-            v-model="createForm.dni"
-            type="text"
-            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-
-        <div class="flex justify-end gap-3 pt-2">
-          <AppButton variant="neutral" type="button" @click="createPanelOpen = false">
-            {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
-          </AppButton>
-          <AppButton type="submit" :loading="createSubmitting">
-            {{ label({ es: 'Guardar', en: 'Save' }) }}
-          </AppButton>
-        </div>
-      </form>
+      <CreateClientForm @created="onClientCreated" @cancel="createPanelOpen = false" />
     </DetailPanel>
   </div>
 </template>

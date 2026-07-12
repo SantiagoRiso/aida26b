@@ -2,9 +2,10 @@ import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
 
 export interface AdminUserPayload {
-  username: string;
+  // Omitted together for a contact-only client (no login) — see enableClientLogin.
+  username?: string;
   email?: string;
-  password: string;
+  password?: string;
   role: string;
   display_name?: string;
   dni?: string;
@@ -40,5 +41,16 @@ export function resetPassword(
   return apiFetch<{ user: AdminUserResult }>(`/admin/users/${id}/reset-password`, {
     method: 'POST',
     body: JSON.stringify({ password }),
+  });
+}
+
+// Turns a contact-only client (no username) into one who can log in.
+export function enableClientLogin(
+  id: string | number,
+  body: { username: string; password: string },
+): Promise<ApiResult<{ user: AdminUserResult }>> {
+  return apiFetch<{ user: AdminUserResult }>(`/admin/users/${id}/enable-login`, {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
 }
