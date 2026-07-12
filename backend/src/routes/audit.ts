@@ -5,7 +5,7 @@ import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
 import { listAuditEvents } from '../db/audit';
-import { getBusinessSettings, updateBusinessCutoff } from '../db/businesses';
+import { getBusinessSettings, updateBusinessSettings } from '../db/businesses';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import { AUDIT_OUTCOME_VALUES } from '../../../shared/src/ssot/domain';
 
@@ -21,7 +21,7 @@ type AuditFn = (
 ) => Promise<void>;
 
 // businesses is deliberately excluded from generic CRUD. This module owns the only
-// writable surface for business config: a single cutoff-only PATCH endpoint.
+// writable surface for business config: a single settings PATCH (cutoff + booking window).
 export function mountAuditRoutes(
   app: express.Application,
   pool: Pool,
@@ -173,7 +173,46 @@ export function mountAuditRoutes(
       });
     }
 
-    const updated = await updateBusinessCutoff(pool, user.business_id, cutoffHours);
+    // Non-negative integer, or undefined when the key is absent (partial update).
+    const asOptInt = (raw: ColumnValue, allowNull: boolean): { ok: boolean; value?: number | null } => {
+      if (raw === undefined) return { ok: true, value: undefined };
+      if (raw === null) return allowNull ? { ok: true, value: null } : { ok: false };
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) return { ok: false };
+      return { ok: true, value: n };
+    };
+
+    const minParsed = asOptInt(req.body.min_booking_days, false);
+    if (!minParsed.ok) {
+      return sendError(res, 422, 'invalid_request', 'min_booking_days must be a non-negative integer', {
+        min_booking_days: 'non-negative integer',
+      });
+    }
+    const maxParsed = asOptInt(req.body.max_booking_days, true);
+    if (!maxParsed.ok) {
+      return sendError(res, 422, 'invalid_request', 'max_booking_days must be a non-negative integer or null', {
+        max_booking_days: 'non-negative integer or null',
+      });
+    }
+
+    // Overlay the supplied keys onto the current row, then validate the merged window.
+    const current = await getBusinessSettings(pool, user.business_id);
+    if (!current) {
+      return sendError(res, 404, 'not_found', 'Business not found');
+    }
+    const minDays = minParsed.value === undefined ? current.min_booking_days : (minParsed.value as number);
+    const maxDays = maxParsed.value === undefined ? current.max_booking_days : maxParsed.value;
+    if (maxDays !== null && maxDays < minDays) {
+      return sendError(res, 422, 'invalid_request', 'max_booking_days must be greater than or equal to min_booking_days', {
+        max_booking_days: 'must be ≥ min_booking_days',
+      });
+    }
+
+    const updated = await updateBusinessSettings(pool, user.business_id, {
+      cancellation_cutoff_hours: cutoffHours,
+      min_booking_days: minDays,
+      max_booking_days: maxDays,
+    });
     if (!updated) {
       return sendError(res, 404, 'not_found', 'Business not found');
     }
@@ -182,6 +221,8 @@ export function mountAuditRoutes(
     await guards.audit(req, 'business_settings_updated', 'success', {
       business_id: user.business_id,
       cancellation_cutoff_hours: cutoffHours,
+      min_booking_days: minDays,
+      max_booking_days: maxDays,
     });
 
     return sendData(res, updated);

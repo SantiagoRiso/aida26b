@@ -15,9 +15,9 @@ export const schedulerTables = {
 
 export {
   WEEKDAYS,
-  validateWeeklySchedule,
-  computeDailyAvailability,
-  computeDailySlots,
+  computeServiceSlots,
+  computeFreeWindows,
+  weekdayOf,
   detectOverlap,
   TERMINAL_STATES,
   TRANSITION_MAP,
@@ -29,7 +29,7 @@ export {
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
   canCancelAppointment,
 } from './scheduling';
-export type { Weekday, TimeInterval, WeeklySchedule, ScheduleExceptionInput } from './scheduling';
+export type { Weekday, TimeInterval, ServiceBlock, ScheduleExceptionInput } from './scheduling';
 export { resolveBooking } from './catalog';
 export { evaluateConflicts } from './conflict';
 export type {

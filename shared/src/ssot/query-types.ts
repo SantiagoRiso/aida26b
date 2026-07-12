@@ -11,6 +11,15 @@ export type CalendarGrantRow = TableRecordMap['calendar_grants'] & { created_at:
 export type ActiveProfessionalRow = { user_id: string; business_id: string | null };
 export type ActiveUserRow = { id: string; role: string; business_id: string | null };
 
+// The caller's own profile fields (self-service read/write), never another user's.
+export interface SelfProfileRow {
+  id: string;
+  display_name: string;
+  bio: string | null;
+  email: string;
+  phone: string | null;
+}
+
 // A grant joined to its owning professional's business, for tenant-scoped revoke.
 export type GrantBusinessRow = {
   id: string;
@@ -83,7 +92,12 @@ export type BookedAppointmentRow = {
 };
 
 // businesses config surface exposed by the settings endpoints.
-export type BusinessSettingsRow = { id: string; cancellation_cutoff_hours: number };
+export type BusinessSettingsRow = {
+  id: string;
+  cancellation_cutoff_hours: number;
+  min_booking_days: number;
+  max_booking_days: number | null;
+};
 
 // audit_events projected for the admin audit view. details is the JSON blob written by the
 // audit writer (a Record<string, ColumnValue>), read back verbatim.

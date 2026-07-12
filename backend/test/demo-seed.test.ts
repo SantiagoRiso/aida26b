@@ -4,11 +4,11 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { seedDemo } from '../src/seed-demo';
 import { resetTestDb, makeTestPool } from './helpers';
-import { validateWeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
+import type { SqlParam } from '../../shared/src/types/types';
 
 let pool: Pool;
 
-async function count(sql: string, params: unknown[] = []): Promise<number> {
+async function count(sql: string, params: SqlParam[] = []): Promise<number> {
   const r = await pool.query<{ count: string }>(sql, params);
   return Number(r.rows[0].count);
 }
@@ -115,13 +115,34 @@ describe('demo seed feature coverage (SC4)', () => {
     expect(await count(`SELECT COUNT(*)::int count FROM audit_events WHERE outcome = 'denied'`)).toBeGreaterThanOrEqual(1);
   });
 
-  it('every seeded weekly schedule validates against validateWeeklySchedule', async () => {
-    const r = await pool.query<{ weekly: unknown }>(`SELECT weekly FROM schedules`);
-    expect(r.rows.length).toBeGreaterThan(0);
-    for (const row of r.rows) {
-      const result = validateWeeklySchedule(row.weekly);
-      expect(result.ok, `invalid weekly schedule: ${result.ok ? '' : result.errors.join(', ')}`).toBe(true);
-    }
+  it('seeds normalized schedule blocks; every professional block offers a service', async () => {
+    expect(await count(`SELECT COUNT(*)::int count FROM schedule_blocks`)).toBeGreaterThan(0);
+    // No degenerate time ranges.
+    expect(await count(`SELECT COUNT(*)::int count FROM schedule_blocks WHERE end_time <= start_time`)).toBe(0);
+    // Every professional-owned block offers at least one service.
+    const orphanProBlocks = await count(
+      `SELECT COUNT(*)::int count FROM schedule_blocks b
+       WHERE b.professional_user_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM schedule_block_services s WHERE s.schedule_block_id = b.id)`,
+    );
+    expect(orphanProBlocks).toBe(0);
+  });
+
+  it('has at least one per-block duration/price override (split-schedule professional)', async () => {
+    const overrides = await count(
+      `SELECT COUNT(*)::int count FROM schedule_block_services
+       WHERE duration_minutes IS NOT NULL OR price_ars IS NOT NULL`,
+    );
+    expect(overrides).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sets a business booking window and one per-service window override', async () => {
+    expect(await count(`SELECT COUNT(*)::int count FROM businesses WHERE max_booking_days IS NOT NULL`)).toBeGreaterThanOrEqual(1);
+    const svcOverride = await count(
+      `SELECT COUNT(*)::int count FROM professional_services
+       WHERE min_booking_days IS NOT NULL OR max_booking_days IS NOT NULL`,
+    );
+    expect(svcOverride).toBeGreaterThanOrEqual(1);
   });
 
   it('seeds dated schedule exceptions (day off / holiday / one-off / changed-hours)', async () => {
@@ -136,9 +157,9 @@ describe('demo seed feature coverage (SC4)', () => {
 
 describe('demo seed idempotency', () => {
   it('a third run adds no new rows to any core table', async () => {
-    const tables = ['businesses', 'auth.users', 'services', 'resources', 'schedules',
-      'schedule_exceptions', 'client_professional_services', 'calendar_grants',
-      'appointments', 'ledger_entries', 'audit_events'];
+    const tables = ['businesses', 'auth.users', 'services', 'resources', 'schedule_blocks',
+      'schedule_block_services', 'schedule_exceptions', 'client_professional_services',
+      'calendar_grants', 'appointments', 'ledger_entries', 'audit_events'];
     const before: Record<string, number> = {};
     for (const t of tables) before[t] = await count(`SELECT COUNT(*)::int count FROM ${t}`);
 

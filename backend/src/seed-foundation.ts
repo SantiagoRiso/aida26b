@@ -133,18 +133,61 @@ async function upsertClientPrice(
   );
 }
 
-async function upsertSchedule(
+async function upsertProfessionalService(
   pool: Pick<Pool, 'query'>,
-  owner: { professionalUserId?: string; resourceId?: string }
+  professionalUserId: string,
+  serviceId: string
 ): Promise<void> {
+  await pool.query(
+    `INSERT INTO professional_services (professional_user_id, service_id)
+     VALUES ($1, $2) ON CONFLICT (professional_user_id, service_id) DO NOTHING`,
+    [professionalUserId, serviceId]
+  );
+}
+
+// Idempotent block insert keyed by (owner, weekday, start). Returns the block id.
+async function upsertBlock(
+  pool: Pick<Pool, 'query'>,
+  owner: { professionalUserId?: string; resourceId?: string },
+  weekday: string,
+  start: string,
+  end: string
+): Promise<string> {
   const column = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
   const ownerId = owner.professionalUserId ?? owner.resourceId ?? null;
-  const existing = await pickId(pool, `SELECT id FROM schedules WHERE ${column} = $1 LIMIT 1`, [ownerId]);
-  if (existing) return;
-  await pool.query(
-    `INSERT INTO schedules (${column}, weekly) VALUES ($1, $2)`,
-    [ownerId, JSON.stringify(WEEKLY_HOURS)]
+  const existing = await pickId(
+    pool,
+    `SELECT id FROM schedule_blocks WHERE ${column} = $1 AND weekday = $2 AND start_time = $3::time LIMIT 1`,
+    [ownerId, weekday, start]
   );
+  if (existing) return existing;
+  return (await pickId(
+    pool,
+    `INSERT INTO schedule_blocks (${column}, weekday, start_time, end_time)
+     VALUES ($1, $2, $3::time, $4::time) RETURNING id`,
+    [ownerId, weekday, start, end]
+  ))!;
+}
+
+// Seeds one block per weekday. A professional block offers the given service at its default
+// duration/price; a resource block offers nothing (services are professional-only).
+async function seedWeeklyBlocks(
+  pool: Pick<Pool, 'query'>,
+  owner: { professionalUserId?: string; resourceId?: string },
+  serviceId: string | null
+): Promise<void> {
+  for (const [weekday, ranges] of Object.entries(WEEKLY_HOURS)) {
+    for (const range of ranges) {
+      const blockId = await upsertBlock(pool, owner, weekday, range.start, range.end);
+      if (owner.professionalUserId && serviceId) {
+        await pool.query(
+          `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id)
+           VALUES ($1, $2, $3) ON CONFLICT (schedule_block_id, service_id) DO NOTHING`,
+          [owner.professionalUserId, blockId, serviceId]
+        );
+      }
+    }
+  }
 }
 
 async function upsertScheduleException(
@@ -182,8 +225,9 @@ export async function seedFoundation(pool: Pick<Pool, 'query'>): Promise<void> {
   const serviceId  = await upsertService(pool, businessId, 'Corte', 30, '1500.00');
 
   await upsertClientPrice(pool, clientUserId, professionalUserId, serviceId, '1200.00');
-  await upsertSchedule(pool, { professionalUserId });
-  await upsertSchedule(pool, { resourceId });
+  await upsertProfessionalService(pool, professionalUserId, serviceId);
+  await seedWeeklyBlocks(pool, { professionalUserId }, serviceId);
+  await seedWeeklyBlocks(pool, { resourceId }, null);
   await upsertScheduleException(pool, professionalUserId, '2026-07-09');
 }
 

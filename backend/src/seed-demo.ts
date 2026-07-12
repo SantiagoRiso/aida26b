@@ -2,8 +2,6 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import { createOwnerPool } from './db';
 import { hashPassword } from './auth';
-import { validateWeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
-import type { WeeklySchedule } from '../../shared/src/ssot/domain/scheduling';
 import type { SqlParam } from '../../shared/src/types/types';
 
 dotenv.config();
@@ -15,56 +13,90 @@ const BUSINESS_NAME = 'Consultorio BsAs Demo';
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
 const DEMO_PASSWORD = 'demo-pass-123';
 
-// Each block length must be a whole multiple of its granularity_minutes,
-// or validateWeeklySchedule rejects it — hence the non-round end times.
-function weeklyFullTime50() {
+// Service catalog for the demo clinic. Durations/prices are the service defaults; a schedule block
+// may override either per offered service (see the split-schedule professional below).
+type ServiceKey = 'sesion' | 'nutricion' | 'kineso' | 'medico';
+
+const SERVICE_DEFS: Record<ServiceKey, { name: string; duration: number; price: string }> = {
+  sesion:    { name: 'Sesión de Psicología Infantil', duration: 50, price: '8000.00' },
+  nutricion: { name: 'Consulta nutricional',          duration: 40, price: '7000.00' },
+  kineso:    { name: 'Sesión de kinesiología',        duration: 60, price: '9000.00' },
+  medico:    { name: 'Consulta médica',               duration: 30, price: '5000.00' },
+};
+
+// A working block: a weekday time range and the services bookable in it. offers[0] is the primary
+// service the dense fill tiles; extra offers just make the block bookable for them too.
+// durationMinutes/priceArs are per-block overrides (undefined → the service default).
+type BlockOffer = { service: ServiceKey; durationMinutes?: number; priceArs?: string };
+type ProBlock = { start: string; end: string; offers: BlockOffer[] };
+type ProWeekly = Record<string, ProBlock[]>;
+type ResWeekly = Record<string, { start: string; end: string }[]>;
+
+function offer(service: ServiceKey, over?: { durationMinutes?: number; priceArs?: string }): BlockOffer {
+  return { service, ...over };
+}
+
+// Blocks tile by their primary service's effective duration; the availability engine drops any
+// trailing partial slot, so ranges need not be exact multiples of the duration.
+function proFullTimeSesion(): ProWeekly {
+  const week = [{ start: '09:00', end: '17:20', offers: [offer('sesion')] }];
+  return { mon: week, tue: week, wed: week, thu: week,
+           fri: [{ start: '09:00', end: '14:00', offers: [offer('sesion')] }] };
+}
+
+// Marge's live schedule as arranged in the Horario editor: split morning/afternoon on weekdays, a
+// shorter Friday, and a Saturday morning. Kept in sync with what the editor shows for her.
+function proMargeSchedule(): ProWeekly {
+  const week = [
+    { start: '09:00', end: '13:10', offers: [offer('sesion')] },
+    { start: '14:00', end: '17:20', offers: [offer('sesion')] },
+  ];
   return {
-    mon: [{ start: '09:00', end: '17:20', granularity_minutes: 50 }],
-    tue: [{ start: '09:00', end: '17:20', granularity_minutes: 50 }],
-    wed: [{ start: '09:00', end: '17:20', granularity_minutes: 50 }],
-    thu: [{ start: '09:00', end: '17:20', granularity_minutes: 50 }],
-    fri: [{ start: '09:00', end: '14:00', granularity_minutes: 50 }],
+    mon: week, tue: week, wed: week, thu: week,
+    fri: [{ start: '09:00', end: '14:00', offers: [offer('sesion')] }],
+    sat: [{ start: '09:00', end: '11:30', offers: [offer('sesion')] }],
   };
 }
 
-function weeklyMorning30() {
-  return {
-    mon: [{ start: '08:00', end: '13:00', granularity_minutes: 30 }],
-    tue: [{ start: '08:00', end: '13:00', granularity_minutes: 30 }],
-    wed: [{ start: '08:00', end: '13:00', granularity_minutes: 30 }],
-    thu: [{ start: '08:00', end: '13:00', granularity_minutes: 30 }],
-    fri: [{ start: '08:00', end: '12:00', granularity_minutes: 30 }],
-  };
+function proMorningNutricion(): ProWeekly {
+  const week = [{ start: '08:00', end: '12:40', offers: [offer('nutricion')] }];
+  return { mon: week, tue: week, wed: week, thu: week,
+           fri: [{ start: '08:00', end: '12:00', offers: [offer('nutricion')] }] };
 }
 
-function weeklyMorning40() {
-  return {
-    mon: [{ start: '08:00', end: '12:40', granularity_minutes: 40 }],
-    tue: [{ start: '08:00', end: '12:40', granularity_minutes: 40 }],
-    wed: [{ start: '08:00', end: '12:40', granularity_minutes: 40 }],
-    thu: [{ start: '08:00', end: '12:40', granularity_minutes: 40 }],
-    fri: [{ start: '08:00', end: '12:00', granularity_minutes: 40 }],
-  };
+function proAfternoonKineso(): ProWeekly {
+  const week = [{ start: '14:00', end: '20:00', offers: [offer('kineso')] }];
+  return { mon: week, tue: week, wed: week, thu: week };
 }
 
-// 60-min afternoon slots — matches the kinesiología service duration so appointments tile the grid.
-function weeklyAfternoon60() {
-  return {
-    mon: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
-    tue: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
-    wed: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
-    thu: [{ start: '14:00', end: '20:00', granularity_minutes: 60 }],
-  };
+// Split schedule: morning individual sessions, afternoon medical consults billed at a per-block
+// override (45 min at $6.000, not the service default 30 min at $5.000).
+function proSplitSesionMedico(): ProWeekly {
+  const week = [
+    { start: '09:00', end: '13:00', offers: [offer('sesion')] },
+    { start: '14:00', end: '17:00', offers: [offer('medico', { durationMinutes: 45, priceArs: '6000.00' })] },
+  ];
+  return { mon: week, tue: week, wed: week, thu: week,
+           fri: [{ start: '09:00', end: '14:00', offers: [offer('sesion')] }] };
 }
 
-function weeklyRoom() {
-  return {
-    mon: [{ start: '08:00', end: '20:00', granularity_minutes: 30 }],
-    tue: [{ start: '08:00', end: '20:00', granularity_minutes: 30 }],
-    wed: [{ start: '08:00', end: '20:00', granularity_minutes: 30 }],
-    thu: [{ start: '08:00', end: '20:00', granularity_minutes: 30 }],
-    fri: [{ start: '08:00', end: '17:00', granularity_minutes: 30 }],
-  };
+function proMorningMedico(): ProWeekly {
+  const week = [{ start: '08:00', end: '13:00', offers: [offer('medico')] }];
+  return { mon: week, tue: week, wed: week, thu: week,
+           fri: [{ start: '08:00', end: '12:00', offers: [offer('medico')] }] };
+}
+
+function resFullWeek(): ResWeekly {
+  const week = [{ start: '08:00', end: '20:00' }];
+  return { mon: week, tue: week, wed: week, thu: week,
+           fri: [{ start: '08:00', end: '17:00' }] };
+}
+
+function effDuration(o: BlockOffer): number {
+  return o.durationMinutes ?? SERVICE_DEFS[o.service].duration;
+}
+function effPrice(o: BlockOffer): string {
+  return o.priceArs ?? SERVICE_DEFS[o.service].price;
 }
 
 // Dense appointment seeding covers SEED_DAYS from the anchor Monday, so the calendar stays
@@ -88,8 +120,6 @@ function seedDays(): { date: string; key: string }[] {
   return out;
 }
 
-type WeeklyBlock = { start: string; end: string; granularity_minutes: number };
-
 function hmToMin(hm: string): number {
   const [h, m] = hm.split(':').map(Number);
   return h * 60 + m;
@@ -98,11 +128,11 @@ function minToHm(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
-// Fixed slot starts for a block, stepping by its granularity (mirrors the availability engine).
-function slotStartTimes(block: WeeklyBlock): string[] {
+// Fixed slot starts for a range, stepping by a slot duration (mirrors the availability engine).
+function slotStartTimes(start: string, end: string, durationMinutes: number): string[] {
   const out: string[] = [];
-  const end = hmToMin(block.end);
-  for (let t = hmToMin(block.start); t + block.granularity_minutes <= end; t += block.granularity_minutes) {
+  const endMin = hmToMin(end);
+  for (let t = hmToMin(start); t + durationMinutes <= endMin; t += durationMinutes) {
     out.push(minToHm(t));
   }
   return out;
@@ -261,21 +291,95 @@ async function upsertResource(
   ))!;
 }
 
-async function upsertSchedule(
+// Idempotent block insert keyed by (owner, weekday, start). Returns the block id so its offered
+// services can be attached.
+async function upsertBlock(
   pool: PoolLike,
   owner: { professionalUserId?: string; resourceId?: string },
-  weekly: WeeklySchedule,
-): Promise<void> {
-  const valid = validateWeeklySchedule(weekly);
-  if (!valid.ok) throw new Error(`Invalid weekly schedule: ${valid.errors.join(', ')}`);
+  weekday: string,
+  start: string,
+  end: string,
+): Promise<string> {
   const col = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
   const id  = owner.professionalUserId ?? owner.resourceId ?? null;
-  const existing = await pickId(pool, `SELECT id FROM schedules WHERE ${col} = $1`, [id]);
-  if (existing) {
-    await pool.query(`UPDATE schedules SET weekly = $1 WHERE ${col} = $2`, [JSON.stringify(weekly), id]);
-    return;
+  const existing = await pickId(
+    pool,
+    `SELECT id FROM schedule_blocks WHERE ${col} = $1 AND weekday = $2 AND start_time = $3::time`,
+    [id, weekday, start],
+  );
+  if (existing) return existing;
+  return (await pickId(
+    pool,
+    `INSERT INTO schedule_blocks (${col}, weekday, start_time, end_time)
+     VALUES ($1, $2, $3::time, $4::time) RETURNING id`,
+    [id, weekday, start, end],
+  ))!;
+}
+
+async function upsertBlockService(
+  pool: PoolLike,
+  professionalUserId: string,
+  blockId: string,
+  serviceId: string,
+  durationMinutes: number | null,
+  priceArs: string | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id, duration_minutes, price_ars)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (schedule_block_id, service_id) DO NOTHING`,
+    [professionalUserId, blockId, serviceId, durationMinutes, priceArs],
+  );
+}
+
+async function seedProfessionalBlocks(
+  pool: PoolLike,
+  professionalUserId: string,
+  weekly: ProWeekly,
+  svcId: Record<ServiceKey, string>,
+): Promise<void> {
+  for (const [weekday, blocks] of Object.entries(weekly)) {
+    for (const block of blocks) {
+      const blockId = await upsertBlock(pool, { professionalUserId }, weekday, block.start, block.end);
+      for (const o of block.offers) {
+        await upsertBlockService(pool, professionalUserId, blockId, svcId[o.service], o.durationMinutes ?? null, o.priceArs ?? null);
+      }
+    }
   }
-  await pool.query(`INSERT INTO schedules (${col}, weekly) VALUES ($1, $2)`, [id, JSON.stringify(weekly)]);
+}
+
+async function seedResourceBlocks(pool: PoolLike, resourceId: string, weekly: ResWeekly): Promise<void> {
+  for (const [weekday, blocks] of Object.entries(weekly)) {
+    for (const block of blocks) {
+      await upsertBlock(pool, { resourceId }, weekday, block.start, block.end);
+    }
+  }
+}
+
+async function setBusinessBookingWindow(
+  pool: PoolLike,
+  businessId: string,
+  minDays: number,
+  maxDays: number | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE businesses SET min_booking_days = $2, max_booking_days = $3 WHERE id = $1`,
+    [businessId, minDays, maxDays],
+  );
+}
+
+async function setServiceBookingWindow(
+  pool: PoolLike,
+  professionalUserId: string,
+  serviceId: string,
+  minDays: number | null,
+  maxDays: number | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE professional_services SET min_booking_days = $3, max_booking_days = $4
+      WHERE professional_user_id = $1 AND service_id = $2`,
+    [professionalUserId, serviceId, minDays, maxDays],
+  );
 }
 
 async function upsertScheduleException(
@@ -404,16 +508,15 @@ async function unavailableDates(pool: PoolLike, professionalUserId: string): Pro
 // busy for the next several weeks. Deterministic (no randomness) → idempotent: slot→client is a pure
 // function of position, upsertAppointment dedups by (professional, client, service, start), and the
 // preloaded start set skips anything already booked (curated appointments, requests, prior runs).
-// Skips any day the professional is unavailable. Duration = the slot granularity so appointments
-// tile the grid without overlapping. Some professionals get a resource, some don't (a null resource
-// is a valid appointment).
+// Skips any day the professional is unavailable. Each block books its primary service at that
+// service's effective duration/price so appointments tile the grid without overlapping. Some
+// professionals get a resource, some don't (a null resource is a valid appointment).
 async function fillProfessionalDays(
   pool: PoolLike,
   opts: {
     professionalUserId: string;
-    serviceId: string;
-    weekly: Record<string, WeeklyBlock[]>;
-    price: string;
+    weekly: ProWeekly;
+    svcId: Record<ServiceKey, string>;
     resourceId?: string | null;
     clientUserIds: string[];
     clientOffset: number;
@@ -426,7 +529,9 @@ async function fillProfessionalDays(
   let filled = 0;
   for (const day of seedDays()) {
     for (const block of opts.weekly[day.key] ?? []) {
-      for (const hm of slotStartTimes(block)) {
+      const primary = block.offers[0];
+      const dur = effDuration(primary);
+      for (const hm of slotStartTimes(block.start, block.end, dur)) {
         const idx = slotIndex++;
         if (idx % 5 === 4) continue; // leave one slot in five open → ~80% density
         if (unavailable.has(day.date)) continue;
@@ -441,11 +546,11 @@ async function fillProfessionalDays(
           clientUserId,
           professionalUserId: opts.professionalUserId,
           resourceId: opts.resourceId ?? null,
-          serviceId: opts.serviceId,
+          serviceId: opts.svcId[primary.service],
           startsAt,
-          durationMinutes: block.granularity_minutes,
+          durationMinutes: dur,
           state: ms < opts.nowMs ? 'completed' : 'scheduled',
-          price: opts.price,
+          price: effPrice(primary),
         });
         taken.add(ms);
         filled++;
@@ -543,10 +648,12 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     });
   }
 
-  const svcSesion    = await upsertService(pool, businessId, 'Sesión individual',     50, '8000.00');
-  const svcNutricion = await upsertService(pool, businessId, 'Consulta nutricional',  40, '7000.00');
-  const svcKineso    = await upsertService(pool, businessId, 'Sesión de kinesiología', 60, '9000.00');
-  const svcMedico    = await upsertService(pool, businessId, 'Consulta médica',        30, '5000.00');
+  // Names/durations/prices come from SERVICE_DEFS so the catalog has a single source (block
+  // offers already read the same table for effective duration/price).
+  const svcSesion    = await upsertService(pool, businessId, SERVICE_DEFS.sesion.name,    SERVICE_DEFS.sesion.duration,    SERVICE_DEFS.sesion.price);
+  const svcNutricion = await upsertService(pool, businessId, SERVICE_DEFS.nutricion.name, SERVICE_DEFS.nutricion.duration, SERVICE_DEFS.nutricion.price);
+  const svcKineso    = await upsertService(pool, businessId, SERVICE_DEFS.kineso.name,    SERVICE_DEFS.kineso.duration,    SERVICE_DEFS.kineso.price);
+  const svcMedico    = await upsertService(pool, businessId, SERVICE_DEFS.medico.name,    SERVICE_DEFS.medico.duration,    SERVICE_DEFS.medico.price);
 
   const room1 = await upsertResource(pool, businessId, 'Consultorio 1');
   const room2 = await upsertResource(pool, businessId, 'Consultorio 2');
@@ -554,18 +661,24 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   const room4 = await upsertResource(pool, businessId, 'Consultorio 4');
   const room5 = await upsertResource(pool, businessId, 'Consultorio 5');
 
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro'] },   weeklyFullTime50());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro2'] },  weeklyFullTime50());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro3'] },  weeklyMorning40());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro4'] },  weeklyAfternoon60());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro5'] },  weeklyFullTime50());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_pro6'] },  weeklyMorning30());
-  await upsertSchedule(pool, { professionalUserId: uids['demo_reset'] }, weeklyFullTime50());
-  await upsertSchedule(pool, { resourceId: room1 }, weeklyRoom());
-  await upsertSchedule(pool, { resourceId: room2 }, weeklyRoom());
-  await upsertSchedule(pool, { resourceId: room3 }, weeklyRoom());
-  await upsertSchedule(pool, { resourceId: room4 }, weeklyRoom());
-  await upsertSchedule(pool, { resourceId: room5 }, weeklyRoom());
+  const svcId: Record<ServiceKey, string> = {
+    sesion: svcSesion, nutricion: svcNutricion, kineso: svcKineso, medico: svcMedico,
+  };
+
+  await seedProfessionalBlocks(pool, uids['demo_pro'],   proMargeSchedule(),     svcId);
+  await seedProfessionalBlocks(pool, uids['demo_pro2'],  proFullTimeSesion(),    svcId);
+  await seedProfessionalBlocks(pool, uids['demo_pro3'],  proMorningNutricion(),  svcId);
+  await seedProfessionalBlocks(pool, uids['demo_pro4'],  proAfternoonKineso(),   svcId);
+  await seedProfessionalBlocks(pool, uids['demo_pro5'],  proSplitSesionMedico(), svcId);
+  await seedProfessionalBlocks(pool, uids['demo_pro6'],  proMorningMedico(),     svcId);
+  await seedProfessionalBlocks(pool, uids['demo_reset'], proFullTimeSesion(),    svcId);
+  const roomWeekly = resFullWeek();
+  for (const room of [room1, room2, room3, room4, room5]) {
+    await seedResourceBlocks(pool, room, roomWeekly);
+  }
+
+  // Booking window: clients may request from today up to 60 days out (business default).
+  await setBusinessBookingWindow(pool, businessId, 0, 60);
 
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro'] },  '2026-07-09', { isUnavailable: true, reason: '9 de julio — feriado nacional' });
   await upsertScheduleException(pool, { professionalUserId: uids['demo_pro2'] }, '2026-07-15', { isUnavailable: false, startTime: '14:00', endTime: '18:00', granularityMinutes: 30, reason: 'Turno modificado — tarde especial' });
@@ -583,15 +696,20 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   await upsertGrant(pool, uids['demo_pro'],  uids['demo_recep']);
   await upsertGrant(pool, uids['demo_pro2'], uids['demo_recep']);
 
-  // Each professional offers only the service that matches their specialty (drives the booking
-  // form's service list). Covers every (professional, service) pair used by the seeded appointments.
+  // Each professional offers the service(s) that match their specialty (drives the booking form's
+  // service list). demo_pro5 runs a split schedule, so it offers both sesión and medical consults.
   await upsertProfessionalService(pool, uids['demo_pro'],   svcSesion);
   await upsertProfessionalService(pool, uids['demo_pro2'],  svcSesion);
   await upsertProfessionalService(pool, uids['demo_pro3'],  svcNutricion);
   await upsertProfessionalService(pool, uids['demo_pro4'],  svcKineso);
   await upsertProfessionalService(pool, uids['demo_pro5'],  svcSesion);
+  await upsertProfessionalService(pool, uids['demo_pro5'],  svcMedico);
   await upsertProfessionalService(pool, uids['demo_pro6'],  svcMedico);
   await upsertProfessionalService(pool, uids['demo_reset'], svcSesion);
+
+  // One per-service booking-window override: demo_pro5's medical consults book at most 30 days out,
+  // tighter than the 60-day business default.
+  await setServiceBookingWindow(pool, uids['demo_pro5'], svcMedico, null, 30);
 
   const appt1 = await upsertAppointment(pool, {
     clientUserId: uids['demo_client'], professionalUserId: uids['demo_pro'],
@@ -768,15 +886,14 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   // Dense fill: ~80% of each professional's slots across the seeding window, so the calendar looks
   // realistic. Runs AFTER the curated appointments and requests above so it skips their slots.
   const denseConfig: {
-    pro: string; service: string; price: string; resource: string | null;
-    weekly: Record<string, WeeklyBlock[]>; offset: number;
+    pro: string; resource: string | null; weekly: ProWeekly; offset: number;
   }[] = [
-    { pro: 'demo_pro',  service: svcSesion,    price: '8000.00',  resource: room1, weekly: weeklyFullTime50(),  offset: 0 },
-    { pro: 'demo_pro2', service: svcSesion,    price: '8000.00',  resource: room2, weekly: weeklyFullTime50(),  offset: 5 },
-    { pro: 'demo_pro3', service: svcNutricion, price: '7000.00',  resource: null,  weekly: weeklyMorning40(),   offset: 10 },
-    { pro: 'demo_pro4', service: svcKineso,    price: '9000.00',  resource: room4, weekly: weeklyAfternoon60(),  offset: 15 },
-    { pro: 'demo_pro5', service: svcSesion,    price: '8000.00',  resource: room5, weekly: weeklyFullTime50(),  offset: 20 },
-    { pro: 'demo_pro6', service: svcMedico,    price: '5000.00',  resource: null,  weekly: weeklyMorning30(),   offset: 25 },
+    { pro: 'demo_pro',  resource: room1, weekly: proMargeSchedule(),     offset: 0 },
+    { pro: 'demo_pro2', resource: room2, weekly: proFullTimeSesion(),    offset: 5 },
+    { pro: 'demo_pro3', resource: null,  weekly: proMorningNutricion(),  offset: 10 },
+    { pro: 'demo_pro4', resource: room4, weekly: proAfternoonKineso(),   offset: 15 },
+    { pro: 'demo_pro5', resource: room5, weekly: proSplitSesionMedico(), offset: 20 },
+    { pro: 'demo_pro6', resource: null,  weekly: proMorningMedico(),     offset: 25 },
   ];
 
   // Marge (demo_pro) skips the no-relation clients; every other professional draws from the full pool.
@@ -784,8 +901,8 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
 
   for (const cfg of denseConfig) {
     await fillProfessionalDays(pool, {
-      professionalUserId: uids[cfg.pro], serviceId: cfg.service, weekly: cfg.weekly,
-      price: cfg.price, resourceId: cfg.resource, clientUserIds: clientsFor(cfg.pro),
+      professionalUserId: uids[cfg.pro], weekly: cfg.weekly, svcId,
+      resourceId: cfg.resource, clientUserIds: clientsFor(cfg.pro),
       clientOffset: cfg.offset, nowMs,
     });
   }
@@ -795,13 +912,15 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   for (const cfg of denseConfig) {
     const monBlock = cfg.weekly.mon?.[0];
     if (!monBlock) continue;
-    const startsAt = `2026-07-06T${slotStartTimes(monBlock)[0]}:00-03:00`;
+    const primary = monBlock.offers[0];
+    const dur = effDuration(primary);
+    const startsAt = `2026-07-06T${slotStartTimes(monBlock.start, monBlock.end, dur)[0]}:00-03:00`;
     const clients = clientsFor(cfg.pro);
     await upsertAppointment(pool, {
       clientUserId: clients[(cfg.offset + 3) % clients.length],
-      professionalUserId: uids[cfg.pro], resourceId: null, serviceId: cfg.service,
-      startsAt, durationMinutes: monBlock.granularity_minutes,
-      state: 'scheduled', price: cfg.price, name: 'Sobreturno',
+      professionalUserId: uids[cfg.pro], resourceId: null, serviceId: svcId[primary.service],
+      startsAt, durationMinutes: dur,
+      state: 'scheduled', price: effPrice(primary), name: 'Sobreturno',
       overrideConflict: true, overrideActorId: uids['demo_admin'],
       description: 'Sobreturno autorizado por admin (se superpone con el turno regular)',
     });

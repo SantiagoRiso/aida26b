@@ -1,14 +1,6 @@
 import { structure } from "../ssot/structure";
 import type { Role } from "./roles";
 
-type Response = {
-  success: boolean;
-  data: undefined | any;
-  message: string;
-  code?: string;
-}
-
-
 type RoleRequired = {
   create?: Role[];
   read?:   Role[];
@@ -31,7 +23,7 @@ type OwnershipDescriptor = {
 type GrantScopeDescriptor = {
   role: Role;
   grantTable: string;      // e.g. 'calendar_grants'
-  grantRowColumn: string;  // grantTable column naming this table's pk, e.g. 'professional_user_id'
+  grantRowColumn: string;  // grantTable column naming this table's owner (matched to ownership.ownerColumn, else pk), e.g. 'professional_user_id'
   granteeColumn: string;   // grantTable column naming the caller, e.g. 'grantee_user_id'
 };
 
@@ -171,6 +163,12 @@ type TableStructure = {
   roleRequired?:  RoleRequired
   ownership?:     OwnershipDescriptor
   grantScope?:    GrantScopeDescriptor
+  // Generic writes for the listed ops must pass the async professional owner+grant guard
+  // (assertOwnScheduleAllowed), keyed on the row's professional_user_id — the grant-aware check
+  // the synchronous scope engine can't express for a surrogate-pk owner table. Separate from the
+  // schedulable-derived owner-scheduled tables (schedule_blocks/schedule_exceptions), which are
+  // guarded on every write automatically.
+  professionalOwnerGuard?: { ops: Array<'create' | 'update' | 'delete'> }
   businessJoin?:  BusinessJoinDescriptor
   // When set, generic SQL targets this schema-qualified table instead of the SSOT key name.
   sqlTable?:          string
@@ -202,4 +200,4 @@ type RendererProps<K extends TableKey> = {
 
 type RendererFunc = <K extends TableKey>(props: RendererProps<K>) => HTMLElement;
 
-export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, Response, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc, SqlParam, ColumnValue, GrantScopeDescriptor};
+export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc, SqlParam, ColumnValue, GrantScopeDescriptor};

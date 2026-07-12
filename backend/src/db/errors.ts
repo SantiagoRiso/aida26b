@@ -2,6 +2,7 @@ export class DbError extends Error {
   constructor(
     message: string,
     public readonly pgCode?: string,
+    // eslint-disable-next-line no-restricted-syntax -- carries whatever the pg driver/caller threw; shape is unverified until narrowed at the throw site
     public readonly cause?: unknown,
     // pg constraint name — lets callers distinguish which unique/FK constraint fired.
     public readonly constraint?: string,
@@ -10,6 +11,7 @@ export class DbError extends Error {
     this.name = 'DbError';
   }
 
+  // eslint-disable-next-line no-restricted-syntax -- catch-boundary: the pg driver throws an unverified error shape
   static from(e: unknown): DbError {
     if (e instanceof DbError) return e;
     const err = e as { message?: string; code?: string; constraint?: string } | null;
@@ -26,6 +28,7 @@ export const PG_ERROR_MAP: Record<string, { status: number; code: string; messag
 };
 
 export function httpForDbError(
+  // eslint-disable-next-line no-restricted-syntax -- catch-boundary: caller passes through whatever was thrown
   err: unknown,
 ): { status: number; code: string; message: string } | null {
   const pgCode = err instanceof DbError ? err.pgCode : (err as { code?: string } | null)?.code;
@@ -51,9 +54,11 @@ export function httpError(
 // A caught error carrying an explicit HTTP mapping (from httpError, or the conflict recheck when an
 // owner disappears mid-transaction). Distinct from DbError; recognized by a numeric status.
 export function httpForStructuredError(
+  // eslint-disable-next-line no-restricted-syntax -- catch-boundary: narrows an app-thrown error of unverified shape
   err: unknown,
 ): { status: number; code: string; message: string; fields?: Record<string, string> } | null {
   if (!err || typeof err !== 'object') return null;
+  // eslint-disable-next-line no-restricted-syntax -- fields being narrowed are themselves unverified until the typeof checks below confirm them
   const e = err as { status?: unknown; code?: unknown; message?: unknown; fields?: unknown };
   if (typeof e.status === 'number' && typeof e.code === 'string' && typeof e.message === 'string') {
     const fields =

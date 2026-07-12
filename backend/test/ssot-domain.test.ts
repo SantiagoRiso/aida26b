@@ -10,10 +10,7 @@ import {
   isOwnerScheduledTable,
 } from '../../shared/src/utils/utils';
 import {
-  WEEKDAYS,
-  validateWeeklySchedule,
-  computeDailyAvailability,
-  computeDailySlots,
+  computeServiceSlots,
   resolveBooking,
   evaluateConflicts,
   detectOverlap,
@@ -28,15 +25,14 @@ import type {
   SchedulableCapability,
   ColumnDef,
   LocalizedText,
+  TableKey,
 } from '../../shared/src/types/types';
 
+// eslint-disable-next-line no-restricted-syntax -- type-guard boundary: narrows an unvalidated SSOT field value before asserting its shape
 function isLocalized(text: unknown): text is LocalizedText {
-  return (
-    !!text &&
-    typeof text === 'object' &&
-    typeof (text as any).es === 'string' &&
-    typeof (text as any).en === 'string'
-  );
+  if (!text || typeof text !== 'object') return false;
+  const candidate = text as LocalizedText;
+  return typeof candidate.es === 'string' && typeof candidate.en === 'string';
 }
 
 const tableKeys = Object.keys(structure.tables);
@@ -48,9 +44,9 @@ describe('SSOT metadata contract', () => {
       identityField: 'id',
       displayField: 'display_name',
       ownerForeignKey: 'professional_id',
-      availability: { weeklySource: 'schedules', exceptionSource: 'schedule_exceptions' },
+      availability: { weeklySource: 'schedule_blocks', exceptionSource: 'schedule_exceptions' },
       conflict: { overridable: true },
-      rules: { availability: 'computeDailyAvailability', conflict: 'detectOverlap' },
+      rules: { availability: 'computeServiceSlots', conflict: 'detectOverlap' },
     };
 
     const sample: TableStructure = {
@@ -110,7 +106,8 @@ describe('scheduler entity set (academic surface removed)', () => {
     'services',
     'client_professional_services',
     'professional_services',
-    'schedules',
+    'schedule_blocks',
+    'schedule_block_services',
     'schedule_exceptions',
     'appointments',
     'ledger_entries',
@@ -149,16 +146,17 @@ describe('professionals and resources are independent, each schedulable', () => 
 });
 
 describe('ordinary vs protected CRUD boundaries', () => {
-  const ordinary = [
+  const ordinary: TableKey[] = [
     'clients',
     'professionals',
     'resources',
     'services',
     'client_professional_services',
-    'schedules',
+    'schedule_blocks',
+    'schedule_block_services',
     'schedule_exceptions',
   ];
-  const protectedTables = [
+  const protectedTables: TableKey[] = [
     'businesses',
     'sessions',
     'appointments',
@@ -169,23 +167,23 @@ describe('ordinary vs protected CRUD boundaries', () => {
 
   it('ordinary configuration entities are generic-CRUD eligible and not protected', () => {
     for (const t of ordinary) {
-      expect(isProtected(t as any), `${t} protected`).toBe(false);
-      expect(getCrudPolicy(t as any), `${t} crud`).toBeTruthy();
+      expect(isProtected(t), `${t} protected`).toBe(false);
+      expect(getCrudPolicy(t), `${t} crud`).toBeTruthy();
     }
   });
 
   it('workflow/identity entities are protected and not generic-CRUD eligible', () => {
     for (const t of protectedTables) {
-      expect(isProtected(t as any), `${t} protected`).toBe(true);
-      expect(getCrudPolicy(t as any), `${t} crud`).toBeUndefined();
+      expect(isProtected(t), `${t} protected`).toBe(true);
+      expect(getCrudPolicy(t), `${t} crud`).toBeUndefined();
     }
   });
 
   // users carves out a narrow read-only exception: the admin Usuarios screen lists accounts
   // through generic GET, but every write stays unreachable — same as the other protected tables.
   it('users stays protected but declares a read-only, Admin-only crud exception', () => {
-    expect(isProtected('users' as any)).toBe(true);
-    const policy = getCrudPolicy('users' as any);
+    expect(isProtected('users')).toBe(true);
+    const policy = getCrudPolicy('users');
     expect(policy?.read).toBe(true);
     expect(policy?.create).toBe(false);
     expect(policy?.update).toBe(false);
@@ -194,21 +192,34 @@ describe('ordinary vs protected CRUD boundaries', () => {
 
   it('withholds generic delete where the schema grants no DELETE', () => {
     expect(getCrudPolicy('client_professional_services')?.delete).toBe(false);
-    expect(getCrudPolicy('schedules')?.delete).toBe(false);
     expect(getCrudPolicy('schedule_exceptions')?.delete).toBe(true);
+    expect(getCrudPolicy('schedule_blocks')?.delete).toBe(true);
+    expect(getCrudPolicy('schedule_block_services')?.delete).toBe(true);
+  });
+
+  // The service catalog is admin-owned config (D3): receptionists consume services through the
+  // booking form, they do not curate the catalog. Read stays open to every booking role.
+  it('services catalog is admin-only for mutations', () => {
+    const rr = structure.tables.services.roleRequired!;
+    expect(rr.create).toEqual(['Admin']);
+    expect(rr.update).toEqual(['Admin']);
+    expect(rr.delete).toEqual(['Admin']);
+    expect(rr.read).toContain('Receptionist');
+    expect(rr.read).toContain('Professional');
+    expect(rr.read).toContain('Client');
   });
 });
 
 describe('soft-delete and status metadata', () => {
   it('marks the referenced core records as soft-deletable', () => {
-    for (const t of ['clients', 'professionals', 'resources', 'services', 'users']) {
-      expect(getSoftDeletePolicy(t as any)?.deletedAtColumn, t).toBe('deleted_at');
+    for (const t of ['clients', 'professionals', 'resources', 'services', 'users'] as TableKey[]) {
+      expect(getSoftDeletePolicy(t)?.deletedAtColumn, t).toBe('deleted_at');
     }
   });
 
   it('does not soft-delete records that have no deleted_at column', () => {
-    for (const t of ['client_professional_services', 'schedules', 'schedule_exceptions']) {
-      expect(getSoftDeletePolicy(t as any), t).toBeUndefined();
+    for (const t of ['client_professional_services', 'schedule_blocks', 'schedule_block_services', 'schedule_exceptions'] as TableKey[]) {
+      expect(getSoftDeletePolicy(t), t).toBeUndefined();
     }
   });
 
@@ -240,27 +251,28 @@ describe('appointment shape', () => {
 
 describe('business scoping: only direct owners carry business_id', () => {
   it('direct owners are business-scoped (resources/services/audit_events carry business_id directly)', () => {
-    for (const t of ['resources', 'services', 'audit_events']) {
-      expect(isBusinessScoped(t as any), t).toBe(true);
+    for (const t of ['resources', 'services', 'audit_events'] as TableKey[]) {
+      expect(isBusinessScoped(t), t).toBe(true);
     }
-    expect(isBusinessScoped('users' as any)).toBe(true);
+    expect(isBusinessScoped('users')).toBe(true);
   });
 
   it('clients and professionals are businessScoped (backed by auth.users which carries business_id)', () => {
-    expect(isBusinessScoped('clients' as any)).toBe(true);
-    expect(isBusinessScoped('professionals' as any)).toBe(true);
+    expect(isBusinessScoped('clients')).toBe(true);
+    expect(isBusinessScoped('professionals')).toBe(true);
   });
 
   it('derived-scope entities are not business-scoped', () => {
     for (const t of [
       'client_professional_services',
-      'schedules',
+      'schedule_blocks',
+      'schedule_block_services',
       'schedule_exceptions',
       'appointments',
       'ledger_entries',
       'calendar_grants',
-    ]) {
-      expect(isBusinessScoped(t as any), t).toBe(false);
+    ] as TableKey[]) {
+      expect(isBusinessScoped(t), t).toBe(false);
     }
   });
 });
@@ -291,197 +303,9 @@ describe('field-level validation', () => {
 });
 
 describe('pure scheduling rules (availability is computed, not stored)', () => {
-  const everyDay = (iv: { start: string; end: string }) =>
-    Object.fromEntries(WEEKDAYS.map((d) => [d, [iv]]));
-
-  it('validates the weekly JSON shape', () => {
-    expect(
-      validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] }).ok,
-    ).toBe(true);
-    expect(validateWeeklySchedule({ funday: [] }).ok).toBe(false);
-    expect(
-      validateWeeklySchedule({ mon: [{ start: '9:00', end: '12:00', granularity_minutes: 15 }] }).ok,
-    ).toBe(false);
-    expect(
-      validateWeeklySchedule({
-        mon: [
-          { start: '09:00', end: '12:00', granularity_minutes: 15 },
-          { start: '11:00', end: '13:00', granularity_minutes: 15 },
-        ],
-      }).ok,
-    ).toBe(false);
-  });
-
-  it('returns the weekly base when there are no exceptions or bookings', () => {
-    const free = computeDailyAvailability({
-      date: '2026-06-29',
-      weekly: everyDay({ start: '09:00', end: '17:00' }),
-    });
-    expect(free).toEqual([{ start: '09:00', end: '17:00' }]);
-  });
-
-  it('blocks the whole day on a full-day unavailable exception', () => {
-    const free = computeDailyAvailability({
-      date: '2026-06-29',
-      weekly: everyDay({ start: '09:00', end: '17:00' }),
-      exceptions: [{ is_unavailable: true }],
-    });
-    expect(free).toEqual([]);
-  });
-
-  it('subtracts partial unavailable exceptions and booked appointments', () => {
-    const free = computeDailyAvailability({
-      date: '2026-06-29',
-      weekly: everyDay({ start: '09:00', end: '17:00' }),
-      exceptions: [{ is_unavailable: true, start_time: '12:00', end_time: '13:00' }],
-      booked: [{ start: '10:00', end: '11:00' }],
-    });
-    expect(free).toEqual([
-      { start: '09:00', end: '10:00' },
-      { start: '11:00', end: '12:00' },
-      { start: '13:00', end: '17:00' },
-    ]);
-  });
-
-  it('widens availability with an "available" exception', () => {
-    const free = computeDailyAvailability({
-      date: '2026-06-29',
-      weekly: everyDay({ start: '09:00', end: '12:00' }),
-      exceptions: [{ is_unavailable: false, start_time: '13:00', end_time: '15:00' }],
-    });
-    expect(free).toEqual([
-      { start: '09:00', end: '12:00' },
-      { start: '13:00', end: '15:00' },
-    ]);
-  });
-
   it('detects overlaps end-exclusively', () => {
     expect(detectOverlap({ startsAt: 0, endsAt: 10 }, { startsAt: 10, endsAt: 20 })).toBe(false);
     expect(detectOverlap({ startsAt: 0, endsAt: 10 }, { startsAt: 5, endsAt: 20 })).toBe(true);
-  });
-});
-
-describe('per-block granularity validation (D-06/D-07/D-07c)', () => {
-  it('accepts a block carrying a positive-integer granularity_minutes', () => {
-    expect(
-      validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] }).ok,
-    ).toBe(true);
-  });
-
-  it('rejects a block missing granularity_minutes', () => {
-    expect(validateWeeklySchedule({ mon: [{ start: '09:00', end: '12:00' }] }).ok).toBe(false);
-  });
-
-  it('rejects a granularity_minutes that is not a positive integer', () => {
-    for (const bad of [0, -15, 12.5, '15']) {
-      expect(
-        validateWeeklySchedule({
-          mon: [{ start: '09:00', end: '12:00', granularity_minutes: bad as any }],
-        }).ok,
-        `granularity ${bad}`,
-      ).toBe(false);
-    }
-  });
-
-  it('rejects a block whose length is not a whole multiple of its granularity', () => {
-    expect(
-      validateWeeklySchedule({ mon: [{ start: '09:00', end: '10:00', granularity_minutes: 45 }] }).ok,
-    ).toBe(false);
-  });
-
-  it('accepts multiple non-overlapping blocks with different granularities', () => {
-    expect(
-      validateWeeklySchedule({
-        mon: [
-          { start: '09:00', end: '12:00', granularity_minutes: 15 },
-          { start: '14:00', end: '17:00', granularity_minutes: 45 },
-        ],
-      }).ok,
-    ).toBe(true);
-  });
-});
-
-describe('computeDailySlots — discrete fixed slots (D-07/D-08/D-09/D-15)', () => {
-  const MONDAY = '2026-06-29';
-
-  it('chops a block into back-to-back fixed slots of its granularity', () => {
-    const slots = computeDailySlots({
-      date: MONDAY,
-      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
-    });
-    expect(slots.length).toBe(12);
-    expect(slots[0]).toEqual({ start: '09:00', end: '09:15' });
-    expect(slots[slots.length - 1]).toEqual({ start: '11:45', end: '12:00' });
-  });
-
-  it('honors per-block granularity within the same day', () => {
-    const slots = computeDailySlots({
-      date: MONDAY,
-      weekly: {
-        mon: [
-          { start: '09:00', end: '10:00', granularity_minutes: 15 }, // 4 slots
-          { start: '14:00', end: '17:00', granularity_minutes: 45 }, // 4 slots
-        ],
-      },
-    });
-    expect(slots.length).toBe(8);
-    expect(slots.find((s) => s.start === '14:00' && s.end === '14:45')).toBeTruthy();
-  });
-
-  it('omits a slot that overlaps a booked interval (end-exclusive)', () => {
-    const slots = computeDailySlots({
-      date: MONDAY,
-      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
-      booked: [{ start: '10:00', end: '10:15' }],
-    });
-    expect(slots.length).toBe(11);
-    expect(slots.find((s) => s.start === '10:00')).toBeUndefined();
-    // end-exclusive: the slots touching the booked boundary survive
-    expect(slots.find((s) => s.start === '09:45' && s.end === '10:00')).toBeTruthy();
-    expect(slots.find((s) => s.start === '10:15' && s.end === '10:30')).toBeTruthy();
-  });
-
-  it('returns no slots when there is no weekly entry for the day (D-09)', () => {
-    expect(computeDailySlots({ date: MONDAY, weekly: {} })).toEqual([]);
-    expect(
-      computeDailySlots({
-        date: MONDAY,
-        weekly: { tue: [{ start: '09:00', end: '10:00', granularity_minutes: 15 }] },
-      }),
-    ).toEqual([]);
-  });
-
-  it('returns no slots on a full-day unavailable exception (D-08)', () => {
-    const slots = computeDailySlots({
-      date: MONDAY,
-      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
-      exceptions: [{ is_unavailable: true }],
-    });
-    expect(slots).toEqual([]);
-  });
-
-  it('produces slots from an "available" exception that opens hours outside the weekly pattern (D-07c)', () => {
-    const slots = computeDailySlots({
-      date: MONDAY, // Monday, but weekly has no mon block
-      weekly: {},
-      exceptions: [{ is_unavailable: false, start_time: '10:00', end_time: '11:00', granularity_minutes: 15 }],
-    });
-    expect(slots.length).toBe(4);
-    expect(slots[0]).toEqual({ start: '10:00', end: '10:15' });
-    expect(slots[3]).toEqual({ start: '10:45', end: '11:00' });
-  });
-
-  it('drops slots that fall inside a partial unavailable exception', () => {
-    const slots = computeDailySlots({
-      date: MONDAY,
-      weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
-      exceptions: [{ is_unavailable: true, start_time: '10:00', end_time: '10:30' }],
-    });
-    expect(slots.length).toBe(10);
-    expect(slots.find((s) => s.start === '10:00')).toBeUndefined();
-    expect(slots.find((s) => s.start === '10:15')).toBeUndefined();
-    expect(slots.find((s) => s.start === '09:45')).toBeTruthy();
-    expect(slots.find((s) => s.start === '10:30')).toBeTruthy();
   });
 });
 
@@ -524,9 +348,8 @@ describe('resolveBooking — effective price + duration (D-12/D-13)', () => {
 describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08)', () => {
   const MONDAY = '2026-06-29';
   // Grid: 12 back-to-back 15-min slots 09:00–12:00.
-  const grid = computeDailySlots({
-    date: MONDAY,
-    weekly: { mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] },
+  const grid = computeServiceSlots({
+    blocks: [{ start: '09:00', end: '12:00', slot_minutes: 15 }],
   });
   const pro = (booked: BookedAppointment[] = []) => ({ id: 7, name: 'Dr. Ana', slots: grid, booked });
 
@@ -579,9 +402,8 @@ describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08
   });
 
   it('treats overlap as end-exclusive (touching boundary is not a conflict)', () => {
-    const hourGrid = computeDailySlots({
-      date: MONDAY,
-      weekly: { mon: [{ start: '11:00', end: '12:00', granularity_minutes: 60 }] },
+    const hourGrid = computeServiceSlots({
+      blocks: [{ start: '11:00', end: '12:00', slot_minutes: 60 }],
     });
     const v = evaluateConflicts({
       proposed: { start: '11:00', end: '12:00', date: MONDAY },
@@ -742,17 +564,17 @@ describe('ledger entry types (Phase 4 — four values)', () => {
 
 describe('appointments SSOT: staff_note column metadata (Phase 4)', () => {
   it('appointments table has a staff_note column in the SSOT', () => {
-    const cols = structure.tables.appointments.columns as Record<string, any>;
+    const cols = structure.tables.appointments.columns as Record<string, ColumnDef>;
     expect(cols.staff_note).toBeDefined();
   });
 
   it('staff_note is nullable', () => {
-    const cols = structure.tables.appointments.columns as Record<string, any>;
+    const cols = structure.tables.appointments.columns as Record<string, ColumnDef>;
     expect(cols.staff_note.validator?.nullable).toBe(true);
   });
 
   it('staff_note has {es, en} labels', () => {
-    const cols = structure.tables.appointments.columns as Record<string, any>;
+    const cols = structure.tables.appointments.columns as Record<string, ColumnDef>;
     expect(typeof cols.staff_note.label?.es).toBe('string');
     expect(typeof cols.staff_note.label?.en).toBe('string');
   });
@@ -760,7 +582,7 @@ describe('appointments SSOT: staff_note column metadata (Phase 4)', () => {
 
 describe('clients SSOT: DNI column and secret-free read source', () => {
   it('clients declares a nullable, filterable, sortable dni column with {es,en} labels', () => {
-    const cols = structure.tables.clients.columns as Record<string, any>;
+    const cols = structure.tables.clients.columns as Record<string, ColumnDef>;
     expect(cols.dni).toBeDefined();
     expect(cols.dni.type).toBe('string');
     expect(cols.dni.validator?.nullable).toBe(true);
@@ -772,9 +594,9 @@ describe('clients SSOT: DNI column and secret-free read source', () => {
 
   it('clients and professionals read through the secret-free directory view', () => {
     // Writes stay on auth.users; reads must project the view so password columns never leak.
-    expect((structure.tables.clients as any).sqlReadTable).toBe('auth.users_directory');
-    expect((structure.tables.professionals as any).sqlReadTable).toBe('auth.users_directory');
-    expect((structure.tables.clients as any).sqlTable).toBe('auth.users');
+    expect((structure.tables.clients as TableStructure).sqlReadTable).toBe('auth.users_directory');
+    expect((structure.tables.professionals as TableStructure).sqlReadTable).toBe('auth.users_directory');
+    expect((structure.tables.clients as TableStructure).sqlTable).toBe('auth.users');
   });
 });
 
@@ -796,10 +618,21 @@ describe('owner-scheduled tables are derived from schedulable capabilities', () 
     }
   });
 
-  it('guards schedules and schedule_exceptions but not appointments or services', () => {
-    expect(isOwnerScheduledTable('schedules')).toBe(true);
+  it('guards schedule_blocks and schedule_exceptions but not appointments or services', () => {
+    expect(isOwnerScheduledTable('schedule_blocks')).toBe(true);
     expect(isOwnerScheduledTable('schedule_exceptions')).toBe(true);
     expect(isOwnerScheduledTable('appointments')).toBe(false);
     expect(isOwnerScheduledTable('services')).toBe(false);
+  });
+});
+
+describe('booking-window columns', () => {
+  it('businesses and professional_services carry min/max_booking_days', () => {
+    expect(Object.keys((structure.tables.businesses as TableStructure).columns)).toEqual(
+      expect.arrayContaining(['min_booking_days', 'max_booking_days']),
+    );
+    expect(Object.keys((structure.tables.professional_services as TableStructure).columns)).toEqual(
+      expect.arrayContaining(['min_booking_days', 'max_booking_days']),
+    );
   });
 });

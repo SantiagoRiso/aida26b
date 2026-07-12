@@ -8,17 +8,22 @@ dotenv.config();
 
 const TEST_DB_NAME = 'professional_agenda_test';
 
-function envBase() {
-  return {
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT || '5432'),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-  };
+const connBase = { host: process.env.DB_HOST, port: parseInt(process.env.DB_PORT || '5432') };
+
+// The app role: least-privilege, only the per-table grants the migrations hand out. The server
+// under test runs on this so tests exercise the same grants production does.
+function envApp() {
+  return { ...connBase, user: process.env.DB_USER, password: process.env.DB_PASSWORD };
+}
+
+// Superuser: harness-only. Creates/drops the test DB and runs migrations (owner/superuser DDL like
+// ALTER DEFAULT PRIVILEGES). Never handed to the app.
+function envSuper() {
+  return { ...connBase, user: process.env.DB_SUPERUSER, password: process.env.DB_SUPERPASSWORD };
 }
 
 export async function resetTestDb(): Promise<void> {
-  const admin = new Pool({ ...envBase(), database: 'postgres' });
+  const admin = new Pool({ ...envSuper(), database: 'postgres' });
   try {
     await admin.query(
       `SELECT pg_terminate_backend(pid)
@@ -33,8 +38,14 @@ export async function resetTestDb(): Promise<void> {
   }
 }
 
+// Harness pool (superuser): schema setup, migrations, fixture seeding, and direct assertions.
 export function makeTestPool(): Pool {
-  return new Pool({ ...envBase(), database: TEST_DB_NAME });
+  return new Pool({ ...envSuper(), database: TEST_DB_NAME });
+}
+
+// App-role pool (aida26_user): hand this to the server under test so API paths hit real grants.
+export function makeAppPool(): Pool {
+  return new Pool({ ...envApp(), database: TEST_DB_NAME });
 }
 
 export function makeTempMigrationsDir(files: Record<string, string>): string {

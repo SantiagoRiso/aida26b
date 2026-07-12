@@ -23,9 +23,9 @@ const professionalSchedulable: SchedulableCapability = {
   identityField: 'id',
   displayField: 'display_name',
   ownerForeignKey: 'professional_user_id',
-  availability: { weeklySource: 'schedules', exceptionSource: 'schedule_exceptions' },
+  availability: { weeklySource: 'schedule_blocks', exceptionSource: 'schedule_exceptions' },
   conflict: { overridable: true },
-  rules: { availability: 'computeDailyAvailability', conflict: 'detectOverlap' },
+  rules: { availability: 'computeServiceSlots', conflict: 'detectOverlap' },
 };
 
 const resourceSchedulable: SchedulableCapability = {
@@ -33,9 +33,9 @@ const resourceSchedulable: SchedulableCapability = {
   identityField: 'id',
   displayField: 'name',
   ownerForeignKey: 'resource_id',
-  availability: { weeklySource: 'schedules', exceptionSource: 'schedule_exceptions' },
+  availability: { weeklySource: 'schedule_blocks', exceptionSource: 'schedule_exceptions' },
   conflict: { overridable: true },
-  rules: { availability: 'computeDailyAvailability', conflict: 'detectOverlap' },
+  rules: { availability: 'computeServiceSlots', conflict: 'detectOverlap' },
 };
 
 export const peopleTables = {

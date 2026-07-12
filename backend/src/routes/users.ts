@@ -12,6 +12,7 @@ import { insertUser, deactivateUser, resetUserPassword, deleteUserSessions } fro
 
 type AuthedRequest = Request & { user?: auth.AuthUser };
 
+// eslint-disable-next-line no-restricted-syntax -- catch-boundary: narrows an unverified thrown error into DbError
 function isUniqueViolation(error: unknown): error is DbError {
   return error instanceof DbError && error.pgCode === '23505';
 }

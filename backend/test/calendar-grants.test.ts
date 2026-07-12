@@ -6,6 +6,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { hashPassword } from '../src/auth';
 import type { Pool } from 'pg';
+import type { TableRecordMap } from '../../shared/src/types/types';
 
 let testPool: Pool;
 
@@ -14,11 +15,20 @@ function installTestProxy() {
     // @ts-expect-error — overloaded signature; delegation is safe
     testPool.query(...args);
 
+  // eslint-disable-next-line no-restricted-syntax -- pg's Pool.connect has an overloaded callback/promise signature a delegating proxy can't match directly
   pool.connect = () => testPool.connect() as unknown as ReturnType<typeof pool.connect>;
 }
 
 let server: http.Server;
 let baseUrl: string;
+
+type ReqBody = Record<string, string | number | boolean | null>;
+type Envelope = {
+  success?: boolean;
+  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
+  meta?: { page: number; limit: number; total: number };
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
 
 async function request(
   path: string,
@@ -26,7 +36,7 @@ async function request(
     method = 'GET',
     body,
     cookie,
-  }: { method?: string; body?: unknown; cookie?: string } = {}
+  }: { method?: string; body?: ReqBody; cookie?: string } = {}
 ) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -38,9 +48,9 @@ async function request(
   });
 
   const text = await response.text();
-  let responseBody: Record<string, unknown> | null = null;
+  let responseBody: Envelope | null = null;
   try {
-    responseBody = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+    responseBody = text ? (JSON.parse(text) as Envelope) : null;
   } catch {
     responseBody = null;
   }
@@ -147,7 +157,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
     });
 
     expect(res.status).toBe(201);
-    const data = (res.body as { data: Record<string, unknown> }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'] }).data;
     expect(String(data.professional_user_id)).toBe(String(p1UserId));
     expect(String(data.grantee_user_id)).toBe(String(receptionistUserId));
     expect(data).not.toHaveProperty('view');
@@ -358,14 +368,14 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
   test('Admin sees all in-business grants (2 rows)', async () => {
     const res = await request('/api/calendar-grants', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: unknown[] }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(2);
   });
 
   test('P1 sees only their own calendar grants (1 row)', async () => {
     const res = await request('/api/calendar-grants', { cookie: p1Cookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ professional_user_id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
   });
@@ -373,7 +383,7 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
   test('P2 sees only their own calendar grants (1 row)', async () => {
     const res = await request('/api/calendar-grants', { cookie: p2Cookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: unknown[] }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(1);
   });
 
@@ -385,7 +395,7 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
   test('Cross-business grants are never returned to main-biz admin', async () => {
     const res = await request('/api/calendar-grants', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ professional_user_id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     const ids = data.map((g) => String(g.professional_user_id));
     expect(ids).not.toContain(String(otherBizProfUserId));
   });
@@ -393,7 +403,7 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
   test('Receptionist can list in-business grants (read allowed)', async () => {
     const res = await request('/api/calendar-grants', { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: unknown[] }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(2);
   });
 
@@ -403,7 +413,7 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
       { cookie: adminCookie }
     );
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ professional_user_id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
   });
@@ -424,7 +434,7 @@ describe('Grant scoping of professionals (generic CRUD)', () => {
   test('Receptionist lists professionals → only granted (P1)', async () => {
     const res = await request('/api/professionals', { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
     expect(data).toHaveLength(1);
     expect(String(data[0].id)).toBe(String(p1UserId));
   });
@@ -432,7 +442,7 @@ describe('Grant scoping of professionals (generic CRUD)', () => {
   test('Receptionist gets a granted professional by id → 200', async () => {
     const res = await request(`/api/professionals?id=${p1UserId}`, { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: { id: unknown } }).data;
+    const data = (res.body as { data: TableRecordMap['professionals'] }).data;
     expect(String(data.id)).toBe(String(p1UserId));
   });
 
@@ -444,7 +454,7 @@ describe('Grant scoping of professionals (generic CRUD)', () => {
   test('Admin lists professionals → all in business (unscoped)', async () => {
     const res = await request('/api/professionals', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
     const ids = data.map((p) => String(p.id));
     expect(ids).toContain(String(p1UserId));
     expect(ids).toContain(String(p2UserId));
@@ -453,7 +463,7 @@ describe('Grant scoping of professionals (generic CRUD)', () => {
   test('Client lists professionals → all in business (portal booking depends on this)', async () => {
     const res = await request('/api/professionals', { cookie: clientCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: Array<{ id: unknown }> }).data;
+    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
     const ids = data.map((p) => String(p.id));
     expect(ids).toContain(String(p1UserId));
     expect(ids).toContain(String(p2UserId));

@@ -11,7 +11,6 @@ import { mountAuthRoutes } from './routes/auth';
 import { mountUserAdminRoutes } from './routes/users';
 import { mountGrantRoutes } from './routes/grants';
 import { mountSchedulingRoutes } from './routes/scheduling';
-import { mountSetScheduleRoutes } from './routes/set-schedule';
 import { mountAppointmentRoutes } from './routes/appointments';
 import { mountLedgerRoutes } from './routes/ledger';
 import { mountAuditRoutes } from './routes/audit';
@@ -52,13 +51,8 @@ mountSchedulingRoutes(app, pool, {
   audit,
 });
 
-// Set-weekly-schedule: per-block-granularity validation + one-owner rule + own-schedule authz.
-mountSetScheduleRoutes(app, pool, {
-  auth: requireAuth,
-  passwordReady: requirePasswordReady,
-  audit,
-});
-
+// Schedule blocks + their services are edited through the generic CRUD engine (SSoT descriptors),
+// scoped by ownership/calendar-grant; no bespoke set-schedule route.
 mountAppointmentRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,

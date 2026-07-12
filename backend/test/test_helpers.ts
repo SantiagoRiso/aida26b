@@ -19,7 +19,9 @@ async function fetchById(tableName: string, id: string, pkField: string = 'id') 
   }
 }
 
-async function insertRow(tableName: string, row: Record<string, unknown>) {
+type RowPayload = Record<string, string | number | boolean | null>;
+
+async function insertRow(tableName: string, row: RowPayload) {
   try {
     return await fetch(`${API_BASE}/${tableName}`, {
       method: 'POST',
@@ -32,7 +34,7 @@ async function insertRow(tableName: string, row: Record<string, unknown>) {
   }
 }
 
-async function updateRow(tableName: string, id: string, row: Record<string, unknown>) {
+async function updateRow(tableName: string, id: string, row: RowPayload) {
   try {
     return await fetch(`${API_BASE}/${tableName}/${id}`, {
       method: 'PUT',
@@ -55,3 +57,4 @@ async function deleteRow(tableName: string, id: string) {
 }
 
 export { fetchFullTable, fetchById, insertRow, updateRow, deleteRow };
+export type { RowPayload };

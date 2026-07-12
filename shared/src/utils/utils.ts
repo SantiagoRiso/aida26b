@@ -66,3 +66,19 @@ export function getScheduleOwnerForeignKeys(): string[] {
   }
   return [...fks];
 }
+
+// True when a table declares the professional owner+grant guard for this write op.
+export function professionalOwnerGuardedOn(
+  tableKey: string,
+  op: 'create' | 'update' | 'delete',
+): boolean {
+  const guard = tableOf(tableKey as TableKey).professionalOwnerGuard;
+  return !!guard && guard.ops.includes(op);
+}
+
+// Whether a table carries a resource_id owner column. Dual-owner schedule tables do; a
+// professional-only owner-guarded table (professional_services) does not, so its owner row
+// must be read without selecting a non-existent resource_id column.
+export function ownerHasResourceColumn(tableKey: string): boolean {
+  return 'resource_id' in tableOf(tableKey as TableKey).columns;
+}

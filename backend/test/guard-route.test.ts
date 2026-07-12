@@ -40,6 +40,7 @@ describe('async handler crash net', () => {
     // The wrapped handler must settle without rejecting — a rejection here is
     // exactly the unhandled-rejection process kill this guard exists to prevent.
     await expect(
+      // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
       Promise.resolve(handler(req, res as unknown as Response, () => {})),
     ).resolves.not.toThrow();
 
@@ -60,6 +61,7 @@ describe('async handler crash net', () => {
     });
 
     await expect(
+      // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
       Promise.resolve(middleware(req, res as unknown as Response, next)),
     ).resolves.not.toThrow();
 
@@ -76,6 +78,7 @@ describe('async handler crash net', () => {
       throw new Error('late failure');
     });
 
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
     await Promise.resolve(handler(req, res as unknown as Response, () => {}));
 
     expect(res.statusCode).toBe(200);
@@ -88,6 +91,7 @@ describe('async handler crash net', () => {
       throw new DbError('duplicate key value violates unique constraint', '23505');
     });
 
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
     await Promise.resolve(handler(req, res as unknown as Response, () => {}));
 
     expect(res.statusCode).toBe(409);
@@ -102,6 +106,7 @@ describe('async handler crash net', () => {
       throw new DbError('deadlock detected', '40P01');
     });
 
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
     await Promise.resolve(handler(req, res as unknown as Response, () => {}));
 
     expect(res.statusCode).toBe(500);

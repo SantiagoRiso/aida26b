@@ -7,6 +7,7 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { Pool } from 'pg';
+import type { Server } from 'node:http';
 
 function makeUser(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
@@ -88,9 +89,9 @@ describe('business scope fragments', () => {
   });
 });
 
-describe('dual-path business scope for schedules', () => {
-  test('schedules businessWhere is a two-path OR', () => {
-    const result = assertCrudAllowed('schedules', 'read', adminUser);
+describe('dual-path business scope for schedule_blocks', () => {
+  test('schedule_blocks businessWhere is a two-path OR', () => {
+    const result = assertCrudAllowed('schedule_blocks', 'read', adminUser);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.businessWhere).toContain('auth.users');
@@ -178,7 +179,7 @@ describe('Professional self-scope on writes', () => {
 const TESTS_PORT = 4139;
 const API_BASE = `http://localhost:${TESTS_PORT}/api`;
 
-let server: any;
+let server: Server;
 let testsPool: Pool;
 let bizA: string;
 let bizB: string;
@@ -254,7 +255,7 @@ describe('422 rejection of server-derived fields', () => {
 describe('generic routes fail closed without an authenticated user', () => {
   const PORT = 4140;
   const BASE = `http://localhost:${PORT}/api`;
-  let closedServer: any;
+  let closedServer: Server;
 
   beforeAll(async () => {
     const app = createApp(testsPool);

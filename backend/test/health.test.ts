@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Pool } from 'pg';
+import type { Server } from 'node:http';
 import { registerHealthRoute } from '../src/health';
 import { resetTestDb, makeTestPool } from './helpers';
 
 let pool: Pool;
-let server: any;
+let server: Server;
 let base: string;
 
 beforeAll(async () => {
@@ -41,6 +42,7 @@ describe('GET /health', () => {
       query: async () => {
         throw new Error('SELECT 1 unreachable');
       },
+      // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's Pool — implementing its full driver interface isn't practical for a test double
     } as unknown as Pool);
     const s = failing.listen(4141);
     await new Promise<void>((resolve) => s.once('listening', () => resolve()));

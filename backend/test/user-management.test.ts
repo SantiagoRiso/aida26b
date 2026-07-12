@@ -14,11 +14,20 @@ function installTestProxy() {
     // @ts-expect-error — overloaded signature; delegation is safe
     testPool.query(...args);
 
+  // eslint-disable-next-line no-restricted-syntax -- pg's Pool.connect has an overloaded callback/promise signature a delegating proxy can't match directly
   pool.connect = () => testPool.connect() as unknown as ReturnType<typeof pool.connect>;
 }
 
 let server: http.Server;
 let baseUrl: string;
+
+type ReqBody = Record<string, string | number | boolean | null>;
+type Envelope = {
+  success?: boolean;
+  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
+  meta?: { page: number; limit: number; total: number };
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
 
 async function request(
   path: string,
@@ -26,7 +35,7 @@ async function request(
     method = 'GET',
     body,
     cookie,
-  }: { method?: string; body?: unknown; cookie?: string } = {}
+  }: { method?: string; body?: ReqBody; cookie?: string } = {}
 ) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -39,9 +48,9 @@ async function request(
 
   const setCookie = response.headers.get('set-cookie');
   const text = await response.text();
-  let responseBody: Record<string, unknown> | null = null;
+  let responseBody: Envelope | null = null;
   try {
-    responseBody = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+    responseBody = text ? (JSON.parse(text) as Envelope) : null;
   } catch {
     responseBody = null;
   }
@@ -116,7 +125,7 @@ describe('Client user creation', () => {
     });
     expect(res.status).toBe(201);
 
-    const body = res.body.data as { id: unknown; username: string; role: string };
+    const body = res.body?.data as { id: string; username: string; role: string };
     expect(body.role).toBe('Client');
     expect(Number(body.id)).toBeGreaterThan(0);
 

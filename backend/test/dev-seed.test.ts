@@ -33,7 +33,10 @@ describe('foundation seed', () => {
     expect(await count('resources')).toBe(1);
     expect(await count('services')).toBe(1);
     expect(await count('client_professional_services')).toBe(1);
-    expect(await count('schedules')).toBe(2);
+    // One block per weekday for the professional (5) and the resource (5).
+    expect(await count('schedule_blocks')).toBe(10);
+    // Each professional block offers the single seeded service; resource blocks offer none.
+    expect(await count('schedule_block_services')).toBe(5);
     expect(await count('schedule_exceptions')).toBe(1);
   });
 
@@ -82,9 +85,9 @@ describe('foundation seed', () => {
     }
   });
 
-  it('keeps schedules tied to exactly one owner with valid FKs', async () => {
+  it('keeps schedule blocks tied to exactly one owner with valid FKs', async () => {
     const bad = await pool.query(
-      `SELECT 1 FROM schedules
+      `SELECT 1 FROM schedule_blocks
        WHERE (professional_user_id IS NULL) = (resource_id IS NULL)`
     );
     expect(bad.rows.length).toBe(0);

@@ -7,6 +7,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountLedgerRoutes } from '../src/routes/ledger';
 import type { AuthUser } from '../src/auth';
+import type { TableRecordMap } from '../../shared/src/types/types';
 
 let pool: Pool;
 let server: http.Server;
@@ -18,12 +19,22 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-async function req(method: 'GET' | 'POST', path: string, body?: unknown) {
+// ledger_entries rows come back with created_at too — a DB timestamp outside the SSOT column map.
+type LedgerRow = TableRecordMap['ledger_entries'] & { created_at: string };
+type ReqBody = Record<string, string | number | boolean | null>;
+type Envelope = {
+  success?: boolean;
+  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
+  meta?: { page: number; limit: number; total: number };
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
+
+async function req(method: 'GET' | 'POST', path: string, body?: ReqBody) {
   const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const response = await fetch(`${baseUrl}${path}`, opts);
   const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
+  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
 }
 
 let bizId: number;
@@ -493,7 +504,7 @@ describe('GET /api/clients/:id/ledger — paginated list (D-25/D-26)', () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('GET', `/api/clients/${clientId}/ledger`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as LedgerRow[];
     for (let i = 1; i < rows.length; i++) {
       expect(new Date(rows[i].created_at).getTime()).toBeLessThanOrEqual(
         new Date(rows[i - 1].created_at).getTime(),

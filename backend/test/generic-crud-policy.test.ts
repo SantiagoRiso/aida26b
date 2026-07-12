@@ -5,6 +5,7 @@ import { resetTestDb, makeTestPool } from './helpers';
 import type { AuthUser } from '../src/auth';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import type { Server } from 'node:http';
 
 // Handlers fail closed without an authenticated user; inject a cross-business super-admin
 // explicitly so the policy suite exercises the privileged path without a real session.
@@ -21,7 +22,7 @@ const superAdmin: AuthUser = {
 const TESTS_PORT = 4138;
 const API_BASE = `http://localhost:${TESTS_PORT}/api`;
 
-let server: any;
+let server: Server;
 let testsPool: Pool;
 let businessId: string;
 let professionalUserId: string;
@@ -186,12 +187,6 @@ describe('ordinary configuration entities are allowed', () => {
 });
 
 describe('operations the entity does not expose are rejected (405)', () => {
-  test('schedules cannot be deleted generically (no DELETE grant)', async () => {
-    const res = await api('/schedules/1', { method: 'DELETE' });
-    expect(res.status).toBe(405);
-    expect(res.body.error.code).toBe('operation_not_allowed');
-  });
-
   test('client_professional_services cannot be deleted generically', async () => {
     const res = await api('/client_professional_services/1', { method: 'DELETE' });
     expect(res.status).toBe(405);
@@ -230,28 +225,32 @@ describe('delete semantics', () => {
 });
 
 describe('app-layer role check on generic write path', () => {
-  test('POST schedules with a Client user as professional_user_id → 422 invalid_reference_role', async () => {
-    const res = await api('/schedules', {
+  test('POST schedule_blocks with a Client user as professional_user_id → 422 invalid_reference_role', async () => {
+    const res = await api('/schedule_blocks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         professional_user_id: clientUserId,
         resource_id: null,
-        weekly: '{}',
+        weekday: 'mon',
+        start_time: '09:00',
+        end_time: '12:00',
       }),
     });
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('invalid_reference_role');
   });
 
-  test('POST schedules with a Professional user as professional_user_id → 201', async () => {
-    const res = await api('/schedules', {
+  test('POST schedule_blocks with a Professional user as professional_user_id → 201', async () => {
+    const res = await api('/schedule_blocks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         professional_user_id: professionalUserId,
         resource_id: null,
-        weekly: '{}',
+        weekday: 'mon',
+        start_time: '09:00',
+        end_time: '12:00',
       }),
     });
     expect([201, 409]).toContain(res.status);

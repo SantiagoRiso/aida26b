@@ -145,8 +145,13 @@ export function buildGrantScope(
   const meta = tableOf(table);
   const gs = meta.grantScope as GrantScopeDescriptor | undefined;
   if (gs && user.role === gs.role && !Array.isArray(meta.pk)) {
+    // Match the grant against the column that carries this table's professional owner. That is
+    // the pk only when the pk IS the user id (professionals); on surrogate-pk owner tables
+    // (schedule_blocks, …) it's the ownership column — matching against `id` there tests a row
+    // id against a user id, never matches, and hides every granted row.
+    const ownerColumn = (meta.ownership as OwnershipDescriptor | undefined)?.ownerColumn ?? meta.pk;
     return {
-      grantWhere: `"${meta.pk}" IN (SELECT "${gs.grantRowColumn}" FROM ${gs.grantTable} WHERE "${gs.granteeColumn}" = ?)`,
+      grantWhere: `"${ownerColumn}" IN (SELECT "${gs.grantRowColumn}" FROM ${gs.grantTable} WHERE "${gs.granteeColumn}" = ?)`,
       grantParams: [user.id],
     };
   }

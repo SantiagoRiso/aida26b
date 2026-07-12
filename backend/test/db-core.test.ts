@@ -14,7 +14,7 @@ describe('toRecord — SSoT-driven coercion', () => {
     expect(r.professional_user_id).toBe('10');
     expect(r.duration_minutes).toBe(30);
     expect(r.starts_at).toBeInstanceOf(Date);
-    expect((r.starts_at as unknown as Date).toISOString()).toBe('2026-07-01T13:00:00.000Z');
+    expect(r.starts_at.toISOString()).toBe('2026-07-01T13:00:00.000Z');
     expect(r).not.toHaveProperty('not_a_column');
   });
 
@@ -34,11 +34,13 @@ describe('withTransaction — lifecycle', () => {
       release: () => {
         calls.push('RELEASE');
       },
+      // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's PoolClient — implementing its full driver interface isn't practical for a test double
     } as unknown as PoolClient;
   }
 
   test('commits and releases on success', async () => {
     const calls: string[] = [];
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's Pool — implementing its full driver interface isn't practical for a test double
     const pool = { connect: () => Promise.resolve(fakeClient(calls)) } as unknown as Pool;
 
     const result = await withTransaction(pool, async () => 42);
@@ -49,6 +51,7 @@ describe('withTransaction — lifecycle', () => {
 
   test('rolls back, releases, and rethrows the original error on failure', async () => {
     const calls: string[] = [];
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's Pool — implementing its full driver interface isn't practical for a test double
     const pool = { connect: () => Promise.resolve(fakeClient(calls)) } as unknown as Pool;
 
     await expect(
@@ -62,6 +65,7 @@ describe('withTransaction — lifecycle', () => {
 
   test('preserves a structured status error thrown inside the transaction', async () => {
     const calls: string[] = [];
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's Pool — implementing its full driver interface isn't practical for a test double
     const pool = { connect: () => Promise.resolve(fakeClient(calls)) } as unknown as Pool;
 
     await expect(

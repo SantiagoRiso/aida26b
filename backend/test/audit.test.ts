@@ -4,11 +4,13 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import type { Pool } from 'pg';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
-import { resetTestDb, makeTestPool } from './helpers';
+import { resetTestDb, makeTestPool, makeAppPool } from './helpers';
 import { mountAuditRoutes } from '../src/routes/audit';
 import type { AuthUser } from '../src/auth';
+import type { TableRecordMap } from '../../shared/src/types/types';
 
 let pool: Pool;
+let appPool: Pool;
 let server: http.Server;
 let baseUrl: string;
 let currentUser: AuthUser;
@@ -18,12 +20,22 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-async function auditReq(method: 'GET' | 'PATCH', path: string, body?: unknown) {
+// audit_events rows come back with created_at too — a DB timestamp outside the SSOT column map.
+type AuditRow = TableRecordMap['audit_events'] & { created_at: string };
+type ReqBody = Record<string, string | number | boolean | null>;
+type Envelope = {
+  success?: boolean;
+  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
+  meta?: { page: number; limit: number; total: number };
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
+
+async function auditReq(method: 'GET' | 'PATCH', path: string, body?: ReqBody) {
   const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const response = await fetch(`${baseUrl}${path}`, opts);
   const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
+  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
 }
 
 let bizId: number;
@@ -95,7 +107,9 @@ beforeAll(async () => {
 
   const app = express();
   app.use(express.json());
-  mountAuditRoutes(app, pool, {
+  // The server runs on the app role so the settings endpoints hit aida26_user's real grants.
+  appPool = makeAppPool();
+  mountAuditRoutes(app, appPool, {
     auth: injectUser,
     passwordReady: (_req, _res, next) => next(),
     audit: async () => {},
@@ -112,6 +126,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await appPool.end();
   await pool.end();
 });
 
@@ -180,7 +195,7 @@ describe('GET /api/audit — admin-only gate (D-27, T-04-16)', () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     for (let i = 1; i < rows.length; i++) {
       expect(new Date(rows[i].created_at).getTime()).toBeLessThanOrEqual(
         new Date(rows[i - 1].created_at).getTime(),
@@ -192,7 +207,7 @@ describe('GET /api/audit — admin-only gate (D-27, T-04-16)', () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit');
     expect(res.status).toBe(200);
-    const outcomes: string[] = (res.body.data as any[]).map((r) => r.outcome);
+    const outcomes: string[] = (res.body?.data as AuditRow[]).map((r) => r.outcome);
     expect(outcomes).toContain('denied');
     expect(outcomes).toContain('success');
   });
@@ -203,7 +218,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?entity_type=appointments');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(row.entity_type).toBe('appointments');
@@ -214,7 +229,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?entity_type=ledger_entries');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(row.entity_type).toBe('ledger_entries');
@@ -225,7 +240,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?event_type=appointment_canceled');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(row.event_type).toBe('appointment_canceled');
@@ -236,7 +251,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', `/api/audit?actor_user_id=${proId}`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(Number(row.actor_user_id)).toBe(proId);
@@ -250,7 +265,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     const dateTo = new Date(Date.now() + 60 * 1000).toISOString();
     const res = await auditReq('GET', `/api/audit?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       const t = new Date(row.created_at).getTime();
@@ -263,7 +278,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?entity_type=appointments&event_type=appointment_scheduled');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(row.entity_type).toBe('appointments');
@@ -283,7 +298,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?outcome=denied');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(row.outcome).toBe('denied');
     // total is the server-side filtered count, not the unfiltered page count.
@@ -294,7 +309,7 @@ describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () =
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?outcome=success');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AuditRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(row.outcome).toBe('success');
   });
@@ -442,6 +457,81 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-1
       [bizId],
     );
     expect(dbCheck.rows[0].name).toBe('Audit Biz');
+  });
+
+  test('admin sets the booking window and it persists', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 24,
+      min_booking_days: 1,
+      max_booking_days: 30,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.min_booking_days).toBe(1);
+    expect(res.body.data.max_booking_days).toBe(30);
+
+    const db = await pool.query<{ min_booking_days: number; max_booking_days: number }>(
+      `SELECT min_booking_days, max_booking_days FROM businesses WHERE id = $1`,
+      [bizId],
+    );
+    expect(db.rows[0].min_booking_days).toBe(1);
+    expect(db.rows[0].max_booking_days).toBe(30);
+
+    await pool.query(
+      `UPDATE businesses SET min_booking_days = 0, max_booking_days = NULL WHERE id = $1`,
+      [bizId],
+    );
+  });
+
+  test('null max_booking_days clears the cap', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 24, min_booking_days: 2, max_booking_days: 10,
+    });
+    const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 24, max_booking_days: null,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.max_booking_days).toBeNull();
+    expect(res.body.data.min_booking_days).toBe(2); // untouched by this PATCH
+    await pool.query(
+      `UPDATE businesses SET min_booking_days = 0, max_booking_days = NULL WHERE id = $1`,
+      [bizId],
+    );
+  });
+
+  test('max_booking_days < min_booking_days → 422', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 24, min_booking_days: 10, max_booking_days: 5,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  test('negative min_booking_days → 422', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 24, min_booking_days: -1,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  test('cutoff-only PATCH leaves the window unchanged', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    await pool.query(
+      `UPDATE businesses SET min_booking_days = 3, max_booking_days = 40 WHERE id = $1`,
+      [bizId],
+    );
+    const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
+      cancellation_cutoff_hours: 12,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.min_booking_days).toBe(3);
+    expect(res.body.data.max_booking_days).toBe(40);
+    await pool.query(
+      `UPDATE businesses SET cancellation_cutoff_hours = 24, min_booking_days = 0, max_booking_days = NULL WHERE id = $1`,
+      [bizId],
+    );
   });
 });
 

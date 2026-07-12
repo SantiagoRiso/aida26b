@@ -7,11 +7,12 @@ import { resetTestDb, makeTestPool } from './helpers';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, test, expect } from 'vitest';
 import type { AuthUser } from '../src/auth';
+import type { Server } from 'node:http';
 
 const TESTS_PORT = 4137;
 export const API_BASE = `http://localhost:${TESTS_PORT}/api`;
 
-let server: any;
+let server: Server;
 let testsPool: Pool;
 let businessId: string;
 let clientUserId: string;
@@ -66,7 +67,8 @@ beforeAll(async () => {
 
 afterEach(async () => {
   await testsPool.query(
-    `TRUNCATE TABLE client_professional_services, schedule_exceptions, schedules,
+    `TRUNCATE TABLE client_professional_services, schedule_exceptions,
+       schedule_blocks, schedule_block_services,
        appointments, ledger_entries, resources, services
      RESTART IDENTITY CASCADE`
   );
@@ -133,7 +135,7 @@ test('GET /professionals by id returns the seeded professional', async () => {
   await asserts.fetchedByIdMatches('professionals', professionalUserId, { display_name: 'Seed Professional' }, 'id');
 });
 
-test('POST /schedules referencing a professional in another business → 422', async () => {
+test('POST /schedule_blocks referencing a professional in another business → 422', async () => {
   const otherBiz = await testsPool.query<{ id: string }>(
     `INSERT INTO businesses (name) VALUES ('Foreign Biz') RETURNING id`
   );
@@ -143,13 +145,15 @@ test('POST /schedules referencing a professional in another business → 422', a
     [otherBiz.rows[0].id]
   );
 
-  const response = await fetch(`${API_BASE}/schedules`, {
+  const response = await fetch(`${API_BASE}/schedule_blocks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       professional_user_id: foreignPro.rows[0].id,
       resource_id: null,
-      weekly: '{}',
+      weekday: 'mon',
+      start_time: '09:00',
+      end_time: '12:00',
     }),
   });
   expect(response.status).toBe(422);

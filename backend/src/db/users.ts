@@ -1,6 +1,6 @@
 import { query, queryOne } from './core';
 import type { Queryable } from './core';
-import type { ActiveProfessionalRow, ActiveUserRow } from '../../../shared/src/ssot/query-types';
+import type { ActiveProfessionalRow, ActiveUserRow, SelfProfileRow } from '../../../shared/src/ssot/query-types';
 import type { SqlParam } from '../../../shared/src/types/types';
 
 // An active professional: an auth.users row with role Professional that is not deactivated.
@@ -40,6 +40,32 @@ export function getUserBusinessId(db: Queryable, userId: number): Promise<number
     `SELECT business_id FROM auth.users WHERE id = $1`,
     [userId],
   ).then((r) => r?.business_id ?? null);
+}
+
+// The self-service profile read: secret-free view, scoped to the caller's own active row.
+export function getSelfProfile(db: Queryable, userId: number): Promise<SelfProfileRow | null> {
+  return queryOne<SelfProfileRow>(
+    db,
+    `SELECT id, display_name, bio, email, phone
+       FROM auth.users_directory
+      WHERE id = $1 AND is_active = true`,
+    [userId],
+  );
+}
+
+// Self-service profile write: only the caller's own row, only these four fields.
+export function updateSelfProfile(
+  db: Queryable,
+  opts: { userId: number; displayName: string; bio: string | null; email: string; phone: string | null },
+): Promise<SelfProfileRow | null> {
+  return queryOne<SelfProfileRow>(
+    db,
+    `UPDATE auth.users
+        SET display_name = $2, bio = $3, email = $4, phone = $5, updated_at = now()
+      WHERE id = $1 AND is_active = true
+      RETURNING id, display_name, bio, email, phone`,
+    [opts.userId, opts.displayName, opts.bio, opts.email, opts.phone],
+  );
 }
 
 // --- admin user management (auth.users writes) ---

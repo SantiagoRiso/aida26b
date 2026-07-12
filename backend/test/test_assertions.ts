@@ -1,5 +1,6 @@
 import type { TableKey } from '../../shared/src/types/types';
 import { fetchFullTable, fetchById, insertRow, updateRow, deleteRow } from './test_helpers';
+import type { RowPayload } from './test_helpers';
 import assert from 'node:assert';
 
 export async function toGetAnEmptyTable(tableName: string) {
@@ -21,7 +22,7 @@ export async function tableContainsCount(tableName: string, count: number) {
   return body.data;
 }
 
-export async function insertedCorrectly(tableName: TableKey, row: Record<string, unknown>) {
+export async function insertedCorrectly(tableName: TableKey, row: RowPayload) {
   const response = await insertRow(tableName, row);
   assert.strictEqual(response.status, 201);
   const body = await response.json();
@@ -35,7 +36,7 @@ export async function insertedCorrectly(tableName: TableKey, row: Record<string,
 export async function fetchedByIdMatches(
   tableName: TableKey,
   id: string,
-  expected: Record<string, unknown>,
+  expected: RowPayload,
   pkField: string = 'id',
 ) {
   const response = await fetchById(tableName, id, pkField);
@@ -50,7 +51,7 @@ export async function fetchedByIdMatches(
 export async function updatedCorrectly(
   tableName: TableKey,
   id: string,
-  row: Record<string, unknown>,
+  row: RowPayload,
 ) {
   const response = await updateRow(tableName, id, row);
   assert.strictEqual(response.status, 202);
@@ -69,7 +70,7 @@ export async function deletedCorrectly(tableName: TableKey, id: string) {
   assert.strictEqual(body.success, true);
 }
 
-export async function duplicateRejected(tableName: TableKey, row: Record<string, unknown>) {
+export async function duplicateRejected(tableName: TableKey, row: RowPayload) {
   const response = await insertRow(tableName, row);
   assert.strictEqual(response.status, 409);
   const body = await response.json();
