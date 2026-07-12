@@ -9,6 +9,7 @@ import { useTimegridGeometry } from '@/composables/useTimegridGeometry';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
 import { getAvailability } from '@/api/scheduling';
 import type { Appointment } from '@/api/appointments';
@@ -18,12 +19,14 @@ import CalendarFilters from '@/components/calendar/CalendarFilters.vue';
 import type { FilterState } from '@/components/calendar/CalendarFilters.vue';
 import AppointmentDetailPanel from '@/components/calendar/AppointmentDetailPanel.vue';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
+import ExceptionForm from '@/components/calendar/ExceptionForm.vue';
+import ExceptionList from '@/components/calendar/ExceptionList.vue';
 import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import { useCurrency } from '@/composables/useCurrency';
-import { computeValidStarts, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals, latticeFromFreeSlots } from '@/composables/calendarGrid';
+import { computeValidStarts, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals, latticeFromFreeSlots, gcdAll } from '@/composables/calendarGrid';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -44,6 +47,13 @@ const visibleRange = ref<{ from: string; to: string }>({
 
 const filters = ref<FilterState>({ professional_user_id: null, resource_id: null });
 
+// An exception always needs a single owner; the form has no picker of its own and reads
+// filters — the mixed 'Todos' view (both null) can only fail server-side.
+const canAddException = computed(() => filters.value.professional_user_id != null || filters.value.resource_id != null);
+
+// Days-off / partial-block / extra-hours overlays for the selected owner (read-only in this task).
+const exceptions = useScheduleExceptions(filters, visibleRange);
+
 // Free slots per visible day for a filtered resource; drives the availability shading overlay.
 const resourceFreeByDay = ref<Map<string, { start: number; end: number }[]>>(new Map());
 // Current FullCalendar view (from datesSet) — the resource overlay only makes sense in timegrid.
@@ -62,6 +72,11 @@ const formPrefillDate = ref<string | undefined>();
 const formPrefillStart = ref<string | undefined>();
 const formPrefillProfId = ref<number | undefined>();
 const formPrefillResourceId = ref<number | undefined>();
+
+const exceptionFormOpen = ref(false);
+// Same keep-mounted-through-close-animation pattern as formOpen/formMounted above.
+const exceptionFormMounted = ref(false);
+watch(exceptionFormOpen, (open) => { if (open) exceptionFormMounted.value = true; });
 
 const conflictOpen = ref(false);
 const conflictVerdict = ref<ConflictVerdict | null>(null);
@@ -152,7 +167,8 @@ function dayISO(base: Date, offset: number): string {
 async function loadSlotsByDay(profId: number, exclude?: number): Promise<Map<string, { start: string; end: string }[]>> {
   const base = new Date(`${visibleRange.value.from}T00:00:00`);
   const dates = Array.from({ length: 7 }, (_, i) => dayISO(base, i));
-  const results = await Promise.all(dates.map((date) => getAvailability(`prof:${profId}`, date, exclude)));
+  // Staff calendar has no chosen service → service-agnostic working windows; `exclude` is the 4th arg.
+  const results = await Promise.all(dates.map((date) => getAvailability(`prof:${profId}`, date, undefined, exclude)));
   const byDay = new Map<string, { start: string; end: string }[]>();
   dates.forEach((date, i) => {
     const res = results[i];
@@ -166,6 +182,16 @@ async function loadSlotsByDay(profId: number, exclude?: number): Promise<Map<str
 function applyGrid(grid: { starts: number[] | null; minutes: number | null }) {
   slotStartsMinutes.value = grid.starts;
   slotMinutes.value = grid.minutes;
+}
+
+// The professional's appointment-slot size: the GCD of their in-view appointment durations (each is
+// service-sized), so a session fills exactly one grid row. Null when they have no appointments in view.
+function proAppointmentMinutes(profId: number): number | null {
+  // professional_user_id arrives as a wire string (BIGINT) — coerce before comparing to the numeric id.
+  const durs = appointments.value
+    .filter((a) => Number(a.professional_user_id) === profId && a.duration_minutes > 0)
+    .map((a) => a.duration_minutes);
+  return durs.length ? gcdAll(durs) : null;
 }
 
 // Free intervals (minutes) per visible day for the selected professional — drives the availability
@@ -182,7 +208,12 @@ async function refreshSnapGrid() {
     return;
   }
   const byDay = await loadSlotsByDay(profId);
-  applyGrid(latticeFromFreeSlots([...byDay.values()].flat()));
+  // One grid row = one appointment. Size rows by the professional's appointment duration (all are
+  // service-sized) rather than the free-slot lengths — otherwise a small gap left between two bookings
+  // shrinks the whole grid to that gap's size (e.g. a 10-min sliver → an unusably tall day). Keep the
+  // real slot starts from the lattice so the drag still snaps onto them.
+  const lattice = latticeFromFreeSlots([...byDay.values()].flat());
+  applyGrid({ starts: lattice.starts, minutes: proAppointmentMinutes(profId) ?? lattice.minutes });
   const map = new Map<string, { start: number; end: number }[]>();
   for (const [date, slots] of byDay) {
     map.set(date, slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })));
@@ -509,6 +540,7 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
       ...pastBgEvents.value,
       ...resourceBgEvents.value,
       ...professionalBgEvents.value,
+      ...exceptions.bgEvents.value,
       ...hoverEvents.value,
       ...backgroundEvents.value,
       ...targetEvents.value,
@@ -781,6 +813,21 @@ function openNewForm() {
   formOpen.value = true;
 }
 
+function openNewException() {
+  exceptionFormOpen.value = true;
+}
+
+async function onExceptionSaved() {
+  exceptionFormOpen.value = false;
+  await exceptions.reload();
+  await fetchAppointments();
+}
+
+async function onExceptionDeleted() {
+  await exceptions.reload();
+  await fetchAppointments();
+}
+
 function onFiltersUpdate(f: FilterState) {
   filters.value = f;
 }
@@ -790,9 +837,19 @@ function onFiltersUpdate(f: FilterState) {
   <div class="flex flex-col gap-4 h-full">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">{{ t('nav.calendar') }}</h1>
-      <AppButton variant="primary" @click="openNewForm">
-        {{ t('calendar.newAppointment') }}
-      </AppButton>
+      <div class="flex gap-2">
+        <AppButton
+          variant="neutral"
+          :disabled="!canAddException"
+          :title="!canAddException ? t('calendar.selectOwnerForException') : undefined"
+          @click="openNewException"
+        >
+          {{ t('exception.addButton') }}
+        </AppButton>
+        <AppButton variant="primary" @click="openNewForm">
+          {{ t('calendar.newAppointment') }}
+        </AppButton>
+      </div>
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-2">
@@ -812,6 +869,8 @@ function onFiltersUpdate(f: FilterState) {
       {{ t('loading') }}
     </div>
     <CalendarViewComponent ref="calendarRef" :options="fullOptions" />
+
+    <ExceptionList v-if="canAddException" :rows="exceptions.rows.value" @deleted="onExceptionDeleted" />
 
     <AppointmentDetailPanel
       :appointment="detailAppt"
@@ -839,6 +898,23 @@ function onFiltersUpdate(f: FilterState) {
         @saved="onFormSaved"
         @conflict-detected="onFormConflict"
         @cancel="formOpen = false"
+      />
+    </DetailPanel>
+
+    <DetailPanel
+      :open="exceptionFormOpen"
+      :title="t('exception.formTitle')"
+      variant="side"
+      @close="exceptionFormOpen = false"
+      @after-leave="exceptionFormMounted = false"
+    >
+      <ExceptionForm
+        v-if="exceptionFormMounted"
+        :prefill-date="dayISO(new Date(), 0)"
+        :professional-id="filters.professional_user_id"
+        :resource-id="filters.resource_id"
+        @saved="onExceptionSaved"
+        @cancel="exceptionFormOpen = false"
       />
     </DetailPanel>
 

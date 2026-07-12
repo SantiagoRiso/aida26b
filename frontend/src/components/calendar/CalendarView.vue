@@ -104,6 +104,29 @@ defineExpose({
   opacity: 1 !important;
 }
 
+/* Schedule exceptions (days off / partial blocks / extra-hours) — distinct from the plain
+   fc-res-closed availability hatch so staff can tell "why" apart from ordinary non-working time. */
+:deep(.fc-exception-off) {
+  background: rgba(220, 38, 38, 0.14) !important;
+  opacity: 1 !important;
+}
+
+:deep(.fc-exception-block) {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(220, 38, 38, 0.20),
+    rgba(220, 38, 38, 0.20) 6px,
+    rgba(220, 38, 38, 0.06) 6px,
+    rgba(220, 38, 38, 0.06) 12px
+  ) !important;
+  opacity: 1 !important;
+}
+
+:deep(.fc-exception-extra) {
+  background: rgba(37, 99, 235, 0.12) !important;
+  opacity: 1 !important;
+}
+
 /* Month day cells read as actionable. The timegrid cursor is driven from JS (onGridPointerMove)
    instead, so past slots don't show the actionable pointer. */
 :deep(.fc-daygrid-day-frame) {

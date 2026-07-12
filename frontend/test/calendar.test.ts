@@ -7,6 +7,7 @@ import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import type { CalendarOptions } from '@fullcalendar/core';
 
 describe('colorForProfessional', () => {
   it('returns a stable color for the same id across calls', () => {
@@ -134,14 +135,14 @@ describe('useAppointmentCalendar editable flag', () => {
   it('dayGridMonth view shows capped event chips with a more-link', () => {
     const viewer = ref<AuthUser | null>(null);
     const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
-    const views = calendarOptions.value.views as Record<string, unknown> | undefined;
+    const views = calendarOptions.value.views as NonNullable<CalendarOptions['views']> | undefined;
     expect(views).toBeDefined();
     expect(views?.['dayGridMonth']).toBeDefined();
     // Month renders real (block-style) event chips, capped per day so busy days
     // collapse into a "+n más" popover instead of endless stacks.
-    const monthView = views?.['dayGridMonth'] as Record<string, unknown>;
-    expect(monthView['dayMaxEvents']).toBe(3);
-    expect(monthView['eventDisplay']).toBe('block');
+    const monthView = views?.['dayGridMonth'] as { dayMaxEvents?: number; eventDisplay?: string };
+    expect(monthView.dayMaxEvents).toBe(3);
+    expect(monthView.eventDisplay).toBe('block');
   });
 
   it('duration is never resizable on the grid, even for an editable viewer', () => {

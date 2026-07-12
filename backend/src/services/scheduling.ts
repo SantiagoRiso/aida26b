@@ -1,7 +1,8 @@
 import type { PoolClient } from 'pg';
-import { computeDailySlots, evaluateConflicts } from '../../../shared/src/ssot/domain';
+import { computeServiceSlots, computeFreeWindows, evaluateConflicts, weekdayOf } from '../../../shared/src/ssot/domain';
 import type {
   TimeInterval,
+  ServiceBlock,
   BookedAppointment,
   ConflictVerdict,
 } from '../../../shared/src/ssot/domain';
@@ -9,13 +10,20 @@ import type { Queryable } from '../db/core';
 import {
   getProfessionalOwner,
   getResourceOwner,
-  getWeeklySchedule,
+  getScheduleBlocksForService,
+  getProfessionalBlocks,
+  getResourceBlocks,
   getScheduleExceptions,
   getBookedAppointments,
   acquireOwnerLock,
 } from '../db/scheduling';
 import { BUSINESS_TZ, addMinutes } from '../time';
 import { httpError } from '../db/errors';
+
+// Resources offer no services, so their blocks are bare windows; tile them at a fixed display
+// granularity for the availability overlay. Conflict detection for a resource is containment-only
+// (checkAlignment=false in evaluateConflicts), so this granularity never affects a save.
+const RESOURCE_SLOT_MINUTES = 30;
 
 // Domain orchestration with no HTTP surface, so both the scheduling routes and the appointment
 // write path consume it from here rather than one route importing another.
@@ -36,22 +44,36 @@ export async function loadOwnerState(
   businessId: number,
   ref: { kind: 'professional' | 'resource'; id: number },
   date: string,
-  excludeAppointmentId?: number
+  opts: { serviceId?: number; excludeAppointmentId?: number } = {}
 ): Promise<OwnerState | null> {
+  const ownerCol = ref.kind === 'professional' ? 'professional_user_id' : 'resource_id';
+  const weekday = weekdayOf(date);
+
   let name: string;
+  // Exactly one is set. Service-sized tiling for a chosen service (booking); service-agnostic free
+  // windows for a professional with no service (the staff calendar's shading/lattice) and — via the
+  // fixed resource grid — for resources.
+  let serviceBlocks: ServiceBlock[] | null = null;
+  let freeWindows: { start: string; end: string }[] | null = null;
   if (ref.kind === 'professional') {
     const row = await getProfessionalOwner(q, ref.id);
     if (!row || row.business_id == null || Number(row.business_id) !== businessId) return null;
     name = row.display_name;
+    if (opts.serviceId) {
+      // Each block's slot size is the service's effective duration inside that block (resolved in SQL).
+      const rows = await getScheduleBlocksForService(q, ref.id, opts.serviceId, weekday);
+      serviceBlocks = rows.map((b) => ({ start: b.start, end: b.end, slot_minutes: Number(b.slot_minutes) }));
+    } else {
+      // No chosen service: expose the working windows themselves, not bookable slots.
+      freeWindows = await getProfessionalBlocks(q, ref.id, weekday);
+    }
   } else {
     const row = await getResourceOwner(q, ref.id);
     if (!row || row.business_id == null || Number(row.business_id) !== businessId) return null;
     name = row.name;
+    const rows = await getResourceBlocks(q, ref.id, weekday);
+    serviceBlocks = rows.map((b) => ({ start: b.start, end: b.end, slot_minutes: RESOURCE_SLOT_MINUTES }));
   }
-
-  const ownerCol = ref.kind === 'professional' ? 'professional_user_id' : 'resource_id';
-
-  const weekly = await getWeeklySchedule(q, ownerCol, ref.id);
 
   const excRows = await getScheduleExceptions(q, ownerCol, ref.id, date);
   const exceptions = excRows.map((e) => ({
@@ -63,21 +85,21 @@ export async function loadOwnerState(
 
   const apptRows = await getBookedAppointments(q, ownerCol, ref.id, date, BUSINESS_TZ);
   const booked: BookedAppointment[] = apptRows
-    .filter((a) => excludeAppointmentId === undefined || Number(a.id) !== excludeAppointmentId)
+    .filter((a) => opts.excludeAppointmentId === undefined || Number(a.id) !== opts.excludeAppointmentId)
     .map((a) => ({
       id: Number(a.id),
       start: a.start,
       end: a.end,
       state: a.state,
     }));
+  const bookedIntervals: TimeInterval[] = booked.map((b) => ({ start: b.start, end: b.end }));
 
-  const gridSlots = computeDailySlots({ date, weekly, exceptions });
-  const freeSlots = computeDailySlots({
-    date,
-    weekly,
-    exceptions,
-    booked: booked.map((b) => ({ start: b.start, end: b.end })),
-  });
+  const gridSlots = serviceBlocks
+    ? computeServiceSlots({ blocks: serviceBlocks, exceptions })
+    : computeFreeWindows({ blocks: freeWindows ?? [], exceptions });
+  const freeSlots = serviceBlocks
+    ? computeServiceSlots({ blocks: serviceBlocks, exceptions, booked: bookedIntervals })
+    : computeFreeWindows({ blocks: freeWindows ?? [], exceptions, booked: bookedIntervals });
 
   return { id: ref.id, name, gridSlots, freeSlots, booked };
 }
@@ -87,13 +109,14 @@ type LoaderError = { error: { status: number; code: string; message: string } };
 export async function loadConflictInputs(
   q: Queryable,
   businessId: number,
-  params: { professionalUserId: number; resourceId?: number; date: string }
+  params: { professionalUserId: number; resourceId?: number; date: string; serviceId?: number }
 ): Promise<{ professional: OwnerState; resource?: OwnerState } | LoaderError> {
   const professional = await loadOwnerState(
     q,
     businessId,
     { kind: 'professional', id: params.professionalUserId },
-    params.date
+    params.date,
+    { serviceId: params.serviceId }
   );
   if (!professional) {
     return { error: { status: 404, code: 'not_found', message: 'Professional not found in this business' } };
@@ -132,6 +155,7 @@ export async function recheckConflictsInTx(
     date: string;
     start: string;
     durationMinutes: number;
+    serviceId: number;
     callerIsStaff: boolean;
     excludeAppointmentId?: number;
   }
@@ -146,6 +170,7 @@ export async function recheckConflictsInTx(
     professionalUserId: input.professionalUserId,
     resourceId: input.resourceId,
     date: input.date,
+    serviceId: input.serviceId,
   });
   if ('error' in inputs) {
     // Propagate the structured status/code so the caller maps "owner gone from tenant

@@ -16,7 +16,9 @@ import { BUSINESS_TZ, HHMM_RE, DATE_RE, addMinutes, crossesMidnight, buildStarts
 import { httpError } from '../db/errors';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
-import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
+import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
+import { getBlockServiceForSlot, getEffectiveBookingWindow } from '../db/scheduling';
+import { weekdayOf } from '../../../shared/src/ssot/domain';
 import {
   loadAppointment,
   getAppointmentWallClock,
@@ -47,6 +49,14 @@ type AuditFn = (
 
 const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
+// Add n days to a 'YYYY-MM-DD' string via UTC arithmetic (no DST drift; result stays a date-only
+// string that compares lexically). Used to turn the booking window (days-from-today) into bounds.
+function addDaysISO(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
 function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, (typeof STAFF_ONLY_FIELDS)[number]> {
@@ -75,7 +85,7 @@ export function mountAppointmentRoutes(
     // Client is always the caller; ignore any body-supplied client_user_id.
     body.client_user_id = user.id;
 
-    const resolved = await resolveAndLoadService(pool, businessId, body);
+    const resolved = await resolveAndLoadService(pool, businessId, body, false);
     if (!resolved.ok) {
       return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
@@ -85,7 +95,6 @@ export function mountAppointmentRoutes(
       serviceId,
       date,
       start,
-      durationMinutes: resolvedDuration,
       effective_duration_minutes,
       effective_price,
       name,
@@ -93,18 +102,31 @@ export function mountAppointmentRoutes(
       startsAt,
     } = resolved;
 
+    // Client self-service is bounded by the effective booking window; staff paths stay exempt.
+    const window = await getEffectiveBookingWindow(pool, professionalUserId, serviceId);
+    if (window) {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+      const minDate = addDaysISO(today, window.min_booking_days);
+      const maxDate = window.max_booking_days != null ? addDaysISO(today, window.max_booking_days) : null;
+      if (date < minDate || (maxDate !== null && date > maxDate)) {
+        return sendError(res, 422, 'outside_booking_window',
+          `Requests are allowed from ${minDate}${maxDate !== null ? ` to ${maxDate}` : ''}`);
+      }
+    }
+
     // Dry-run conflict check — read-only, no advisory lock needed for a mere read.
     const { loadConflictInputs } = await import('../services/scheduling');
     const inputs = await loadConflictInputs(pool, businessId, {
       professionalUserId,
       date,
+      serviceId,
     });
     if ('error' in inputs) {
       return sendError(res, inputs.error.status, inputs.error.code, inputs.error.message);
     }
 
     const { evaluateConflicts } = await import('../../../shared/src/ssot/domain');
-    const end = addMinutes(start, resolvedDuration);
+    const end = addMinutes(start, effective_duration_minutes);
     const verdict = evaluateConflicts({
       proposed: { start, end, date },
       callerIsStaff: false,
@@ -154,7 +176,7 @@ export function mountAppointmentRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const resolved = await resolveAndLoadService(pool, businessId, body);
+    const resolved = await resolveAndLoadService(pool, businessId, body, true);
     if (!resolved.ok) {
       return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
@@ -176,7 +198,7 @@ export function mountAppointmentRoutes(
 
     const outcome = await saveWithConflictRecheck(
       pool,
-      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes },
+      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes, serviceId },
       override,
       async (tx, forced) => {
         // client_user_id is NOT NULL — checked here (inside the write, after the recheck) so a staff
@@ -251,6 +273,7 @@ export function mountAppointmentRoutes(
         date: dateStr,
         start: startStr,
         durationMinutes: Number(row.duration_minutes),
+        serviceId: Number(row.service_id),
         excludeAppointmentId: id,
       },
       override,
@@ -337,8 +360,8 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
     }
 
-    const serviceDefaultPriceArs = await getServiceDefaultPrice(pool, serviceId, businessId);
-    if (serviceDefaultPriceArs == null) {
+    const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
+    if (serviceDefaults == null) {
       return sendError(res, 404, 'not_found', 'Service not found in this business');
     }
 
@@ -348,10 +371,14 @@ export function mountAppointmentRoutes(
       clientOverridePriceArs = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
     }
 
+    const blockService = await getBlockServiceForSlot(pool, professionalUserId, serviceId, weekdayOf(date), start);
     const { effective_price, effective_duration_minutes } = resolveBooking({
-      serviceDefaultPriceArs,
+      serviceDefaultPriceArs: serviceDefaults.default_price_ars,
+      serviceDefaultDurationMinutes: serviceDefaults.default_duration_minutes,
       clientOverridePriceArs,
-      slotGranularityMinutes: durationMinutes,
+      blockServicePriceArs: blockService?.price_ars ?? null,
+      blockServiceDurationMinutes: blockService?.duration_minutes ?? null,
+      sobreturnoDurationMinutes: durationMinutes,
     });
 
     const override = req.body?.override === true;
@@ -359,7 +386,7 @@ export function mountAppointmentRoutes(
 
     const outcome = await saveWithConflictRecheck(
       pool,
-      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes, excludeAppointmentId: id },
+      { businessId, professionalUserId, resourceId, date, start, durationMinutes: effective_duration_minutes, serviceId, excludeAppointmentId: id },
       override,
       async (tx, forced) => {
         const appt = await rescheduleAppointment(tx, id, {

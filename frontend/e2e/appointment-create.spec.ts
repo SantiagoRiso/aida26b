@@ -14,7 +14,7 @@ test.describe('Appointment creation — full form with client + professional + r
     const [clientRes, profRes, svcRes, resourceRes] = await Promise.all([
       page.request.get(`/api/clients?filter_display_name=${encodeURIComponent('Troy McClure')}`),
       page.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Ned Flanders')}`),
-      page.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión individual')}`),
+      page.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión de Psicología Infantil')}`),
       page.request.get(`/api/resources?filter_name=${encodeURIComponent('Consultorio 3')}`),
     ]);
     const client = (await clientRes.json()).data[0];
@@ -23,7 +23,7 @@ test.describe('Appointment creation — full form with client + professional + r
     const resource = (await resourceRes.json()).data[0];
     expect(client, 'Troy McClure must exist in the seed').toBeTruthy();
     expect(prof, 'Dr. Ned Flanders must exist in the seed').toBeTruthy();
-    expect(svc, 'Sesión individual must exist in the seed').toBeTruthy();
+    expect(svc, 'Sesión de Psicología Infantil must exist in the seed').toBeTruthy();
     expect(resource, 'Consultorio 3 must exist in the seed').toBeTruthy();
 
     await page.getByRole('link', { name: 'Calendario' }).click();
@@ -41,8 +41,8 @@ test.describe('Appointment creation — full form with client + professional + r
     await expect(profSelect.locator('option', { hasText: 'Flanders' })).toBeAttached({ timeout: 10_000 });
     await profSelect.selectOption({ label: 'Dr. Ned Flanders' });
 
-    await expect(serviceSelect.locator('option', { hasText: 'Sesión individual' })).toBeAttached({ timeout: 10_000 });
-    await serviceSelect.selectOption({ label: 'Sesión individual' });
+    await expect(serviceSelect.locator('option', { hasText: 'Sesión de Psicología Infantil' })).toBeAttached({ timeout: 10_000 });
+    await serviceSelect.selectOption({ label: 'Sesión de Psicología Infantil' });
 
     await expect(clientSelect).toHaveValue(String(client.id));
     await expect(profSelect).toHaveValue(String(prof.id));

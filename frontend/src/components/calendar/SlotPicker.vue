@@ -8,6 +8,7 @@ import type { TimeInterval } from '@shared/ssot/domain/scheduling';
 
 const props = defineProps<{
   professionalId: number | null;
+  serviceId: number | null; // slots are sized by the chosen service; required to load them
   date: string | null; // 'YYYY-MM-DD'
   modelValue: string | null; // selected start time 'HH:MM'
 }>();
@@ -26,13 +27,13 @@ const dayOpen = ref(true);
 const loading = ref(false);
 
 watch(
-  [() => props.professionalId, () => props.date],
-  async ([profId, date]) => {
+  [() => props.professionalId, () => props.serviceId, () => props.date],
+  async ([profId, serviceId, date]) => {
     slots.value = [];
     dayOpen.value = true;
-    if (!profId || !date) return;
+    if (!profId || !serviceId || !date) return;
     loading.value = true;
-    const result = await getAvailability(`prof:${profId}`, date);
+    const result = await getAvailability(`prof:${profId}`, date as string, serviceId as number);
     loading.value = false;
     if (result.ok) {
       slots.value = result.data.slots;

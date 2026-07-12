@@ -12,7 +12,7 @@ let bizId: number;
 let pro1: number;
 let pro2: number;
 const MONDAY = '2026-06-29';
-const WEEKLY = JSON.stringify({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] });
+let serviceId: number;
 
 async function seedPro(username: string): Promise<number> {
   const r = await pool.query<{ id: string }>(
@@ -21,7 +21,16 @@ async function seedPro(username: string): Promise<number> {
     [username, `${username}@test.local`, username, bizId]
   );
   const id = Number(r.rows[0].id);
-  await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [id, WEEKLY]);
+  const block = await pool.query<{ id: string }>(
+    `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+     VALUES ($1, 'mon', '09:00', '12:00') RETURNING id`,
+    [id]
+  );
+  await pool.query(
+    `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id)
+     VALUES ($1, $2, $3)`,
+    [id, block.rows[0].id, serviceId]
+  );
   return id;
 }
 
@@ -31,6 +40,7 @@ const proposal = (professionalUserId: number) => ({
   date: MONDAY,
   start: '09:00',
   durationMinutes: 15,
+  serviceId,
   callerIsStaff: true,
 });
 
@@ -41,6 +51,14 @@ beforeAll(async () => {
 
   const biz = await pool.query<{ id: string }>(`INSERT INTO businesses (name) VALUES ('Recheck Biz') RETURNING id`);
   bizId = Number(biz.rows[0].id);
+
+  const svc = await pool.query<{ id: string }>(
+    `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+     VALUES ($1, 'Consulta', 15, '1000.00') RETURNING id`,
+    [bizId]
+  );
+  serviceId = Number(svc.rows[0].id);
+
   pro1 = await seedPro('recheck_pro1');
   pro2 = await seedPro('recheck_pro2');
 });

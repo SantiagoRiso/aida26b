@@ -67,9 +67,10 @@ const APPOINTMENT_STATES = [
 export const APPOINTMENT_STATE_VALUES = new Set<string>(APPOINTMENT_STATES.map((s) => s.value));
 
 export const schedulingTables = {
-  // Weekly pattern for exactly one owner (professional XOR resource, DB-enforced). business_id
-  // is derived via the owner. No DELETE grant, so delete is withheld.
-  schedules: {
+  // One working block for exactly one owner (professional XOR resource, DB-enforced). Several
+  // blocks per owner/weekday express morning+afternoon. business_id is derived via the owner.
+  // A professional edits own blocks; a granted receptionist edits granted ones; admin all.
+  schedule_blocks: {
     columns: {
       id: pkColumn,
       professional_user_id: {
@@ -91,32 +92,135 @@ export const schedulingTables = {
         sortable: false,
         foreignKey: { table: 'resources', valueField: 'id', labelField: 'name' },
       },
-      weekly: {
+      weekday: {
         type: 'string',
-        label: { es: 'Horario Semanal', en: 'Weekly Hours' },
-        input: 'textarea',
-        validator: { nullable: true },
+        label: { es: 'Día', en: 'Weekday' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: true,
+        options: [
+          { value: 'mon', label: { es: 'Lunes', en: 'Monday' } },
+          { value: 'tue', label: { es: 'Martes', en: 'Tuesday' } },
+          { value: 'wed', label: { es: 'Miércoles', en: 'Wednesday' } },
+          { value: 'thu', label: { es: 'Jueves', en: 'Thursday' } },
+          { value: 'fri', label: { es: 'Viernes', en: 'Friday' } },
+          { value: 'sat', label: { es: 'Sábado', en: 'Saturday' } },
+          { value: 'sun', label: { es: 'Domingo', en: 'Sunday' } },
+        ],
+      },
+      start_time: {
+        type: 'string',
+        label: { es: 'Hora Inicio', en: 'Start Time' },
+        validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
+        filterable: false,
+        sortable: true,
+      },
+      end_time: {
+        type: 'string',
+        label: { es: 'Hora Fin', en: 'End Time' },
+        validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
         filterable: false,
         sortable: false,
       },
     },
     pk: 'id',
-    uiName: { es: 'Horario', en: 'Schedule' },
-    title: { es: 'Horarios', en: 'Schedules' },
-    addButtonLabel: { es: 'Agregar Horario', en: 'Add Schedule' },
-    crud: { create: true, read: true, update: true, delete: false },
-    // Business is derived via whichever owner is set (professional or resource).
+    uiName: { es: 'Bloque de Horario', en: 'Schedule Block' },
+    title: { es: 'Bloques de Horario', en: 'Schedule Blocks' },
+    addButtonLabel: { es: 'Agregar Bloque', en: 'Add Block' },
+    crud: { create: true, read: true, update: true, delete: true },
     businessJoin: {
       paths: [
         { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
         { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
       ],
     },
+    ownership: { ownerColumn: 'professional_user_id', role: 'Professional' },
+    grantScope: {
+      role: 'Receptionist',
+      grantTable: 'calendar_grants',
+      grantRowColumn: 'professional_user_id',
+      granteeColumn: 'grantee_user_id',
+    },
     roleRequired: {
       create: ['Admin', 'Professional', 'Receptionist'],
-      read:   ['Admin', 'Professional', 'Receptionist', 'Client'],
+      read:   ['Admin', 'Professional', 'Receptionist'],
       update: ['Admin', 'Professional', 'Receptionist'],
-      delete: [],
+      delete: ['Admin', 'Professional', 'Receptionist'],
+    },
+  } satisfies TableStructure,
+
+  // Which services a professional block offers, with optional per-block duration/price overrides
+  // (null → service default). Only professional blocks have these (resource blocks are bare
+  // windows). professional_user_id is denormalized from the block so the row scopes exactly like
+  // schedule_blocks (business via the owner, own-only, grant-aware); it must equal the block owner.
+  schedule_block_services: {
+    columns: {
+      id: pkColumn,
+      professional_user_id: {
+        type: 'string',
+        label: { es: 'Profesional', en: 'Professional' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        referencesUserRole: 'Professional',
+      },
+      schedule_block_id: {
+        type: 'string',
+        label: { es: 'Bloque', en: 'Block' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'schedule_blocks', valueField: 'id', labelField: 'id' },
+      },
+      service_id: {
+        type: 'string',
+        label: { es: 'Servicio', en: 'Service' },
+        input: 'select',
+        validator: { required: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'services', valueField: 'id', labelField: 'name' },
+      },
+      duration_minutes: {
+        type: 'number',
+        label: { es: 'Duración (min)', en: 'Duration (min)' },
+        input: 'number',
+        validator: { nullable: true, integer: true, minValue: 1 },
+        filterable: false,
+        sortable: false,
+      },
+      price_ars: {
+        type: 'string',
+        label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
+        validator: { nullable: true, pattern: '^\\d+(\\.\\d{1,2})?$', patternMessage: 'must be a non-negative amount' },
+        filterable: false,
+        sortable: true,
+      },
+    },
+    pk: 'id',
+    uiName: { es: 'Servicio del Bloque', en: 'Block Service' },
+    title: { es: 'Servicios del Bloque', en: 'Block Services' },
+    addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    crud: { create: true, read: true, update: true, delete: true },
+    businessJoin: {
+      paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
+    },
+    ownership: { ownerColumn: 'professional_user_id', role: 'Professional' },
+    grantScope: {
+      role: 'Receptionist',
+      grantTable: 'calendar_grants',
+      grantRowColumn: 'professional_user_id',
+      granteeColumn: 'grantee_user_id',
+    },
+    roleRequired: {
+      create: ['Admin', 'Professional', 'Receptionist'],
+      read:   ['Admin', 'Professional', 'Receptionist'],
+      update: ['Admin', 'Professional', 'Receptionist'],
+      delete: ['Admin', 'Professional', 'Receptionist'],
     },
   } satisfies TableStructure,
 
@@ -380,10 +484,9 @@ export const schedulingTables = {
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
-// 'HH:MM' 24h, end-exclusive. A weekly schedule block also carries its own
-// granularity_minutes (per-block slot size); the free-window callers omit it.
+// 'HH:MM' 24h, end-exclusive. granularity_minutes is an optional per-interval slot size
+// some callers carry; free-window callers omit it.
 export type TimeInterval = { start: string; end: string; granularity_minutes?: number };
-export type WeeklySchedule = Partial<Record<Weekday, TimeInterval[]>>;
 
 export type ScheduleExceptionInput = {
   is_unavailable: boolean;
@@ -394,8 +497,6 @@ export type ScheduleExceptionInput = {
 };
 
 type MinuteInterval = { start: number; end: number };
-
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':');
@@ -440,154 +541,82 @@ function subtractIntervals(base: MinuteInterval[], blocks: MinuteInterval[]): Mi
   return current;
 }
 
-// Declares the intended class; the checks below are still the real gate because HTTP callers
-// hand us an unverified request-body value.
-export function validateWeeklySchedule(
-  value: WeeklySchedule,
-): { ok: true; value: WeeklySchedule } | { ok: false; errors: string[] } {
-  const errors: string[] = [];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return { ok: false, errors: ['weekly schedule must be an object keyed by weekday'] };
-  }
-  const out: WeeklySchedule = {};
-  for (const [day, raw] of Object.entries(value)) {
-    if (!(WEEKDAYS as readonly string[]).includes(day)) {
-      errors.push(`'${day}' is not a valid weekday`);
-      continue;
-    }
-    if (!Array.isArray(raw)) {
-      errors.push(`${day} must be an array of { start, end } intervals`);
-      continue;
-    }
-    const minutes: MinuteInterval[] = [];
-    for (const iv of raw) {
-      const start = iv?.start;
-      const end = iv?.end;
-      if (typeof start !== 'string' || !TIME_RE.test(start) || typeof end !== 'string' || !TIME_RE.test(end)) {
-        errors.push(`${day} has an interval with an invalid HH:MM time`);
-        continue;
-      }
-      if (toMinutes(end) <= toMinutes(start)) {
-        errors.push(`${day} interval ${start}-${end} must have end after start`);
-        continue;
-      }
-      const gran = iv?.granularity_minutes;
-      if (gran === undefined || gran === null) {
-        errors.push(`${day} interval ${start}-${end} is missing granularity_minutes`);
-      } else if (typeof gran !== 'number' || !Number.isInteger(gran) || gran <= 0) {
-        errors.push(`${day} interval ${start}-${end} granularity_minutes must be a positive integer`);
-      } else if ((toMinutes(end) - toMinutes(start)) % gran !== 0) {
-        errors.push(
-          `${day} interval ${start}-${end} length must be a whole multiple of its granularity_minutes`,
-        );
-      }
-      minutes.push({ start: toMinutes(start), end: toMinutes(end) });
-    }
-    const sorted = [...minutes].sort((a, b) => a.start - b.start);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].start < sorted[i - 1].end) {
-        errors.push(`${day} has overlapping intervals`);
-        break;
-      }
-    }
-    // Persist a normalized projection (start/end/granularity only), never the raw input — so
-    // unexpected extra keys on an interval object are not written through to the JSONB column.
-    out[day as Weekday] = raw.map((iv) => ({
-      start: iv?.start,
-      end: iv?.end,
-      granularity_minutes: iv?.granularity_minutes,
-    }));
-  }
-  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
-}
-
-function weekdayOf(date: string): Weekday {
+export function weekdayOf(date: string): Weekday {
   const [y, m, d] = date.split('-').map(Number);
   return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
 }
 
-// Weekly base for the weekday, widened by "available" exceptions then narrowed by
-// "unavailable" ones. Booked appointments are NOT subtracted here. End-exclusive.
-function availableMinuteIntervals(
-  weekday: Weekday,
-  weekly: WeeklySchedule,
+export function detectOverlap(
+  a: { startsAt: number; endsAt: number },
+  b: { startsAt: number; endsAt: number },
+): boolean {
+  return a.startsAt < b.endsAt && b.startsAt < a.endsAt;
+}
+
+// A working block already resolved for one chosen service: slot_minutes is that service's
+// effective duration inside this block (per-block override else the service default). The
+// caller resolves slot_minutes; this function only tiles.
+export type ServiceBlock = { start: string; end: string; slot_minutes: number };
+
+// Service-driven slots for one owner on one date: each block chopped into back-to-back slots of
+// its own slot_minutes (measured from block start), kept only when the slot lies fully inside the
+// available window (blocks ± exceptions) and overlaps no booked interval. End-exclusive. The slot
+// size comes from the chosen service, not a fixed per-block grid.
+// Working windows for one date after exceptions: blocks ∪ extra-hours − blocked-hours, merged.
+// Empty on a full-day off. The service-independent base the slot tiler and the free-window view
+// both build on.
+function availableMinuteWindows(
+  blocks: { start: string; end: string }[],
   exceptions: ScheduleExceptionInput[],
 ): MinuteInterval[] {
   if (exceptions.some((e) => e.is_unavailable && !e.start_time && !e.end_time)) return [];
-
-  let base = mergeIntervals(
-    (weekly[weekday] ?? []).map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) })),
-  );
-
+  const base = mergeIntervals(blocks.map((b) => ({ start: toMinutes(b.start), end: toMinutes(b.end) })));
   const additions: MinuteInterval[] = [];
-  const blocks: MinuteInterval[] = [];
+  const blockOffs: MinuteInterval[] = [];
   for (const e of exceptions) {
     if (!e.start_time || !e.end_time) continue;
     const iv = { start: toMinutes(e.start_time), end: toMinutes(e.end_time) };
     if (iv.end <= iv.start) continue;
-    (e.is_unavailable ? blocks : additions).push(iv);
+    (e.is_unavailable ? blockOffs : additions).push(iv);
   }
-
-  base = mergeIntervals([...base, ...additions]);
-  return subtractIntervals(base, blocks);
+  return subtractIntervals(mergeIntervals([...base, ...additions]), blockOffs);
 }
 
-export function computeDailyAvailability(input: {
-  date: string; // 'YYYY-MM-DD'
-  weekly: WeeklySchedule;
+// Service-independent free windows for one owner on one date: the working windows (blocks ±
+// exceptions) with booked spans removed, as contiguous intervals — NOT tiled into service-sized
+// slots. Feeds the staff calendar's availability shading and snap lattice, which have no chosen
+// service (a professional's schedule is service-agnostic; slot sizing only matters for booking).
+export function computeFreeWindows(input: {
+  blocks: { start: string; end: string }[];
   exceptions?: ScheduleExceptionInput[];
   booked?: TimeInterval[];
 }): TimeInterval[] {
-  const { date, weekly, exceptions = [], booked = [] } = input;
-  const base = availableMinuteIntervals(weekdayOf(date), weekly, exceptions);
+  const { blocks, exceptions = [], booked = [] } = input;
+  const available = availableMinuteWindows(blocks, exceptions);
   const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
-  const free = subtractIntervals(base, bookedMin);
-  return free.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
+  return subtractIntervals(available, bookedMin).map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
 }
 
-// Discrete bookable slots for one owner on one date: each weekly block chopped into
-// back-to-back fixed slots of its granularity (measured from block start), kept only when
-// the slot lies fully inside the available window (weekly ± exceptions) and overlaps no
-// booked (scheduled+requested) interval. End-exclusive throughout.
-export function computeDailySlots(input: {
-  date: string; // 'YYYY-MM-DD'
-  weekly: WeeklySchedule;
+export function computeServiceSlots(input: {
+  blocks: ServiceBlock[];
   exceptions?: ScheduleExceptionInput[];
   booked?: TimeInterval[];
 }): TimeInterval[] {
-  const { date, weekly, exceptions = [], booked = [] } = input;
-  const weekday = weekdayOf(date);
-  const available = availableMinuteIntervals(weekday, weekly, exceptions);
+  const { blocks, exceptions = [], booked = [] } = input;
+  const available = availableMinuteWindows(blocks, exceptions);
   if (available.length === 0) return [];
 
   const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
-
-  // Slots come from weekly blocks AND changed-hours "available" exceptions, each chopped at its
-  // own granularity — so an exception opening hours outside the weekly pattern is bookable.
-  const sources: Array<{ start: number; end: number; gran: number }> = [];
-  for (const block of weekly[weekday] ?? []) {
-    const gran = block.granularity_minutes;
-    if (typeof gran === 'number' && Number.isInteger(gran) && gran > 0) {
-      sources.push({ start: toMinutes(block.start), end: toMinutes(block.end), gran });
-    }
-  }
-  for (const e of exceptions) {
-    if (e.is_unavailable || !e.start_time || !e.end_time) continue;
-    const gran = e.granularity_minutes;
-    if (typeof gran === 'number' && Number.isInteger(gran) && gran > 0) {
-      sources.push({ start: toMinutes(e.start_time), end: toMinutes(e.end_time), gran });
-    }
-  }
-
   const seen = new Set<string>();
   const slots: MinuteInterval[] = [];
-  for (const src of sources) {
-    for (let s = src.start; s + src.gran <= src.end; s += src.gran) {
-      const slot = { start: s, end: s + src.gran };
-      const inside = available.some((iv) => iv.start <= slot.start && slot.end <= iv.end);
-      if (!inside) continue;
-      const clash = bookedMin.some((b) =>
-        detectOverlap({ startsAt: slot.start, endsAt: slot.end }, { startsAt: b.start, endsAt: b.end }),
+  for (const b of blocks) {
+    const gran = b.slot_minutes;
+    if (!Number.isInteger(gran) || gran <= 0) continue;
+    for (let s = toMinutes(b.start); s + gran <= toMinutes(b.end); s += gran) {
+      const slot = { start: s, end: s + gran };
+      if (!available.some((iv) => iv.start <= slot.start && slot.end <= iv.end)) continue;
+      const clash = bookedMin.some((k) =>
+        detectOverlap({ startsAt: slot.start, endsAt: slot.end }, { startsAt: k.start, endsAt: k.end }),
       );
       if (clash) continue;
       const key = `${slot.start}-${slot.end}`;
@@ -598,11 +627,4 @@ export function computeDailySlots(input: {
   }
   slots.sort((a, b) => a.start - b.start);
   return slots.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
-}
-
-export function detectOverlap(
-  a: { startsAt: number; endsAt: number },
-  b: { startsAt: number; endsAt: number },
-): boolean {
-  return a.startsAt < b.endsAt && b.startsAt < a.endsAt;
 }

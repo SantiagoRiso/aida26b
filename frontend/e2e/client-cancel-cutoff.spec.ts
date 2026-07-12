@@ -21,7 +21,7 @@ async function scheduleAt(page: Page, hoursFromNow: number, name: string): Promi
 
   const svcRes = await page.request.get('/api/services');
   const svcBody = await svcRes.json();
-  const svc = svcBody.data.find((s: { name: string }) => s.name === 'Sesión individual');
+  const svc = svcBody.data.find((s: { name: string }) => s.name === 'Sesión de Psicología Infantil');
 
   const clientsRes = await page.request.get(`/api/clients?filter_display_name=${encodeURIComponent('Homero Simpson')}`);
   const clientsBody = await clientsRes.json();

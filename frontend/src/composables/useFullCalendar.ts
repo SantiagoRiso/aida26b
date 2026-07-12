@@ -22,6 +22,7 @@ import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import { snapConfig } from '@/composables/calendarGrid';
 import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
+import { classifyException, type ExceptionRow } from '@/composables/scheduleExceptions';
 
 // 8-hue palette for multi-professional color coding (per-professional, not per-state).
 // Colors assigned deterministically by professional id so they are stable across sessions.
@@ -242,6 +243,17 @@ export function useAppointmentCalendar(
             handlers.onEventPointerDown!(appt, ev as PointerEvent, info.el),
           );
         }
+        return;
+      }
+      // Background exception overlays aren't clickable/hoverable via eventContent (FullCalendar
+      // never renders content for display:'background' events), so the reason surfaces as a
+      // native browser tooltip instead.
+      const exception = info.event.extendedProps.exception as ExceptionRow | undefined;
+      if (exception) {
+        const kind = classifyException(exception);
+        const tip = exception.reason || i18n.global.t(`exception.kind.${kind}`);
+        info.el.setAttribute('title', tip);
+        info.el.setAttribute('data-testid', `exception-${exception.id}`);
       }
     },
 

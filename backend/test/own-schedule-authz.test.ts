@@ -134,6 +134,22 @@ describe('own-schedule authz (D-16) via generic schedule_exceptions create', () 
     expect(await createException(pro1, '2026-07-11')).toBe(403);
   });
 
+  test('a DATE column is emitted verbatim as YYYY-MM-DD, not an ISO timestamp', async () => {
+    currentUser = asUser(100000, 'Admin');
+    const res = await fetch(`${baseUrl}/api/schedule_exceptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: String(pro1), resource_id: null, exception_date: '2026-08-03',
+        is_unavailable: true, start_time: null, end_time: null, granularity_minutes: null, reason: null,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { exception_date: string } };
+    // A JS Date would serialise to '2026-08-03T00:00:00.000Z'; the wire must stay a bare date.
+    expect(body.data.exception_date).toBe('2026-08-03');
+  });
+
   test('a Professional cannot reassign their own exception to a peer via PUT (CR-01)', async () => {
     currentUser = asUser(pro1, 'Professional');
     const createRes = await fetch(`${baseUrl}/api/schedule_exceptions`, {
@@ -145,7 +161,7 @@ describe('own-schedule authz (D-16) via generic schedule_exceptions create', () 
       }),
     });
     expect(createRes.status).toBe(201);
-    const id = ((await createRes.json()) as any).data.id;
+    const id = ((await createRes.json()) as { data: { id: string } }).data.id;
 
     // Reassigning the owner to a peer must be rejected — owner is identity, not editable.
     const putRes = await fetch(`${baseUrl}/api/schedule_exceptions/${id}`, {

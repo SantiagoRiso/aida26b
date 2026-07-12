@@ -4,9 +4,10 @@ import type { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
 import { guardRoute } from '../helpers';
 import type { AuthUser } from '../auth';
-import { evaluateConflicts, resolveBooking } from '../../../shared/src/ssot/domain';
+import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
-import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
+import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
+import { getBlockServiceForSlot } from '../db/scheduling';
 import { DATE_RE, HHMM_RE, addMinutes, crossesMidnight } from '../time';
 import { loadOwnerState, loadConflictInputs, toAggregatorOwner } from '../services/scheduling';
 import type { ColumnValue } from '../../../shared/src/types/types';
@@ -58,13 +59,8 @@ export function mountSchedulingRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid conflict-check input', fields);
     }
 
-    const inputs = await loadConflictInputs(pool, businessId, { professionalUserId, resourceId, date });
-    if ('error' in inputs) {
-      return sendError(res, inputs.error.status, inputs.error.code, inputs.error.message);
-    }
-
-    const serviceDefaultPriceArs = await getServiceDefaultPrice(pool, serviceId, businessId);
-    if (serviceDefaultPriceArs == null) {
+    const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
+    if (serviceDefaults == null) {
       return sendError(res, 404, 'not_found', 'Service not found in this business');
     }
 
@@ -77,19 +73,31 @@ export function mountSchedulingRoutes(
       overridePrice = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
     }
 
-    const end = addMinutes(start, durationMinutes);
+    // Resolve price/duration BEFORE the conflict so the proposed interval and the service-sized grid
+    // agree (a client's echoed body duration never wins; staff may set a sobreturno length).
+    const callerIsStaff = user.role !== 'Client';
+    const blockService = await getBlockServiceForSlot(pool, professionalUserId, serviceId, weekdayOf(date), start);
+    const { effective_price, effective_duration_minutes } = resolveBooking({
+      serviceDefaultPriceArs: serviceDefaults.default_price_ars,
+      serviceDefaultDurationMinutes: serviceDefaults.default_duration_minutes,
+      clientOverridePriceArs: overridePrice,
+      blockServicePriceArs: blockService?.price_ars ?? null,
+      blockServiceDurationMinutes: blockService?.duration_minutes ?? null,
+      sobreturnoDurationMinutes: callerIsStaff ? durationMinutes : undefined,
+    });
+
+    const inputs = await loadConflictInputs(pool, businessId, { professionalUserId, resourceId, date, serviceId });
+    if ('error' in inputs) {
+      return sendError(res, inputs.error.status, inputs.error.code, inputs.error.message);
+    }
+
+    const end = addMinutes(start, effective_duration_minutes);
     const verdict: ConflictVerdict = evaluateConflicts({
       proposed: { start, end, date },
-      callerIsStaff: user.role !== 'Client',
+      callerIsStaff,
       excludeAppointmentId,
       professional: toAggregatorOwner(inputs.professional),
       resource: inputs.resource ? toAggregatorOwner(inputs.resource) : undefined,
-    });
-
-    const { effective_price, effective_duration_minutes } = resolveBooking({
-      serviceDefaultPriceArs,
-      clientOverridePriceArs: overridePrice,
-      slotGranularityMinutes: durationMinutes,
     });
 
     return sendData(res, { ...verdict, effective_price, effective_duration_minutes });
@@ -115,9 +123,16 @@ export function mountSchedulingRoutes(
     }
 
     const kind = owner![1] === 'prof' ? 'professional' : 'resource';
+    const serviceRaw = typeof req.query.service === 'string' ? Number(req.query.service) : NaN;
+    const serviceId = Number.isInteger(serviceRaw) && serviceRaw > 0 ? serviceRaw : undefined;
+    // A service yields service-sized bookable slots (SlotPicker); with none, a professional's raw
+    // working windows are returned for the staff calendar's service-agnostic shading and snap grid.
     const excludeRaw = typeof req.query.exclude === 'string' ? Number(req.query.exclude) : NaN;
     const exclude = Number.isInteger(excludeRaw) && excludeRaw > 0 ? excludeRaw : undefined;
-    const state = await loadOwnerState(pool, businessId, { kind, id: Number(owner![2]) }, date, exclude);
+    const state = await loadOwnerState(pool, businessId, { kind, id: Number(owner![2]) }, date, {
+      serviceId,
+      excludeAppointmentId: exclude,
+    });
     if (!state) return sendError(res, 404, 'not_found', 'Owner not found in this business');
 
     // `open` distinguishes "doesn't work that day" (false) from "works but fully booked"

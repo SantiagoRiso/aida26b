@@ -19,7 +19,7 @@ test.describe('Appointment state transition via detail panel — approve a reque
 
     const profRes = await adminPage.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Edna Krabappel')}`);
     const prof = (await profRes.json()).data[0];
-    const svcRes = await adminPage.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión individual')}`);
+    const svcRes = await adminPage.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión de Psicología Infantil')}`);
     const svc = (await svcRes.json()).data[0];
     await adminContext.close();
 

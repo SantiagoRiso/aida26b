@@ -15,6 +15,7 @@ import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import Selector from '@/components/shared/Selector.vue';
 import SlotPicker from './SlotPicker.vue';
+import DateField from '@/components/shared/DateField.vue';
 import type { TimeInterval } from '@shared/ssot/domain/scheduling';
 import type { TableRecordMap } from '@shared/types/types';
 
@@ -318,18 +319,13 @@ function submit() {
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-date">{{ t('calendar.dateLabel') }} *</label>
-      <input
-        id="appt-date"
-        v-model="form.date"
-        type="date"
-        class="rounded border border-border px-3 py-2 text-sm"
-        required
-      />
+      <DateField id="appt-date" v-model="form.date" :invalid="!!fieldErrors.date" />
       <FieldError :message="fieldErrors.date" />
     </div>
 
     <SlotPicker
       :professional-id="form.professional_user_id ? Number(form.professional_user_id) : null"
+      :service-id="form.service_id ? Number(form.service_id) : null"
       :date="form.date || null"
       :model-value="form.start || null"
       @update:model-value="(v) => { form.start = v ?? '' }"

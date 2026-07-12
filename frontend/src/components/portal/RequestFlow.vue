@@ -13,6 +13,7 @@ import SlotPicker from '@/components/calendar/SlotPicker.vue';
 import Selector from '@/components/shared/Selector.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
+import DateField from '@/components/shared/DateField.vue';
 
 const emit = defineEmits<{
   success: [appt: Appointment];
@@ -23,7 +24,7 @@ const auth = useAuthStore();
 const ui = useUiStore();
 const { formatARS, formatDate } = useCurrency();
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
 const step = ref<Step>(1);
 
 type ProfRow = TableRecordMap['professionals'];
@@ -257,10 +258,6 @@ function goStep3() {
   }
 }
 
-function goStep4() {
-  step.value = 4;
-}
-
 const today = todayLocalISO();
 </script>
 
@@ -272,8 +269,6 @@ const today = todayLocalISO();
       <span :class="step >= 2 ? 'font-semibold text-accent' : ''">{{ t('portal.step2') }}</span>
       <span>›</span>
       <span :class="step >= 3 ? 'font-semibold text-accent' : ''">{{ t('portal.step3') }}</span>
-      <span>›</span>
-      <span :class="step >= 4 ? 'font-semibold text-accent' : ''">{{ t('portal.step4') }}</span>
     </div>
 
     <section v-if="step === 1" class="space-y-4">
@@ -331,18 +326,13 @@ const today = todayLocalISO();
 
       <div>
         <label class="mb-1 block text-sm font-medium" for="date-input">{{ t('portal.date') }}</label>
-        <input
-          id="date-input"
-          v-model="selectedDate"
-          type="date"
-          :min="today"
-          class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-        />
+        <DateField id="date-input" v-model="selectedDate" :min="today" />
       </div>
 
       <!-- Only free slots shown; busy time is opaque to clients. -->
       <SlotPicker
         :professional-id="selectedProfId"
+        :service-id="selectedService ? Number(selectedService.id) : null"
         :date="selectedDate"
         :model-value="selectedStart"
         @update:model-value="selectedStart = $event"
@@ -382,23 +372,6 @@ const today = todayLocalISO();
         </div>
       </div>
 
-      <div class="flex gap-3">
-        <AppButton variant="neutral" @click="step = 2">{{ t('portal.back') }}</AppButton>
-        <AppButton :disabled="!canConfirm" @click="goStep4">{{ t('portal.confirmRequest') }}</AppButton>
-      </div>
-    </section>
-
-    <section v-if="step === 4" class="space-y-4">
-      <h2 class="text-lg font-semibold">{{ t('portal.confirmRequestHeading') }}</h2>
-
-      <div class="rounded-lg border border-border bg-card p-4 space-y-2">
-        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => String(p.id) === String(selectedProfId))?.display_name }}</strong></p>
-        <p class="text-sm text-neutral">{{ t('portal.service') }}: <strong class="text-current">{{ selectedService?.name }}</strong></p>
-        <p class="text-sm text-neutral">{{ t('portal.date') }}: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
-        <p class="text-sm text-neutral">{{ t('portal.time') }}: <strong class="text-current">{{ selectedStart }}</strong></p>
-        <p class="text-sm font-semibold">{{ t('portal.estimatedCost') }}: <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : '—' }}</span></p>
-      </div>
-
       <I18nT keypath="portal.requestPendingNote" tag="p" class="text-sm text-neutral">
         <template #status>
           <strong>{{ t('status.requested') }}</strong>
@@ -406,8 +379,8 @@ const today = todayLocalISO();
       </I18nT>
 
       <div class="flex gap-3">
-        <AppButton variant="neutral" @click="step = 3">{{ t('portal.back') }}</AppButton>
-        <AppButton :loading="submitting" @click="submitRequest">
+        <AppButton variant="neutral" @click="step = 2">{{ t('portal.back') }}</AppButton>
+        <AppButton :disabled="!canConfirm" :loading="submitting" @click="submitRequest">
           {{ t('actions.requestAppointment') }}
         </AppButton>
       </div>

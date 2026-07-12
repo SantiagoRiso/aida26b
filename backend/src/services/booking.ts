@@ -1,7 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
-import { resolveBooking } from '../../../shared/src/ssot/domain';
+import { resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
-import { getServiceDefaultPrice, getClientOverridePrice } from '../db/catalog';
+import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
+import { getBlockServiceForSlot } from '../db/scheduling';
 import { resourceExistsInBusiness, clientExistsInBusiness } from '../db/appointments';
 import { withTransaction } from '../db/core';
 import { recheckConflictsInTx } from './scheduling';
@@ -27,6 +28,7 @@ export type RecheckInput = {
   date: string;
   start: string;
   durationMinutes: number;
+  serviceId: number;
   excludeAppointmentId?: number;
 };
 
@@ -62,6 +64,7 @@ export async function resolveAndLoadService(
   pool: Pool,
   businessId: number,
   body: BookingBody,
+  callerIsStaff: boolean,
 ): Promise<
   | {
       ok: true;
@@ -111,10 +114,11 @@ export async function resolveAndLoadService(
     return { ok: false, status: 422, code: 'invalid_request', message: 'Invalid appointment input', fields };
   }
 
-  const serviceDefaultPriceArs = await getServiceDefaultPrice(pool, serviceId, businessId);
-  if (serviceDefaultPriceArs == null) {
+  const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
+  if (serviceDefaults == null) {
     return { ok: false, status: 404, code: 'not_found', message: 'Service not found in this business' };
   }
+  const serviceDefaultPriceArs = serviceDefaults.default_price_ars;
 
   // Resource (when supplied) must belong to the session's business — an explicit
   // check independent of the conflict loader so a future override bypass cannot
@@ -138,10 +142,17 @@ export async function resolveAndLoadService(
     clientOverridePriceArs = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
   }
 
+  // Per-block override for the slot's block (null when off-lattice or the block doesn't offer it).
+  const blockService = await getBlockServiceForSlot(pool, professionalUserId, serviceId, weekdayOf(date), start);
+
   const { effective_price, effective_duration_minutes } = resolveBooking({
     serviceDefaultPriceArs,
+    serviceDefaultDurationMinutes: serviceDefaults.default_duration_minutes,
     clientOverridePriceArs,
-    slotGranularityMinutes: durationMinutes,
+    blockServicePriceArs: blockService?.price_ars ?? null,
+    blockServiceDurationMinutes: blockService?.duration_minutes ?? null,
+    // A staff caller may set a custom-length sobreturno; a client's echoed body duration never wins.
+    sobreturnoDurationMinutes: callerIsStaff ? durationMinutes : undefined,
   });
 
   const startsAt = buildStartsAt(date, start);

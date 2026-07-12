@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
+import DateField from '@/components/shared/DateField.vue';
 import type { Appointment } from '@/api/appointments';
 
 // The form pulls its dropdowns and the professional→service map from the CRUD list API;
@@ -35,7 +36,10 @@ const baseAppointment: Appointment = {
   name: 'Sesión - Homero',
   description: null,
   price: '6500.00',
-} as unknown as Appointment;
+  override_conflict: false,
+  override_actor_id: null,
+  staff_note: null,
+};
 
 describe('AppointmentForm reschedule prefill', () => {
   beforeEach(() => {
@@ -56,13 +60,13 @@ describe('AppointmentForm reschedule prefill', () => {
     const expectedDate = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 
     const start = wrapper.get('#appt-start').element as HTMLInputElement;
-    const date = wrapper.get('#appt-date').element as HTMLInputElement;
     const duration = wrapper.get('#appt-duration').element as HTMLInputElement;
 
     // The regression this guards: reschedule used to leave the start field empty, blocking save.
     expect(start.value).not.toBe('');
     expect(start.value).toBe(expectedTime);
-    expect(date.value).toBe(expectedDate);
+    // The date is bound to the shared DateField as an ISO 'yyyy-MM-dd' string.
+    expect(wrapper.findComponent(DateField).props('modelValue')).toBe(expectedDate);
     expect(duration.value).toBe('50');
   });
 

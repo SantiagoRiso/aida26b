@@ -40,9 +40,11 @@ export interface AvailabilityResult {
 export async function getAvailability(
   owner: string,
   date: string,
+  service?: number,  // required by the API for a professional owner (slots are service-sized)
   exclude?: number,
 ): Promise<ApiResult<AvailabilityResult>> {
   const params = new URLSearchParams({ owner, date });
+  if (service !== undefined) params.set('service', String(service));
   if (exclude !== undefined) params.set('exclude', String(exclude));
   return apiFetch<AvailabilityResult>(`/availability?${params.toString()}`);
 }

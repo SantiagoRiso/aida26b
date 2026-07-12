@@ -7,6 +7,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountSchedulingRoutes } from '../src/routes/scheduling';
 import type { AuthUser } from '../src/auth';
+import type { ConflictVerdict, Conflict } from '../../shared/src/ssot/domain';
 
 // Minimal app with pass-through guards and a swappable current user — createApp mounts only
 // generic routes, so the workflow endpoints are exercised via their own mount function here.
@@ -20,9 +21,16 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
+type ConflictCheckData = ConflictVerdict & { effective_price: string; effective_duration_minutes: number };
+type Envelope = {
+  success?: boolean;
+  data?: ConflictCheckData;
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
+
 async function request(
   path: string,
-  { method = 'GET', body }: { method?: string; body?: unknown } = {}
+  { method = 'GET', body }: { method?: string; body?: Record<string, string | number | boolean | null> } = {}
 ) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -30,7 +38,7 @@ async function request(
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
+  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
 }
 
 const MONDAY = '2026-06-29';
@@ -88,10 +96,16 @@ beforeAll(async () => {
   );
   serviceId = Number(svc.rows[0].id);
 
-  await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [
-    proId,
-    JSON.stringify({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 15 }] }),
-  ]);
+  const block = await pool.query<{ id: string }>(
+    `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+     VALUES ($1, 'mon', '09:00', '12:00') RETURNING id`,
+    [proId]
+  );
+  await pool.query(
+    `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id)
+     VALUES ($1, $2, $3)`,
+    [proId, block.rows[0].id, serviceId]
+  );
 
   // A scheduled appointment 10:00–10:15 local (UTC-3). ends_at is set by the DB trigger.
   await pool.query(
@@ -143,7 +157,7 @@ describe('POST /api/conflict-check', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.data.can_save).toBe(false);
-    expect(res.body.data.conflicts.some((c: any) => c.type === 'professional_overlap')).toBe(true);
+    expect(res.body.data.conflicts.some((c: Conflict) => c.type === 'professional_overlap')).toBe(true);
   });
 
   test('overlap is end-exclusive: the 10:15 slot adjacent to a 10:00-10:15 booking is free', async () => {
@@ -153,7 +167,7 @@ describe('POST /api/conflict-check', () => {
       body: { professional_user_id: proId, service_id: serviceId, date: MONDAY, start: '10:15', duration_minutes: 15 },
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.conflicts.some((c: any) => c.type === 'professional_overlap')).toBe(false);
+    expect(res.body.data.conflicts.some((c: Conflict) => c.type === 'professional_overlap')).toBe(false);
     expect(res.body.data.can_save).toBe(true);
   });
 
@@ -184,7 +198,7 @@ describe('POST /api/conflict-check', () => {
 describe('GET /api/availability', () => {
   test('returns discrete free slots excluding the booked slot', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
     expect(res.status).toBe(200);
     expect(res.body.data.date).toBe(MONDAY);
     const slots = res.body.data.slots as Array<{ start: string; end: string }>;
@@ -199,6 +213,19 @@ describe('GET /api/availability', () => {
     expect(res.status).toBe(422);
   });
 
+  test('a professional with no service returns raw working windows minus booked (staff shading)', async () => {
+    currentUser = staffUser();
+    // No `service` param: the endpoint must not 422; it returns the 09:00–12:00 block as contiguous
+    // free windows split around the booked 10:00–10:15, not service-sized 15-min slots.
+    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.open).toBe(true);
+    expect(res.body.data.slots).toEqual([
+      { start: '09:00', end: '10:00' },
+      { start: '10:15', end: '12:00' },
+    ]);
+  });
+
   test('exclude=<id> frees the excluded appointment\'s own slot', async () => {
     currentUser = staffUser();
 
@@ -210,10 +237,10 @@ describe('GET /api/availability', () => {
     );
     const excludeId = appt.rows[0].id;
 
-    const without = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    const without = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
     expect(without.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
 
-    const withExclude = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&exclude=${excludeId}`);
+    const withExclude = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=${excludeId}`);
     const slots = withExclude.body.data.slots as Array<{ start: string; end: string }>;
     expect(slots.find((s) => s.start === '10:00' && s.end === '10:15')).toBeTruthy();
     expect(slots.length).toBe(12); // full grid, nothing booked once the only appt is excluded
@@ -221,7 +248,7 @@ describe('GET /api/availability', () => {
 
   test('a non-numeric exclude is ignored (no 422)', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&exclude=nope`);
+    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=nope`);
     expect(res.status).toBe(200);
     expect(res.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
   });
@@ -230,7 +257,7 @@ describe('GET /api/availability', () => {
     currentUser = staffUser();
 
     // Tuesday is not in the weekly schedule: closed.
-    const closed = await request(`/api/availability?owner=prof:${proId}&date=2026-06-30`);
+    const closed = await request(`/api/availability?owner=prof:${proId}&date=2026-06-30&service=${serviceId}`);
     expect(closed.body.data.open).toBe(false);
     expect(closed.body.data.slots).toHaveLength(0);
 
@@ -241,21 +268,27 @@ describe('GET /api/availability', () => {
       [bizId]
     );
     const pro2Id = Number(pro2.rows[0].id);
-    await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [
-      pro2Id,
-      JSON.stringify({ mon: [{ start: '09:00', end: '09:15', granularity_minutes: 15 }] }),
-    ]);
+    const pro2Block = await pool.query<{ id: string }>(
+      `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+       VALUES ($1, 'mon', '09:00', '09:15') RETURNING id`,
+      [pro2Id]
+    );
+    await pool.query(
+      `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id)
+       VALUES ($1, $2, $3)`,
+      [pro2Id, pro2Block.rows[0].id, serviceId]
+    );
     await pool.query(
       `INSERT INTO appointments (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price)
        VALUES ($1, $2, $3, '2026-06-29 09:00:00-03', 15, 'scheduled', 1000.00)`,
       [clientId, pro2Id, serviceId]
     );
 
-    const full = await request(`/api/availability?owner=prof:${pro2Id}&date=${MONDAY}`);
+    const full = await request(`/api/availability?owner=prof:${pro2Id}&date=${MONDAY}&service=${serviceId}`);
     expect(full.body.data.open).toBe(true);
     expect(full.body.data.slots).toHaveLength(0);
 
-    const free = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    const free = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
     expect(free.body.data.open).toBe(true);
   });
 });

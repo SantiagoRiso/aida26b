@@ -18,12 +18,28 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-async function apptReq(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown) {
+type ReqBody = Record<string, string | number | boolean | null>;
+// Wire shape: fields come back over JSON, not coerced to the app-side TableRecordMap types
+// (e.g. starts_at is a string here, not a Date).
+type AppointmentRow = {
+  id: string;
+  client_user_id: string;
+  professional_user_id: string;
+  starts_at: string;
+};
+type Envelope = {
+  success?: boolean;
+  data?: Record<string, string | number | boolean | null> | AppointmentRow[];
+  meta?: { page: number; limit: number; total: number };
+  error?: { code: string; message: string; fields?: Record<string, string> };
+};
+
+async function apptReq(method: 'GET' | 'POST' | 'PATCH', path: string, body?: ReqBody) {
   const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const response = await fetch(`${baseUrl}${path}`, opts);
   const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as any) : null };
+  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
 }
 
 let bizId: number;
@@ -53,8 +69,6 @@ const mondayAt = (hhmm: string) => `${MONDAY} ${hhmm}:00 ${BA_TZ}`;
 // complete/no_show and cancellation-cutoff "now" guards.
 const farFutureDate = new Date(Date.now() + 365 * 24 * 3600 * 1000);
 const FAR_FUTURE_TS = farFutureDate.toISOString();
-
-const WEEKLY = JSON.stringify({ mon: [{ start: '09:00', end: '12:00', granularity_minutes: 30 }] });
 
 async function seedUser(
   username: string,
@@ -99,17 +113,23 @@ beforeAll(async () => {
   recepNoGrantId = await seedUser('appt_recep_no', 'Receptionist');
   recepWithGrantId = await seedUser('appt_recep_yes', 'Receptionist');
 
-  await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2)`, [
-    proId,
-    WEEKLY,
-  ]);
-
   const svc = await pool.query<{ id: string }>(
     `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
      VALUES ($1, 'Consulta', 30, '1500.00') RETURNING id`,
     [bizId],
   );
   svcId = Number(svc.rows[0].id);
+
+  const block = await pool.query<{ id: string }>(
+    `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+     VALUES ($1, 'mon', '09:00', '12:00') RETURNING id`,
+    [proId],
+  );
+  await pool.query(
+    `INSERT INTO schedule_block_services (professional_user_id, schedule_block_id, service_id)
+     VALUES ($1, $2, $3)`,
+    [proId, block.rows[0].id, svcId],
+  );
 
   await pool.query(
     `INSERT INTO calendar_grants (professional_user_id, grantee_user_id) VALUES ($1, $2)`,
@@ -138,7 +158,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-function requestBody(overrides: Record<string, unknown> = {}) {
+function requestBody(overrides: ReqBody = {}) {
   return {
     professional_user_id: proId,
     service_id: svcId,
@@ -703,7 +723,7 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(clientId, 'Client');
     const res = await apptReq('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(Number(row.client_user_id)).toBe(clientId);
@@ -716,7 +736,7 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(client2Id, 'Client');
     const res = await apptReq('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     for (const row of rows) {
       expect(Number(row.client_user_id)).not.toBe(clientId);
     }
@@ -726,7 +746,7 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq('GET', `/api/appointments?professional_user_id=${proId}`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     for (const row of rows) {
       expect(Number(row.professional_user_id)).toBe(proId);
     }
@@ -738,7 +758,7 @@ describe('GET /api/appointments — paginated list', () => {
     const dayAfter = new Date(farFutureDate.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
     const res = await apptReq('GET', `/api/appointments?date_from=${dayBefore}&date_to=${dayAfter}T23:59:59Z`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     expect(rows.length).toBeGreaterThan(0);
     const from = new Date(`${dayBefore}T00:00:00Z`).getTime();
     const to = new Date(`${dayAfter}T23:59:59Z`).getTime();
@@ -753,7 +773,7 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
     const res = await apptReq('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(Number(row.professional_user_id)).toBe(proId);
@@ -771,7 +791,7 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     for (let i = 1; i < rows.length; i++) {
       expect(new Date(rows[i].starts_at).getTime()).toBeGreaterThanOrEqual(
         new Date(rows[i - 1].starts_at).getTime(),
@@ -780,8 +800,6 @@ describe('GET /api/appointments — paginated list', () => {
   });
 
   test('audit events are written in the same transaction as lifecycle actions (D-14)', async () => {
-    await pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, $2) ON CONFLICT (professional_user_id) DO NOTHING`, [proId, WEEKLY]);
-
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq('POST', '/api/appointments/schedule', {
       professional_user_id: proId,
@@ -835,7 +853,7 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq('GET', `/api/appointments?client_user_id=${clientId}`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
   });
@@ -844,7 +862,7 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
     currentUser = asUser(clientId, 'Client');
     const res = await apptReq('GET', `/api/appointments?client_user_id=${client2Id}`);
     expect(res.status).toBe(200);
-    const rows = res.body.data as any[];
+    const rows = res.body?.data as AppointmentRow[];
     // The param is ignored for a Client — they still only ever see their own rows.
     for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
   });

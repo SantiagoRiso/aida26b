@@ -234,7 +234,8 @@ test('scheduler-schema: all required scheduler tables exist', async () => {
       'services',
       'client_professional_services',
       'professional_services',
-      'schedules',
+      'schedule_blocks',
+      'schedule_block_services',
       'schedule_exceptions',
       'appointments',
       'ledger_entries',
@@ -334,7 +335,8 @@ test('scheduler-schema: direct-owner tables (resources, services, audit_events) 
       'appointments',
       'ledger_entries',
       'calendar_grants',
-      'schedules',
+      'schedule_blocks',
+      'schedule_block_services',
       'schedule_exceptions',
       'client_professional_services',
     ];
@@ -429,7 +431,7 @@ test('scheduler-schema: FK constraints are valid — businesses and auth.users r
     assert.equal(await fkExists(pool, 'public', 'appointments', 'client_user_id'),                    true, 'appointments.client_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'appointments', 'professional_user_id'),              true, 'appointments.professional_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'calendar_grants', 'professional_user_id'),           true, 'calendar_grants.professional_user_id FK must exist');
-    assert.equal(await fkExists(pool, 'public', 'schedules', 'professional_user_id'),                 true, 'schedules.professional_user_id FK must exist');
+    assert.equal(await fkExists(pool, 'public', 'schedule_blocks', 'professional_user_id'),           true, 'schedule_blocks.professional_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'ledger_entries', 'client_user_id'),                  true, 'ledger_entries.client_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'client_professional_services', 'client_user_id'),    true, 'client_professional_services.client_user_id FK must exist');
     assert.equal(await fkExists(pool, 'public', 'client_professional_services', 'professional_user_id'), true, 'client_professional_services.professional_user_id FK must exist');
@@ -658,7 +660,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
     try {
       assert.equal(await columnExists(pool, 'public', 'appointments',               'client_role'),       false, 'appointments must not have client_role column');
       assert.equal(await columnExists(pool, 'public', 'appointments',               'professional_role'), false, 'appointments must not have professional_role column');
-      assert.equal(await columnExists(pool, 'public', 'schedules',                  'professional_role'), false, 'schedules must not have professional_role column');
+      assert.equal(await columnExists(pool, 'public', 'schedule_blocks',            'professional_role'), false, 'schedule_blocks must not have professional_role column');
       assert.equal(await columnExists(pool, 'public', 'schedule_exceptions',        'professional_role'), false, 'schedule_exceptions must not have professional_role column');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'client_role'),     false, 'client_professional_services must not have client_role column');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'professional_role'), false, 'client_professional_services must not have professional_role column');
@@ -675,7 +677,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
       const checks: Array<[string, string, string]> = [
         ['appointments',                 'client_user_id',        'users'],
         ['appointments',                 'professional_user_id',  'users'],
-        ['schedules',                    'professional_user_id',  'users'],
+        ['schedule_blocks',              'professional_user_id',  'users'],
         ['schedule_exceptions',          'professional_user_id',  'users'],
         ['client_professional_services', 'client_user_id',        'users'],
         ['client_professional_services', 'professional_user_id',  'users'],
@@ -710,7 +712,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
 
       await expect(
         pool.query(
-          `INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, '{}')`,
+          `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time) VALUES ($1, 'mon', '09:00', '12:00')`,
           [clientId]
         )
       ).rejects.toThrow();
@@ -741,7 +743,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
     try {
       assert.equal(await columnExists(pool, 'public', 'appointments',               'client_user_id'),        true,  'appointments must have client_user_id');
       assert.equal(await columnExists(pool, 'public', 'appointments',               'professional_user_id'),  true,  'appointments must have professional_user_id');
-      assert.equal(await columnExists(pool, 'public', 'schedules',                  'professional_user_id'),  true,  'schedules must have professional_user_id');
+      assert.equal(await columnExists(pool, 'public', 'schedule_blocks',            'professional_user_id'),  true,  'schedule_blocks must have professional_user_id');
       assert.equal(await columnExists(pool, 'public', 'schedule_exceptions',        'professional_user_id'),  true,  'schedule_exceptions must have professional_user_id');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'client_user_id'),      true,  'client_professional_services must have client_user_id');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'professional_user_id'), true, 'client_professional_services must have professional_user_id');
@@ -750,7 +752,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
 
       assert.equal(await columnExists(pool, 'public', 'appointments',               'client_id'),          false, 'appointments must not have old client_id column');
       assert.equal(await columnExists(pool, 'public', 'appointments',               'professional_id'),    false, 'appointments must not have old professional_id column');
-      assert.equal(await columnExists(pool, 'public', 'schedules',                  'professional_id'),    false, 'schedules must not have old professional_id column');
+      assert.equal(await columnExists(pool, 'public', 'schedule_blocks',            'professional_id'),    false, 'schedule_blocks must not have old professional_id column');
       assert.equal(await columnExists(pool, 'public', 'schedule_exceptions',        'professional_id'),    false, 'schedule_exceptions must not have old professional_id column');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'client_id'),        false, 'client_professional_services must not have old client_id column');
       assert.equal(await columnExists(pool, 'public', 'client_professional_services', 'professional_id'),  false, 'client_professional_services must not have old professional_id column');
@@ -779,7 +781,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
     }
   });
 
-  test('DB trigger: schedules.professional_user_id rejects a non-Professional', async () => {
+  test('DB trigger: schedule_blocks.professional_user_id rejects a non-Professional', async () => {
     await setup();
     try {
       const biz = await pool.query<{ id: string }>(
@@ -795,7 +797,7 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
       const clientId = r.rows[0].id;
 
       await expect(
-        pool.query(`INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, '{}')`, [clientId])
+        pool.query(`INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time) VALUES ($1, 'mon', '09:00', '12:00')`, [clientId])
       ).rejects.toThrow();
 
       const p = await pool.query<{ id: string }>(
@@ -806,10 +808,10 @@ describe('scheduler-schema: centralized person model — plain FKs, no generated
       );
       const proId = p.rows[0].id;
       const ok = await pool.query(
-        `INSERT INTO schedules (professional_user_id, weekly) VALUES ($1, '{}') RETURNING id`,
+        `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time) VALUES ($1, 'mon', '09:00', '12:00') RETURNING id`,
         [proId]
       );
-      assert.equal(ok.rows.length, 1, 'Professional user must be accepted in schedules.professional_user_id');
+      assert.equal(ok.rows.length, 1, 'Professional user must be accepted in schedule_blocks.professional_user_id');
     } finally {
       await teardown();
     }

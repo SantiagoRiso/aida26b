@@ -27,6 +27,14 @@ const auth = useAuthStore();
 const ui = useUiStore();
 const { formatDateTime, formatARS } = useCurrency();
 
+// The weekday NAME follows the language toggle (it's a label), unlike the numeric date which stays
+// es-AR. Capitalized so it reads as a label in both languages ("Lunes" / "Monday").
+function formatWeekday(iso: string): string {
+  const locale = ui.language === 'en' ? 'en-US' : 'es-AR';
+  const name = new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(new Date(iso));
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 const appointments = ref<Appointment[]>([]);
 const loading = ref(false);
 
@@ -188,11 +196,14 @@ const past = computed(() =>
                 <div class="flex items-center gap-2 flex-wrap">
                   <StatusBadge :state="appt.state" />
                   <span class="text-sm font-semibold">
-                    {{ appt.state === 'requested' ? t('portal.pendingApproval') : formatDateTime(appt.starts_at) }}
+                    {{ formatWeekday(appt.starts_at) }} {{ formatDateTime(appt.starts_at) }}
                   </span>
                 </div>
-                <p v-if="appt.state !== 'requested'" class="text-xs text-neutral">
+                <p class="text-xs text-neutral">
                   {{ formatDateTime(appt.starts_at) }} · {{ appt.duration_minutes }}min
+                </p>
+                <p v-if="appt.state === 'requested'" class="text-xs italic text-neutral">
+                  {{ t('portal.pendingApproval') }}
                 </p>
                 <p class="text-sm">
                   {{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}
@@ -250,7 +261,7 @@ const past = computed(() =>
           >
             <div class="flex items-center gap-3 flex-wrap">
               <StatusBadge :state="appt.state" />
-              <span class="text-sm">{{ formatDateTime(appt.starts_at) }}</span>
+              <span class="text-sm">{{ formatWeekday(appt.starts_at) }} {{ formatDateTime(appt.starts_at) }}</span>
               <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}</span>
               <span class="text-sm text-neutral">{{ formatARS(appt.price) }}</span>
             </div>
@@ -287,11 +298,11 @@ const past = computed(() =>
         <p class="text-xs text-neutral">{{ t('portal.service') }}</p>
         <p class="font-semibold">{{ serviceNameFor(selectedAppt) }}</p>
       </div>
-      <div v-if="selectedAppt.state !== 'requested'">
+      <div>
         <p class="text-xs text-neutral">{{ t('portal.dateTime') }}</p>
-        <p class="font-semibold">{{ formatDateTime(selectedAppt.starts_at) }} · {{ selectedAppt.duration_minutes }}min</p>
+        <p class="font-semibold">{{ formatWeekday(selectedAppt.starts_at) }} {{ formatDateTime(selectedAppt.starts_at) }} · {{ selectedAppt.duration_minutes }}min</p>
       </div>
-      <div v-else>
+      <div v-if="selectedAppt.state === 'requested'">
         <p class="text-xs text-neutral">{{ t('portal.state') }}</p>
         <p class="font-semibold">{{ t('portal.pendingApproval') }}</p>
       </div>
