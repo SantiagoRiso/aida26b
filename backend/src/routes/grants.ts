@@ -11,6 +11,7 @@ import {
   findGrantWithBusiness,
   deleteCalendarGrant,
   listCalendarGrants,
+  listGrantableStaff,
 } from '../db/grants';
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -126,6 +127,24 @@ export function mountGrantRoutes(
     });
 
     return sendData(res, { id: grant.id, revoked: true });
+  }));
+
+  // Static path registered ahead of any /:id route so it can never be captured as a param.
+  app.get('/api/calendar-grants/grantable-staff', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+
+    // Only those who can create grants need this list: Admin (any) or a Professional (own calendar).
+    if (user.role !== 'Admin' && user.role !== 'Professional') {
+      return sendError(res, 403, 'forbidden', 'Insufficient role');
+    }
+    // Grants are tenant-bound; a super-admin (null business) has no business context.
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'A business context is required');
+    }
+
+    const staff = await listGrantableStaff(pool, user.business_id);
+
+    return sendList(res, staff, { page: 1, limit: staff.length, total: staff.length });
   }));
 
   app.get('/api/calendar-grants', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {

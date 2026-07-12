@@ -9,6 +9,7 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import PasswordInput from '@/components/shared/PasswordInput.vue';
+import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 import type { ColumnValue, TableRecordMap } from '@shared/types/types';
 
 const { label } = useLabel();
@@ -174,6 +175,9 @@ async function saveSvc(row: SvcOverride) {
       </div>
     </section>
 
-    <!-- Mount point: "Quién gestiona mi calendario" grants panel — Section 3 (staff & client mgmt). -->
+    <section class="rounded-lg border border-border bg-card p-5 space-y-4">
+      <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Quién gestiona mi calendario', en: 'Who manages my calendar' }) }}</h2>
+      <CalendarGrantsSection :professional-user-id="auth.user?.id ?? null" />
+    </section>
   </div>
 </template>

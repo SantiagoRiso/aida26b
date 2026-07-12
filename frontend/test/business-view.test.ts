@@ -21,6 +21,14 @@ vi.mock('@/api/crud', () => ({
   createRow: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   updateRow: vi.fn().mockResolvedValue({ ok: true, data: {} }),
 }));
+// The calendar-permissions accordion mounts CalendarGrantsSection even while collapsed (v-show);
+// stub so it doesn't hit the network offline.
+vi.mock('@/api/grants', () => ({
+  listGrants: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  listGrantableStaff: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  createGrant: vi.fn().mockResolvedValue({ ok: true, data: { id: '1' } }),
+  revokeGrant: vi.fn().mockResolvedValue({ ok: true, data: { id: '1', revoked: true } }),
+}));
 
 function makeI18n() {
   return createI18n({ legacy: false, locale: 'es', messages: { es, en } });

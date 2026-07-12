@@ -22,6 +22,14 @@ function installTestProxy() {
 let server: http.Server;
 let baseUrl: string;
 
+type CalendarGrantListRow = {
+  professional_user_id: string;
+  grantee_username: string;
+  grantee_role: string;
+  professional_name: string;
+};
+type GrantableStaffListRow = { id: string; username: string; role: string; display_name: string | null };
+
 type ReqBody = Record<string, string | number | boolean | null>;
 type Envelope = {
   success?: boolean;
@@ -416,6 +424,56 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
     const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
+  });
+
+  test('Listed grants are enriched with grantee_username, grantee_role, professional_name', async () => {
+    const res = await request(
+      `/api/calendar-grants?professional_user_id=${p1UserId}`,
+      { cookie: adminCookie }
+    );
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: CalendarGrantListRow[] }).data;
+    expect(data).toHaveLength(1);
+    expect(data[0].grantee_username).toBe('recep1');
+    expect(data[0].grantee_role).toBe('Receptionist');
+    // seedUser sets display_name = username.
+    expect(data[0].professional_name).toBe('p1user');
+  });
+});
+
+describe('Grantable staff listing (GET /api/calendar-grants/grantable-staff)', () => {
+  test('Admin sees the business\'s Receptionists + Professionals, not Clients or Admins', async () => {
+    const res = await request('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    const ids = data.map((r) => String(r.id));
+    expect(ids.sort()).toEqual([String(p1UserId), String(p2UserId), String(receptionistUserId)].sort());
+    expect(ids).not.toContain(String(clientUserId));
+    expect(data.every((r) => r.role === 'Receptionist' || r.role === 'Professional')).toBe(true);
+  });
+
+  test('Professional sees the same staff set as Admin (own-calendar grant management)', async () => {
+    const res = await request('/api/calendar-grants/grantable-staff', { cookie: p1Cookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    expect(data).toHaveLength(3);
+  });
+
+  test('Cross-business staff are never returned', async () => {
+    const res = await request('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    expect(data.map((r) => String(r.id))).not.toContain(String(otherBizProfUserId));
+  });
+
+  test('Receptionist → 403', async () => {
+    const res = await request('/api/calendar-grants/grantable-staff', { cookie: receptionistCookie });
+    expect(res.status).toBe(403);
+  });
+
+  test('Client → 403', async () => {
+    const res = await request('/api/calendar-grants/grantable-staff', { cookie: clientCookie });
+    expect(res.status).toBe(403);
   });
 });
 

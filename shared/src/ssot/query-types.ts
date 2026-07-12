@@ -1,12 +1,38 @@
-import type { TableRecordMap, ColumnValue } from '../types/types';
+import type { ColumnValue } from '../types/types';
 
 // Result shapes that are not full-table records (projections and joins). One home for the
 // vocabulary; per-domain db modules import their return types from here. Rows stay snake_case
 // to match the wire contract the routes already emit.
 
-// calendar_grants as returned by the grant endpoints: the SSoT record plus the DB-managed
-// created_at timestamp, which is not part of the generic column set.
-export type CalendarGrantRow = TableRecordMap['calendar_grants'] & { created_at: string };
+// calendar_grants as returned by the grant endpoints, enriched with the grantee's and
+// professional's names so the UI can render a grant list without a second lookup.
+export interface CalendarGrantRow {
+  id: string;
+  professional_user_id: string;
+  grantee_user_id: string;
+  created_at: string;
+  grantee_username: string;
+  grantee_role: string;
+  professional_name: string;
+}
+
+// Staff eligible to receive a calendar grant (Receptionist/Professional), for the
+// grant-picker UI. Sourced from the secret-free auth.users_directory view.
+export interface GrantableStaffRow {
+  id: string;
+  username: string;
+  role: string;
+  display_name: string | null;
+}
+
+// The raw row RETURNING gives immediately after INSERT, before the name-enrichment join
+// listCalendarGrants applies on read.
+export type CalendarGrantCreatedRow = {
+  id: string;
+  professional_user_id: string;
+  grantee_user_id: string;
+  created_at: string;
+};
 
 export type ActiveProfessionalRow = { user_id: string; business_id: string | null };
 export type ActiveUserRow = { id: string; role: string; business_id: string | null };

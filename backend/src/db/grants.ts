@@ -1,6 +1,11 @@
 import type { Pool, PoolClient } from 'pg';
 import { query, queryOne } from './core';
-import type { CalendarGrantRow, GrantBusinessRow } from '../../../shared/src/ssot/query-types';
+import type {
+  CalendarGrantRow,
+  CalendarGrantCreatedRow,
+  GrantBusinessRow,
+  GrantableStaffRow,
+} from '../../../shared/src/ssot/query-types';
 
 // The one place that knows the calendar_grants table shape (professional_user_id, grantee_user_id).
 // Every grant-based authorization check routes through here so a change to the grant model is a
@@ -38,8 +43,8 @@ export function insertCalendarGrant(
   db: Queryable,
   professionalUserId: string,
   granteeUserId: string,
-): Promise<CalendarGrantRow | null> {
-  return queryOne<CalendarGrantRow>(
+): Promise<CalendarGrantCreatedRow | null> {
+  return queryOne<CalendarGrantCreatedRow>(
     db,
     `INSERT INTO calendar_grants (professional_user_id, grantee_user_id)
      VALUES ($1, $2)
@@ -65,8 +70,9 @@ export async function deleteCalendarGrant(db: Queryable, grantId: number): Promi
   await query(db, `DELETE FROM calendar_grants WHERE id = $1`, [grantId]);
 }
 
-// Grants in a business, created-order. `onlyProfessionalId` narrows to one calendar
-// (a Professional sees only their own; admins/receptionists may filter by professional).
+// Grants in a business, created-order, enriched with the grantee's and professional's names
+// so the UI can render a grant list without a second lookup. `onlyProfessionalId` narrows to
+// one calendar (a Professional sees only their own; admins/receptionists may filter by professional).
 export function listCalendarGrants(
   db: Queryable,
   opts: { businessId: number; onlyProfessionalId?: number | string },
@@ -79,11 +85,31 @@ export function listCalendarGrants(
   }
   return query<CalendarGrantRow>(
     db,
-    `SELECT g.id, g.professional_user_id, g.grantee_user_id, g.created_at
+    `SELECT g.id, g.professional_user_id, g.grantee_user_id, g.created_at,
+            gu.username     AS grantee_username,
+            gu.role         AS grantee_role,
+            pu.display_name AS professional_name
        FROM calendar_grants g
-       JOIN auth.users u ON u.id = g.professional_user_id
+       JOIN auth.users u  ON u.id  = g.professional_user_id
+       JOIN auth.users gu ON gu.id = g.grantee_user_id
+       JOIN auth.users pu ON pu.id = g.professional_user_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY g.created_at`,
     params,
+  );
+}
+
+// Staff who may be granted a calendar (grantee must be Receptionist or Professional),
+// scoped to the business. Names come from the secret-free directory view.
+export function listGrantableStaff(db: Queryable, businessId: number): Promise<GrantableStaffRow[]> {
+  return query<GrantableStaffRow>(
+    db,
+    `SELECT id, username, role, display_name
+       FROM auth.users_directory
+      WHERE business_id = $1
+        AND is_active = true
+        AND role IN ('Receptionist', 'Professional')
+      ORDER BY display_name NULLS LAST, username`,
+    [businessId],
   );
 }

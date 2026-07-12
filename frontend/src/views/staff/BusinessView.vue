@@ -10,6 +10,8 @@ import FieldError from '@/components/shared/FieldError.vue';
 import CrudSection from '@/components/generic/CrudSection.vue';
 import AccordionSection from '@/components/shared/AccordionSection.vue';
 import ResourcesSection from '@/components/settings/ResourcesSection.vue';
+import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
+import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -17,6 +19,8 @@ const ui = useUiStore();
 const { label } = useLabel();
 
 const businessId = computed(() => auth.user?.business_id);
+
+const grantProfessionalId = ref<number | null>(null);
 
 const cutoffHours = ref<number | null>(null);
 const minDays = ref<number | null>(null);
@@ -146,6 +150,13 @@ async function saveSettings() {
 
     <AccordionSection :title="label({ es: 'Recursos', en: 'Resources' })">
       <ResourcesSection />
+    </AccordionSection>
+
+    <AccordionSection :title="label({ es: 'Permisos de calendario', en: 'Calendar permissions' })">
+      <div class="space-y-4">
+        <ProfessionalPicker v-model="grantProfessionalId" />
+        <CalendarGrantsSection :professional-user-id="grantProfessionalId" />
+      </div>
     </AccordionSection>
   </div>
 </template>
