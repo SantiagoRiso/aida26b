@@ -33,6 +33,11 @@ const columns = computed(() => {
   return Object.entries(cols).map(([key, col]) => ({ key, col }));
 });
 
+// Surrogate keys carry no business meaning to a viewer — hide them from display.
+const visibleColumns = computed(() =>
+  columns.value.filter(({ key }) => key !== tableSpec.value.pk && key !== 'business_id'),
+);
+
 const userRole = computed(() => auth.user?.role);
 
 function canCreate(): boolean {
@@ -112,6 +117,30 @@ function onPageChange(p: number) {
   reload();
 }
 
+// Resolved once per table switch: FK columns render the referenced row's label, not its id.
+const fkLabelMaps = ref<Record<string, Map<string, string>>>({});
+
+async function loadFkLabels() {
+  const cols = tableSpec.value.columns as Record<string, ColumnDef>;
+  const fkTables = new Map<string, { valueField: string; labelField: string }>();
+  for (const col of Object.values(cols)) {
+    if (col.foreignKey) fkTables.set(col.foreignKey.table, { valueField: col.foreignKey.valueField, labelField: col.foreignKey.labelField });
+  }
+  const maps: Record<string, Map<string, string>> = {};
+  await Promise.all([...fkTables].map(async ([table, { valueField, labelField }]) => {
+    const res = await listRows(table as TableKey, { limit: 500 });
+    const m = new Map<string, string>();
+    if (res.ok) {
+      for (const r of res.data as Array<Record<string, ColumnValue>>) {
+        const v = r[valueField]; const l = r[labelField];
+        if (v != null && l != null) m.set(String(v), String(l));
+      }
+    }
+    maps[table] = m;
+  }));
+  fkLabelMaps.value = maps;
+}
+
 watch(() => props.tableKey, () => {
   page.value = 1;
   sortField.value = '';
@@ -119,6 +148,7 @@ watch(() => props.tableKey, () => {
   rows.value = [];
   total.value = 0;
   reload();
+  loadFkLabels();
 }, { immediate: true });
 
 const addLabel = computed(() => {
@@ -148,6 +178,17 @@ function formatCell(value: ColumnValue | undefined): string {
 function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined {
   return (row as Partial<Record<string, ColumnValue>>)[key];
 }
+
+// FK cells show the referenced row's label; a read-restricted or missing target falls
+// back to the raw id rather than hiding the value entirely.
+function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): string {
+  if (col.foreignKey) {
+    const v = cellValue(row, key);
+    if (v == null || v === '') return '—';
+    return fkLabelMaps.value[col.foreignKey.table]?.get(String(v)) ?? `#${v}`;
+  }
+  return formatCell(cellValue(row, key));
+}
 </script>
 
 <template>
@@ -174,7 +215,7 @@ function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined
         <thead class="bg-surface text-left">
           <tr>
             <th
-              v-for="{ key, col } in columns"
+              v-for="{ key, col } in visibleColumns"
               :key="key"
               class="px-4 py-3 font-semibold"
               :class="col.sortable ? 'cursor-pointer select-none hover:bg-border' : ''"
@@ -193,14 +234,14 @@ function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined
         <tbody>
           <template v-if="loading">
             <tr>
-              <td :colspan="columns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
+              <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <Skeleton variant="row" :rows="4" />
               </td>
             </tr>
           </template>
           <template v-else-if="rows.length === 0">
             <tr>
-              <td :colspan="columns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
+              <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <EmptyState
                   :heading="label({ es: `No hay ${tableTitle} para mostrar`, en: `No ${tableTitle} to show` })"
                   :body="label({ es: 'Probá ajustar los filtros o creá el primero.', en: 'Try adjusting the filters, or create the first one.' })"
@@ -216,8 +257,8 @@ function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined
               :class="canUpdate() ? 'cursor-pointer' : ''"
               @click="canUpdate() ? emit('edit', row) : undefined"
             >
-              <td v-for="{ key } in columns" :key="key" class="px-4 py-3">
-                {{ formatCell(cellValue(row, key)) }}
+              <td v-for="{ key, col } in visibleColumns" :key="key" class="px-4 py-3">
+                {{ cellDisplay(row, key, col) }}
               </td>
               <td v-if="hasActionsColumn" class="px-4 py-3 text-right whitespace-nowrap">
                 <slot name="row-actions" :row="row" />
