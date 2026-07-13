@@ -53,6 +53,13 @@ defineExpose({
   padding: 1px 3px;
 }
 
+/* Only appointment labels are white on a professional colour, so only they get the crispening shadow.
+   Exception overlays (holidays / days-off) and the sobreturno ghost use dark text on a light wash — a
+   shadow there would just muddy them. */
+:deep([class*='appt-state-'] .fc-ev-compact) {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
 :deep(.fc-ev-compact .fc-ev-time) {
   font-weight: 600;
 }
@@ -62,13 +69,35 @@ defineExpose({
   padding: 0;
 }
 
+/* FullCalendar rings each timegrid event with a 1px white halo (--fc-page-bg-color) to separate
+   neighbours. It's invisible on the white grid but shows as a faint white border over the grey past
+   wash. The events already carry a 1px coloured border, so drop the ring. The radius matches the slots
+   (8px) so every block on the grid shares one corner radius.
+   The 1.5px side margin pairs with the events-container override below: together they inset every
+   appointment 3px per side — matching the slots — while giving two appointments that share a slot a
+   real 3px gap at the split instead of touching. */
+:deep(.fc-timegrid-event) {
+  box-shadow: none;
+  border-radius: 8px !important;
+  margin: 0 1.5px;
+}
+
+/* FC insets the foreground-event container 2.5% on the right (headroom for its overlap halo) but 2px
+   on the left, and the background slots get neither — so appointments sat several px narrower and
+   off-centre versus the slot beneath them. Pin it to a symmetric 1.5px; the per-event margin adds the
+   other 1.5px, landing every appointment on the slots' 3px inset. */
+:deep(.fc-timegrid-col-events) {
+  margin: 0 1.5px !important;
+}
+
+
 /* Permanent dotted outline for every real schedule slot inside a working block. Sits behind the
    appointments; makes the block's slot structure visible without cluttering the time axis. */
 :deep(.fc-slot-outline) {
-  background: transparent !important;
-  border: 1px dashed rgba(100, 116, 139, 0.45);
-  border-radius: 6px;
-  margin: 1px 3px;
+  background: rgba(37, 99, 235, 0.16) !important;
+  border: 1.5px dashed rgb(37, 99, 235);
+  border-radius: 8px;
+  margin: 1.5px 3px;
   opacity: 1 !important;
 }
 
@@ -77,6 +106,16 @@ defineExpose({
    hour LABELS on the axis stay; only the horizontal grid lines go. */
 :deep(.fc-timegrid-slot) {
   border-top-color: transparent;
+}
+
+/* Sobreturno hover preview: a translucent dashed block so it reads as a placement ghost, not a real
+   turno. As a foreground event it shoves overlapping turnos aside (slotEventOverlap:false). */
+:deep(.fc-sobreturno-preview) {
+  background: rgba(37, 99, 235, 0.16) !important;
+  border: 1.5px dashed rgb(37, 99, 235) !important;
+  border-radius: 8px !important;
+  color: rgb(30, 58, 138) !important;
+  box-shadow: none !important;
 }
 
 /* Valid drop target while dragging: a distinct dotted, rounded box per open slot. */
@@ -107,11 +146,24 @@ defineExpose({
 :deep(.fc-res-closed) {
   background: repeating-linear-gradient(
     45deg,
-    rgba(100, 116, 139, 0.16),
-    rgba(100, 116, 139, 0.16) 6px,
-    rgba(100, 116, 139, 0.05) 6px,
-    rgba(100, 116, 139, 0.05) 12px
+    rgba(71, 85, 105, 0.11),
+    rgba(71, 85, 105, 0.11) 6px,
+    rgba(71, 85, 105, 0.03) 6px,
+    rgba(71, 85, 105, 0.03) 12px
   ) !important;
+  opacity: 1 !important;
+}
+
+/* Calendar-background occupancy washes: confirmed-booked is a flat slate; client-requested is amber.
+   Blue is reserved for bookable/interactive slots (outline, hover, sobreturno ghost), so occupied
+   stays off-blue. Off-hours is the grey hatch above — a pattern, not a flat fill. */
+:deep(.fc-slot-occupied) {
+  background: rgba(100, 116, 139, 0.2) !important;
+  opacity: 1 !important;
+}
+
+:deep(.fc-slot-requested-bg) {
+  background: rgba(234, 179, 8, 0.26) !important;
   opacity: 1 !important;
 }
 
@@ -144,6 +196,19 @@ defineExpose({
   opacity: 1 !important;
 }
 
+/* Business-wide closure (feriado) — stronger, bolder diagonal hatch than a single professional's
+   day-off wash, so a clinic-wide holiday is unmistakable on every calendar (incl. the mixed view). */
+:deep(.fc-closure) {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(220, 38, 38, 0.28),
+    rgba(220, 38, 38, 0.28) 8px,
+    rgba(220, 38, 38, 0.14) 8px,
+    rgba(220, 38, 38, 0.14) 16px
+  ) !important;
+  opacity: 1 !important;
+}
+
 /* Month day cells read as actionable. The timegrid cursor is driven from JS (onGridPointerMove)
    instead, so past slots don't show the actionable pointer. */
 :deep(.fc-daygrid-day-frame) {
@@ -153,10 +218,10 @@ defineExpose({
 /* Week/day: a single slot cell under the cursor (driven by pointer geometry, not CSS :hover,
    since the timegrid has no per-cell element). Month: the whole day cell, which is one cell. */
 :deep(.fc-slot-hover) {
-  background: rgba(37, 99, 235, 0.13) !important;
-  border: 1px solid rgba(37, 99, 235, 0.55);
-  border-radius: 6px;
-  margin: 1px 3px;
+  background: rgba(37, 99, 235, 0.16) !important;
+  border: 1.5px dashed rgb(37, 99, 235);
+  border-radius: 8px;
+  margin: 1.5px 3px;
   opacity: 1 !important;
 }
 
@@ -183,12 +248,71 @@ defineExpose({
 
 /* The flat, in-place drag preview (createDragGhost) — its look is set inline; nothing to add here. */
 
-/* State is visible on the block itself, not only in the detail panel:
-   pending requests read as tentative; closed states fade out. */
+/* Three occupancy states must read at a glance:
+   - not-working time      → the grey diagonal hatch (fc-res-closed): a low-contrast background wash.
+   - already occupied      → the solid professional-colour block (the default appointment fill).
+   - requested by a client → the same colour candy-striped (opposite diagonal to the not-working hatch)
+                             + dashed border, so it reads as tentative / awaiting confirmation rather
+                             than a taken slot. Closed states fade out. */
+/* Requested (client-pending): the calendar background carries the main colour cue; the block adds a
+   dashed border and very light, wide candy stripes — a whisper, not the earlier heavy pattern. */
 :deep(.appt-state-requested) {
   border-style: dashed;
   border-width: 2px;
-  opacity: 0.85;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0) 8px,
+    rgba(255, 255, 255, 0.13) 8px,
+    rgba(255, 255, 255, 0.13) 16px
+  );
+}
+
+/* Sobreturno (override / overbooked): an alarm-clock badge in the bottom-right and a light-blue time,
+   so an overbooked slot is obvious on any professional colour. Anchors to FC's positioned event. */
+:deep(.appt-sobreturno)::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  right: 2px;
+  width: 13px;
+  height: 13px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='13' r='8'/%3E%3Cpath d='M12 9v4l2 2'/%3E%3Cpath d='M5 3 2 6'/%3E%3Cpath d='m22 6-3-3'/%3E%3Cpath d='m6.4 18.7-2.9 2.9'/%3E%3Cpath d='m17.6 18.7 2.9 2.9'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.7));
+  pointer-events: none;
+  z-index: 1;
+}
+
+:deep(.appt-sobreturno .fc-ev-time) {
+  color: #7dd3fc;
+}
+
+/* In conflict with time off (a closure or the professional's licencia): a red ring + a bottom-left "!"
+   badge so it stands out on any professional colour for triage. Bottom-left keeps clear of the event's
+   time/title (top-left) and the sobreturno badge (bottom-right) — a turno can carry both. Computed;
+   clears when the time off goes. */
+:deep(.appt-in-conflict) {
+  box-shadow: 0 0 0 2px rgb(220, 38, 38) !important;
+}
+
+:deep(.appt-in-conflict)::before {
+  content: '!';
+  position: absolute;
+  bottom: 1px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: rgb(220, 38, 38);
+  border-radius: 9999px;
+  pointer-events: none;
+  z-index: 2;
 }
 
 :deep(.appt-state-canceled),

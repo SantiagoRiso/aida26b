@@ -36,7 +36,7 @@ describe('ScheduleEditorView', () => {
   it('shows the empty hint until a professional is picked', async () => {
     const wrapper = mount(ScheduleEditorView, mountOpts());
     await flushPromises();
-    expect(wrapper.text()).toContain('Elegí un profesional');
+    expect(wrapper.text()).toContain('Seleccionar un profesional');
     const select = wrapper.get('select');
     expect(select.findAll('option').length).toBe(3); // placeholder + 2 professionals
   });

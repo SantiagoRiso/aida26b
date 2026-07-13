@@ -16,6 +16,9 @@ import FieldError from '@/components/shared/FieldError.vue';
 import Selector from '@/components/shared/Selector.vue';
 import SlotPicker from './SlotPicker.vue';
 import DateField from '@/components/shared/DateField.vue';
+import TimeField from '@/components/shared/TimeField.vue';
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
+import { useLabel } from '@/composables/useLabel';
 import type { TimeInterval } from '@shared/ssot/domain/scheduling';
 import type { TableRecordMap } from '@shared/types/types';
 
@@ -28,6 +31,12 @@ const props = defineProps<{
   prefillResourceId?: number;
   // Booking for a specific client (e.g. from the client detail page) — locks the client field.
   prefillClientId?: number;
+  // Opened from a sobreturno (off-lattice) calendar click — start in manual hora/duración mode so the
+  // clicked time is bookable without a matching published slot.
+  prefillSobreturno?: boolean;
+  // Duration to seed a sobreturno with — the effective duration of the service offered by the block
+  // nearest the clicked time, so the manual field starts at a sensible value.
+  prefillDuration?: number;
 }>();
 
 const emit = defineEmits<{
@@ -37,6 +46,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { label } = useLabel();
 const toast = useToast();
 const auth = useAuthStore();
 
@@ -71,19 +81,39 @@ const form = reactive<FormState>({
   resource_id: String(props.prefillResourceId ?? props.appointment?.resource_id ?? ''),
   date: props.prefillDate ?? apptStart?.date ?? '',
   start: props.prefillStart ?? apptStart?.time ?? '',
-  duration_minutes: String(props.appointment?.duration_minutes ?? ''),
+  duration_minutes: String(props.appointment?.duration_minutes ?? props.prefillDuration ?? ''),
   name: props.appointment?.name ?? '',
   description: props.appointment?.description ?? '',
 });
 
+// Local-wall-clock day math for the date stepper. form.date is 'yyyy-MM-dd'; step by whole days via
+// local midnight so a timezone offset can't drift the day (new Date('yyyy-MM-dd') would parse as UTC).
+function ymd(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+const todayISO = ymd(new Date());
+function addDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return ymd(new Date(y, m - 1, d + days));
+}
+// New bookings can't move into the past; reschedule edits around an existing (possibly past) date,
+// so the today-clamp applies to the create flow only.
+// TODO booking-window clamp: clamp to min/max_booking_days once enforced at save time.
+function stepDate(days: number): void {
+  const next = addDaysISO(form.date || todayISO, days);
+  form.date = !props.appointment && next < todayISO ? todayISO : next;
+}
+const atMinDate = computed(() => !props.appointment && (form.date || todayISO) <= todayISO);
+
 const fieldErrors = ref<Record<string, string>>({});
 const saving = ref(false);
 
-// Hora/duración are normally derived from the picked slot; manual entry is the
-// sobreturno path (booking outside published availability) and stays collapsed.
-// Reschedule opens manual entry; a clicked cell auto-selects its slot (see SlotPicker), so a bare
-// prefilled start no longer forces manual mode.
-const manualOpen = ref(!!props.appointment);
+// Hora/duración are normally derived from the picked slot; the sobreturno checkbox switches to manual
+// entry (booking outside published availability). Reschedule and a sobreturno calendar click open it
+// checked — a reschedule edits the time directly, and a sobreturno's time is off the lattice so there
+// is no slot to pick.
+const sobreturno = ref(!!props.appointment || !!props.prefillSobreturno);
 
 // Options carry the DNI so staff can find a client by document number, not just name.
 interface ClientOption { value: string; label: string; dni: string }
@@ -179,8 +209,6 @@ function handleSlotSelected(slot: TimeInterval) {
   const [sh, sm] = slot.start.split(':').map(Number);
   const [eh, em] = slot.end.split(':').map(Number);
   form.duration_minutes = String((eh * 60 + em) - (sh * 60 + sm));
-  // Reflect the pick in the normal time/duration inputs rather than a separate summary control.
-  manualOpen.value = true;
 }
 
 function buildBody(override: boolean): ScheduleBody {
@@ -227,7 +255,7 @@ async function save(override = false): Promise<void> {
     toast.error(props.appointment ? 'rescheduleFailed' : 'scheduleFailed');
     if (result.fields) {
       fieldErrors.value = result.fields;
-      if (result.fields.start || result.fields.duration_minutes) manualOpen.value = true;
+      if (result.fields.start || result.fields.duration_minutes) sobreturno.value = true;
     }
     return;
   }
@@ -245,10 +273,10 @@ function submit() {
   // A time is required either via slot pick or manual entry — surface the manual
   // section instead of letting a hidden required input silently block submission.
   if (!form.start || !form.duration_minutes) {
-    manualOpen.value = true;
+    sobreturno.value = true;
     fieldErrors.value = {
-      ...(!form.start ? { start: 'Elegí un horario o cargalo manualmente' } : {}),
-      ...(!form.duration_minutes ? { duration_minutes: 'Requerido' } : {}),
+      ...(!form.start ? { start: label({ es: 'Seleccionar un horario', en: 'Select a time' }) } : {}),
+      ...(!form.duration_minutes ? { duration_minutes: label({ es: 'Requerido', en: 'Required' }) } : {}),
     };
     return;
   }
@@ -267,7 +295,7 @@ function submit() {
         :model-value="form.client_user_id || null"
         :options="clientOptions"
         :extra-search="(o) => o.dni"
-        placeholder="Buscar cliente…"
+        :placeholder="label({ es: 'Buscar cliente…', en: 'Search client…' })"
         @update:model-value="form.client_user_id = $event ?? ''"
       >
         <template #option="{ option, selected }">
@@ -287,7 +315,7 @@ function submit() {
         searchable
         :model-value="form.professional_user_id || null"
         :options="availableProfessionalOptions"
-        placeholder="Buscar profesional…"
+        :placeholder="label({ es: 'Buscar profesional…', en: 'Search professional…' })"
         @update:model-value="form.professional_user_id = $event ?? ''"
       />
       <FieldError :message="fieldErrors.professional_user_id" />
@@ -299,7 +327,7 @@ function submit() {
         id="appt-service"
         :model-value="form.service_id || null"
         :options="availableServiceOptions"
-        placeholder="— Seleccionar servicio —"
+        :placeholder="label({ es: '— Seleccionar servicio —', en: '— Select service —' })"
         @update:model-value="form.service_id = $event ?? ''"
       />
       <FieldError :message="fieldErrors.service_id" />
@@ -312,18 +340,43 @@ function submit() {
         v-model="form.resource_id"
         class="rounded border border-border px-3 py-2 text-sm"
       >
-        <option value="">— Sin sala —</option>
+        <option value="">{{ label({ es: '— Sin sala —', en: '— No room —' }) }}</option>
         <option v-for="opt in resourceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
     </div>
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-date">{{ t('calendar.dateLabel') }} *</label>
-      <DateField id="appt-date" v-model="form.date" :invalid="!!fieldErrors.date" />
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="atMinDate"
+          :aria-label="label({ es: 'Día anterior', en: 'Previous day' })"
+          @click="stepDate(-1)"
+        >
+          <ChevronLeftIcon class="h-5 w-5" />
+        </button>
+        <DateField id="appt-date" v-model="form.date" :invalid="!!fieldErrors.date" class="flex-1" />
+        <button
+          type="button"
+          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface"
+          :aria-label="label({ es: 'Día siguiente', en: 'Next day' })"
+          @click="stepDate(1)"
+        >
+          <ChevronRightIcon class="h-5 w-5" />
+        </button>
+      </div>
       <FieldError :message="fieldErrors.date" />
     </div>
 
+    <label class="inline-flex items-center gap-2 self-start text-sm font-medium cursor-pointer">
+      <input v-model="sobreturno" type="checkbox" class="h-4 w-4 accent-accent" />
+      {{ t('calendar.fineMode') }}
+    </label>
+
     <SlotPicker
+      v-if="!sobreturno"
       :professional-id="form.professional_user_id ? Number(form.professional_user_id) : null"
       :service-id="form.service_id ? Number(form.service_id) : null"
       :date="form.date || null"
@@ -332,24 +385,10 @@ function submit() {
       @slot-selected="handleSlotSelected"
     />
 
-    <button
-      v-if="!manualOpen"
-      type="button"
-      class="self-start text-xs text-accent hover:underline"
-      @click="manualOpen = true"
-    >
-      Cargar horario manualmente (sobreturno)
-    </button>
-
-    <div v-if="manualOpen" class="flex gap-3">
+    <div v-if="sobreturno" class="flex gap-3">
       <div class="flex flex-col gap-1 flex-1">
-        <label class="text-sm font-semibold" for="appt-start">Hora *</label>
-        <input
-          id="appt-start"
-          v-model="form.start"
-          type="time"
-          class="rounded border border-border px-3 py-2 text-sm"
-        />
+        <label class="text-sm font-semibold" for="appt-start">{{ t('calendar.timeLabel') }} *</label>
+        <TimeField id="appt-start" v-model="form.start" :invalid="!!fieldErrors.start" />
         <FieldError :message="fieldErrors.start" />
       </div>
       <div class="flex flex-col gap-1 flex-1">
@@ -366,7 +405,7 @@ function submit() {
     </div>
 
     <div class="flex flex-col gap-1">
-      <label class="text-sm font-semibold" for="appt-name">Título</label>
+      <label class="text-sm font-semibold" for="appt-name">{{ label({ es: 'Título', en: 'Title' }) }}</label>
       <input
         id="appt-name"
         v-model="form.name"
@@ -377,7 +416,7 @@ function submit() {
     </div>
 
     <div class="flex flex-col gap-1">
-      <label class="text-sm font-semibold" for="appt-desc">Descripción</label>
+      <label class="text-sm font-semibold" for="appt-desc">{{ label({ es: 'Descripción', en: 'Description' }) }}</label>
       <textarea
         id="appt-desc"
         v-model="form.description"

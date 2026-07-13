@@ -6,6 +6,7 @@ import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
 import DateField from '@/components/shared/DateField.vue';
+import TimeField from '@/components/shared/TimeField.vue';
 import type { Appointment } from '@/api/appointments';
 
 // The form pulls its dropdowns and the professional→service map from the CRUD list API;
@@ -39,6 +40,7 @@ const baseAppointment: Appointment = {
   override_conflict: false,
   override_actor_id: null,
   staff_note: null,
+  conflict_ignored: false,
 };
 
 describe('AppointmentForm reschedule prefill', () => {
@@ -59,12 +61,12 @@ describe('AppointmentForm reschedule prefill', () => {
     const expectedTime = `${p(d.getHours())}:${p(d.getMinutes())}`;
     const expectedDate = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 
-    const start = wrapper.get('#appt-start').element as HTMLInputElement;
     const duration = wrapper.get('#appt-duration').element as HTMLInputElement;
 
     // The regression this guards: reschedule used to leave the start field empty, blocking save.
-    expect(start.value).not.toBe('');
-    expect(start.value).toBe(expectedTime);
+    const startValue = wrapper.findComponent(TimeField).props('modelValue');
+    expect(startValue).not.toBe('');
+    expect(startValue).toBe(expectedTime);
     // The date is bound to the shared DateField as an ISO 'yyyy-MM-dd' string.
     expect(wrapper.findComponent(DateField).props('modelValue')).toBe(expectedDate);
     expect(duration.value).toBe('50');
@@ -76,7 +78,54 @@ describe('AppointmentForm reschedule prefill', () => {
       global: { plugins: [makeI18n()] },
     });
     await flushPromises();
-    expect(wrapper.find('#appt-start').exists()).toBe(true);
+    expect(wrapper.findComponent(TimeField).exists()).toBe(true);
     expect(wrapper.find('#appt-duration').exists()).toBe(true);
+  });
+});
+
+describe('AppointmentForm day stepper', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  // Same local-wall-clock math the component uses, so the expectations hold whenever the suite runs.
+  const p = (n: number) => String(n).padStart(2, '0');
+  const ymd = (d: Date) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const addDaysISO = (iso: string, days: number) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return ymd(new Date(y, m - 1, d + days));
+  };
+  const today = ymd(new Date());
+  const dateOf = (w: ReturnType<typeof mount>) => w.findComponent(DateField).props('modelValue');
+  const isDisabled = (w: ReturnType<typeof mount>, aria: string) =>
+    (w.get(`button[aria-label="${aria}"]`).element as HTMLButtonElement).disabled;
+
+  it('new booking: ◀ is disabled at today, ▶ advances, and ◀ clamps back to today', async () => {
+    const wrapper = mount(AppointmentForm, { global: { plugins: [makeI18n()] } });
+    await flushPromises();
+
+    // Empty date → the floor is today, so stepping back is blocked.
+    expect(isDisabled(wrapper, 'Día anterior')).toBe(true);
+
+    await wrapper.get('button[aria-label="Día siguiente"]').trigger('click');
+    expect(dateOf(wrapper)).toBe(addDaysISO(today, 1));
+    expect(isDisabled(wrapper, 'Día anterior')).toBe(false);
+
+    await wrapper.get('button[aria-label="Día anterior"]').trigger('click');
+    expect(dateOf(wrapper)).toBe(today);
+    // Back at the floor: disabled again, and it never steps into the past.
+    expect(isDisabled(wrapper, 'Día anterior')).toBe(true);
+  });
+
+  it('reschedule: stepping is not clamped (edits around an existing, possibly past, date)', async () => {
+    // baseAppointment sits on 2026-07-07 — in the past relative to "now".
+    const wrapper = mount(AppointmentForm, {
+      props: { appointment: baseAppointment },
+      global: { plugins: [makeI18n()] },
+    });
+    await flushPromises();
+
+    expect(isDisabled(wrapper, 'Día anterior')).toBe(false);
+    const before = dateOf(wrapper) as string;
+    await wrapper.get('button[aria-label="Día anterior"]').trigger('click');
+    expect(dateOf(wrapper)).toBe(addDaysISO(before, -1));
   });
 });

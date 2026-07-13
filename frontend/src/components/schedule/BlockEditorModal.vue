@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Dialog, DialogPanel, DialogTitle, TransitionRoot, TransitionChild } from '@headlessui/vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import TimeField from '@/components/shared/TimeField.vue';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
 
@@ -89,20 +90,17 @@ const liveMinutes = computed(() => {
             <div v-if="block" class="mt-4 flex flex-wrap gap-4">
               <label class="flex flex-col gap-1 text-sm">
                 {{ t('schedule.startLabel') }}
-                <input type="time" step="60" v-model="startTime" data-testid="block-edit-start"
-                       class="min-h-[44px] rounded-md border border-border bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+                <TimeField v-model="startTime" />
               </label>
               <label class="flex flex-col gap-1 text-sm">
                 {{ t('schedule.endLabel') }}
-                <input type="time" step="60" v-model="endTime" data-testid="block-edit-end"
-                       class="min-h-[44px] rounded-md border border-border bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+                <TimeField v-model="endTime" />
               </label>
             </div>
 
             <BlockServicesPanel
               v-if="block && showServices"
               ref="servicesRef"
-              :key="block.id"
               :block="block"
               :block-minutes="liveMinutes"
               class="mt-5 border-t border-border pt-4"

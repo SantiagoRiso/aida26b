@@ -46,3 +46,56 @@ describe('ProfessionalPicker', () => {
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([3]);
   });
 });
+
+function mountAllPicker(modelValue: number | null = null) {
+  return mount(ProfessionalPicker, { props: { modelValue, allowAll: true }, global: { plugins: [makeI18n()] } });
+}
+
+// allowAll turns the picker into a filter: an "all professionals" (null) entry, no auto-lock, and
+// it hides itself when filtering would be meaningless (a single calendar in scope).
+describe('ProfessionalPicker (allowAll filter mode)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('prepends an "all" option and starts unfiltered when several professionals exist', async () => {
+    vi.mocked(listRows).mockResolvedValue({
+      ok: true,
+      data: [{ id: '3', display_name: 'Dra. Marge' }, { id: '4', display_name: 'Dr. Ned' }],
+    });
+    const wrapper = mountAllPicker();
+    await flushPromises();
+
+    const options = wrapper.get('select').findAll('option');
+    // disabled placeholder + "all" + the two professionals
+    expect(options.length).toBe(4);
+    expect(wrapper.text()).toContain('Todos los profesionales');
+    // Defaults to "all" — no filter forced on the caller.
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
+  it('hides itself when a single professional is in scope (filtering is meaningless)', async () => {
+    vi.mocked(listRows).mockResolvedValue({
+      ok: true,
+      data: [{ id: '3', display_name: 'Dra. Marge' }],
+    });
+    const wrapper = mountAllPicker();
+    await flushPromises();
+
+    expect(wrapper.find('select').exists()).toBe(false);
+    expect(wrapper.find('label').exists()).toBe(false);
+  });
+
+  it('emits the numeric id when a professional is picked and null for "all"', async () => {
+    vi.mocked(listRows).mockResolvedValue({
+      ok: true,
+      data: [{ id: '3', display_name: 'Dra. Marge' }, { id: '4', display_name: 'Dr. Ned' }],
+    });
+    const wrapper = mountAllPicker();
+    await flushPromises();
+
+    await wrapper.get('select').setValue('4');
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([4]);
+
+    await wrapper.get('select').setValue('all');
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([null]);
+  });
+});

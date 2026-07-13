@@ -33,6 +33,42 @@ export interface AvailabilityResult {
   slots: TimeInterval[];
   // False = the owner does not work that day; true with empty slots = fully booked.
   open: boolean;
+  // Set for a Client asking about a date beyond the booking window: no slots, distinct from "closed".
+  outside_window?: boolean;
+}
+
+export interface BookingWindowResult {
+  min_date: string;
+  max_date: string | null;
+}
+
+// Concrete booking-window bounds for one (professional, service), so the portal can clamp the date
+// picker. Client-facing; staff callers may ignore the window.
+export async function getBookingWindow(
+  professional: number,
+  service: number,
+): Promise<ApiResult<BookingWindowResult>> {
+  const params = new URLSearchParams({ professional: String(professional), service: String(service) });
+  return apiFetch<BookingWindowResult>(`/booking-window?${params.toString()}`);
+}
+
+// How many open, future turnos a not-yet-saved time-off would put in conflict — powers the
+// warn-then-confirm dialog. Naming professional_user_id previews a personal exception; omitting it
+// previews a whole-business closure. Absent start/end ⇒ a full-day block.
+export interface TimeOffPreviewBody {
+  date: string;
+  start?: string | null;
+  end?: string | null;
+  professional_user_id?: number;
+}
+
+export async function previewTimeOffConflicts(
+  body: TimeOffPreviewBody,
+): Promise<ApiResult<{ count: number }>> {
+  return apiFetch<{ count: number }>('/time-off/conflict-preview', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 // owner = 'prof:<id>' or 'res:<id>'. exclude drops that appointment from "booked" so a dragged

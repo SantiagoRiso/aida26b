@@ -27,7 +27,7 @@ const editable = computed(() => true);
 const selectedBlockId = ref<string | null>(null);
 const editorOpen = ref(false);
 const confirmDeleteOpen = ref(false);
-// The services panel targets the same clicked block Task 3 arms for delete — derived so there's
+// The services panel targets the same clicked block that's armed for delete — derived so there's
 // one selection state, not two that can drift (e.g. a move/resize updating stale panel data).
 const selectedBlock = computed(() => blocks.value.find((b) => b.id === selectedBlockId.value) ?? null);
 

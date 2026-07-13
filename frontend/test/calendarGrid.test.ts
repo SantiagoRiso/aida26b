@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  gcd, gcdAll, computeSnapMinutes, mergeIntervals, computeValidStarts, resolveDrop, snapDragMinutes,
+  gcd, gcdAll, computeSnapMinutes, mergeIntervals, tileFreeWindows, resolveDrop, snapDragMinutes,
   exceedsEndOfDay, complementIntervals,
 } from '@/composables/calendarGrid';
 
@@ -87,7 +87,7 @@ describe('mergeIntervals', () => {
   });
 });
 
-describe('computeValidStarts', () => {
+describe('tileFreeWindows', () => {
   const slots = [
     { start: '09:00', end: '09:30' },
     { start: '09:30', end: '10:00' },
@@ -95,12 +95,17 @@ describe('computeValidStarts', () => {
   ];
 
   it('30-min appointment fits at every free slot start', () => {
-    expect(computeValidStarts(slots, 30)).toEqual(['09:00', '09:30', '10:30']);
+    expect(tileFreeWindows(slots, 30)).toEqual(['09:00', '09:30', '10:30']);
   });
 
   it('60-min appointment fits only where two slots are contiguous', () => {
     // 09:00 → 10:00 fits (09:00-10:00 merged). 09:30 → 10:30 does NOT (gap). 10:30 → 11:30 does NOT.
-    expect(computeValidStarts(slots, 60)).toEqual(['09:00']);
+    expect(tileFreeWindows(slots, 60)).toEqual(['09:00']);
+  });
+
+  it('tiles an open free window into back-to-back slots, not just its start', () => {
+    // A single wide window must offer every fitting position, not only 09:20 (the "only first slot" bug).
+    expect(tileFreeWindows([{ start: '09:20', end: '11:50' }], 50)).toEqual(['09:20', '10:10', '11:00']);
   });
 });
 

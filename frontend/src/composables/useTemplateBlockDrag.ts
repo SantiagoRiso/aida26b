@@ -98,7 +98,6 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
     ev.preventDefault();
   }
 
-  // Render the ghost at the given minutes span, keeping the original column unless a move supplies a new one.
   function paint(startMin: number, endMin: number, col?: { left: number; width: number }) {
     if (!session?.ghost) return;
     session.ghost.move({

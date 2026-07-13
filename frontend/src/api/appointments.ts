@@ -18,6 +18,11 @@ export interface Appointment {
   override_conflict: boolean;
   override_actor_id: number | null;
   staff_note: string | null;
+  // Staff acknowledged this turno may overlap time-off — keep it and stop flagging it. Reversible.
+  conflict_ignored: boolean;
+  // Set on list reads: this open, future turno overlaps active time-off (a closure or its
+  // professional's exception) and isn't ignored. Computed server-side; clears when the time-off goes.
+  in_conflict?: boolean;
 }
 
 export interface AppointmentListFilters {
@@ -28,6 +33,8 @@ export interface AppointmentListFilters {
   // Staff-only: narrow to one client's turnos. Ignored for the Client role (already self-scoped).
   client_user_id?: number;
   state?: string;
+  // Only turnos overlapping active time-off (open + future). Role-scoped server-side.
+  conflicting?: boolean;
   page?: number;
   limit?: number;
 }
@@ -53,6 +60,7 @@ export async function listAppointments(
   if (filters.resource_id) params.set('resource_id', String(filters.resource_id));
   if (filters.client_user_id) params.set('client_user_id', String(filters.client_user_id));
   if (filters.state) params.set('state', filters.state);
+  if (filters.conflicting) params.set('conflicting', 'true');
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
@@ -134,7 +142,6 @@ export async function rescheduleAppointment(
 
 // Client-only request endpoint (no resource/override). Duration is the service default —
 // clients cannot set a custom duration; the server captures the authoritative price.
-// Returns a ScheduleResult — either the saved appointment (201) or a conflict verdict (200).
 export interface RequestBody {
   professional_user_id: number;
   service_id: number;
@@ -163,6 +170,17 @@ export async function transitionAppointment(
   return apiFetch<Appointment>(`/appointments/${id}/transition`, {
     method: 'POST',
     body: JSON.stringify({ to }),
+  });
+}
+
+// Acknowledge (ignored=true) or re-flag (false) a turno that overlaps time-off. Staff-only.
+export async function ignoreAppointmentConflict(
+  id: number,
+  ignored = true,
+): Promise<ApiResult<Appointment>> {
+  return apiFetch<Appointment>(`/appointments/${id}/ignore-conflict`, {
+    method: 'POST',
+    body: JSON.stringify({ ignored }),
   });
 }
 

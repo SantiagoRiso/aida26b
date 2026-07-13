@@ -60,8 +60,8 @@ async function load() {
     listRows('schedule_block_services', { filters: { schedule_block_id: props.block.id }, limit: 200 }),
   ]);
 
-  // The panel keeps the same instance across a block switch (no :key remount guarantee upstream);
-  // bail if a newer load() started before this one's awaits resolved, so a stale response never overwrites current rows.
+  // The same instance reloads in place across a block switch; bail if a newer load() started before
+  // this one's awaits resolved, so a stale response never overwrites current rows.
   if (props.block.id !== forBlock) return;
 
   const names = new Map<string, string>();
@@ -148,7 +148,6 @@ function clearErrors(serviceId: string) {
   delete fieldErrors.value[serviceId];
 }
 
-// Reset the shown values to the service defaults (the inheriting, non-independent state).
 function resetToDefaults(row: ServiceRow) {
   row.independent = false;
   row.durationMinutes = row.defaultDuration;

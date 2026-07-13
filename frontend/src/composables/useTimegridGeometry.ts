@@ -83,11 +83,19 @@ export function useTimegridGeometry(getRoot: () => ParentNode | null): TimegridG
     if (!root) return null;
     const lanes = readLanes(root);
     if (lanes.length < 2) return null;
-    const span = lanes[1].minutes - lanes[0].minutes;
-    if (span <= 0) return null;
-    const pxPerMinute = (lanes[1].top - lanes[0].top) / span;
+    // FullCalendar renders the first (and sometimes last) slot row a fraction shorter than the rest,
+    // so a single adjacent pair gives a wrong slope and the pixel↔minute mapping drifts linearly down
+    // the grid. Take the median per-row slope and anchor on an interior lane, both clear of the edges.
+    const slopes: number[] = [];
+    for (let i = 1; i < lanes.length; i++) {
+      const dm = lanes[i].minutes - lanes[i - 1].minutes;
+      if (dm > 0) slopes.push((lanes[i].top - lanes[i - 1].top) / dm);
+    }
+    if (slopes.length === 0) return null;
+    slopes.sort((a, b) => a - b);
+    const pxPerMinute = slopes[Math.floor(slopes.length / 2)];
     if (!(pxPerMinute > 0)) return null;
-    return { lane: lanes[0], pxPerMinute };
+    return { lane: lanes[Math.floor(lanes.length / 2)], pxPerMinute };
   }
 
   return {

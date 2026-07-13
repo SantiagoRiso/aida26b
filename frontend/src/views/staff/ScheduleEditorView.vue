@@ -10,8 +10,8 @@ const professionalId = ref<number | null>(null);
 
 <template>
   <section class="flex flex-col gap-4">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <h1 class="text-2xl font-semibold">{{ t('schedule.title') }}</h1>
+    <h1 class="text-2xl font-semibold">{{ t('schedule.title') }}</h1>
+    <div class="max-w-[260px]">
       <ProfessionalPicker v-model="professionalId" />
     </div>
     <p

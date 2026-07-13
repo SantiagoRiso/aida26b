@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { TRANSITION_MAP, TERMINAL_STATES, assertValidTransition } from '@shared/ssot/domain/scheduling';
 import type { Appointment } from '@/api/appointments';
-import { transitionAppointment, patchAppointment } from '@/api/appointments';
+import { transitionAppointment, patchAppointment, ignoreAppointmentConflict } from '@/api/appointments';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
@@ -111,6 +111,17 @@ function handleReschedule() {
   if (props.appointment) emit('reschedule', props.appointment);
 }
 
+const isStaff = auth.user?.role !== 'Client';
+
+async function doIgnore(ignored: boolean) {
+  if (!props.appointment) return;
+  saving.value = true;
+  const result = await ignoreAppointmentConflict(props.appointment.id, ignored);
+  saving.value = false;
+  if (result.ok) emit('mutated', result.data);
+  else toast.error('genericError');
+}
+
 // es-AR date/time formatting (DD/MM/YYYY, 24h) regardless of language toggle.
 function fmtDate(iso: string): string {
   const d = new Date(iso);
@@ -164,6 +175,13 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
           }"
         >
           {{ t(`status.${appointment.state}`) }}
+        </span>
+        <span
+          v-if="appointment.in_conflict"
+          class="rounded-full bg-destructive/10 px-3 py-0.5 text-xs font-semibold text-destructive"
+          :title="t('calendar.inConflictTooltip')"
+        >
+          {{ t('calendar.inConflictBadge') }}
         </span>
       </div>
 
@@ -254,6 +272,23 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
           @click="handleReschedule"
         >
           {{ t('calendar.reschedule') }}
+        </AppButton>
+
+        <AppButton
+          v-if="isStaff && appointment.in_conflict"
+          variant="neutral"
+          :loading="saving"
+          @click="doIgnore(true)"
+        >
+          {{ t('calendar.ignoreConflict') }}
+        </AppButton>
+        <AppButton
+          v-else-if="isStaff && appointment.conflict_ignored"
+          variant="neutral"
+          :loading="saving"
+          @click="doIgnore(false)"
+        >
+          {{ t('calendar.reflagConflict') }}
         </AppButton>
 
         <AppButton

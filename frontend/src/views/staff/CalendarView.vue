@@ -12,22 +12,24 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
 import { getAvailability } from '@/api/scheduling';
+import { listClosures, type BusinessClosure } from '@/api/closures';
+import { nextDay } from '@/composables/scheduleExceptions';
 import { listRows } from '@/api/crud';
 import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 import CalendarViewComponent from '@/components/calendar/CalendarView.vue';
 import CalendarFilters from '@/components/calendar/CalendarFilters.vue';
 import type { FilterState } from '@/components/calendar/CalendarFilters.vue';
 import AppointmentDetailPanel from '@/components/calendar/AppointmentDetailPanel.vue';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
-import ExceptionForm from '@/components/calendar/ExceptionForm.vue';
 import ExceptionList from '@/components/calendar/ExceptionList.vue';
 import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import { useCurrency } from '@/composables/useCurrency';
-import { computeValidStarts, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals, latticeFromFreeSlots, gcdAll } from '@/composables/calendarGrid';
+import { tileFreeWindows, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals, latticeFromFreeSlots } from '@/composables/calendarGrid';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -52,8 +54,17 @@ const filters = ref<FilterState>({ professional_user_id: null, resource_id: null
 // filters — the mixed 'Todos' view (both null) can only fail server-side.
 const canAddException = computed(() => filters.value.professional_user_id != null || filters.value.resource_id != null);
 
-// Days-off / partial-block / extra-hours overlays for the selected owner (read-only in this task).
+// Days-off / partial-block / extra-hours overlays for the selected owner.
 const exceptions = useScheduleExceptions(filters, visibleRange);
+
+// Business-wide closures (feriados) — owner-independent, so they render on every calendar regardless
+// of the professional/resource filter. This is how staff (esp. an Admin on the mixed 'Todos' view)
+// see a clinic holiday, which the per-owner exception overlay above never covers.
+const businessClosures = ref<BusinessClosure[]>([]);
+async function loadClosures() {
+  const res = await listClosures();
+  businessClosures.value = res.ok ? res.data : [];
+}
 
 // Free slots per visible day for a filtered resource; drives the availability shading overlay.
 const resourceFreeByDay = ref<Map<string, { start: number; end: number }[]>>(new Map());
@@ -73,11 +84,11 @@ const formPrefillDate = ref<string | undefined>();
 const formPrefillStart = ref<string | undefined>();
 const formPrefillProfId = ref<number | undefined>();
 const formPrefillResourceId = ref<number | undefined>();
+// Opened from a sobreturno (fine-mode) placement → the form starts in manual hora/duración mode,
+// seeded with the nearest block's service duration.
+const formPrefillSobreturno = ref(false);
+const formPrefillDuration = ref<number | undefined>();
 
-const exceptionFormOpen = ref(false);
-// Same keep-mounted-through-close-animation pattern as formOpen/formMounted above.
-const exceptionFormMounted = ref(false);
-watch(exceptionFormOpen, (open) => { if (open) exceptionFormMounted.value = true; });
 
 const conflictOpen = ref(false);
 const conflictVerdict = ref<ConflictVerdict | null>(null);
@@ -109,6 +120,8 @@ async function fetchAppointments() {
     void loadResourceAvailability();
     // …and the month-view per-day availability (graying + click-to-book gating).
     void loadMonthAvailability();
+    // …and the business-wide closure bands (a feriado added elsewhere must surface here).
+    void loadClosures();
   }
 }
 
@@ -185,16 +198,6 @@ function applyGrid(grid: { starts: number[] | null; minutes: number | null }) {
   slotMinutes.value = grid.minutes;
 }
 
-// The professional's appointment-slot size: the GCD of their in-view appointment durations (each is
-// service-sized), so a session fills exactly one grid row. Null when they have no appointments in view.
-function proAppointmentMinutes(profId: number): number | null {
-  // professional_user_id arrives as a wire string (BIGINT) — coerce before comparing to the numeric id.
-  const durs = appointments.value
-    .filter((a) => Number(a.professional_user_id) === profId && a.duration_minutes > 0)
-    .map((a) => a.duration_minutes);
-  return durs.length ? gcdAll(durs) : null;
-}
-
 // Free intervals (minutes) per visible day for the selected professional — drives the availability
 // overlay (grey = closed / unavailable) in the week/day grid.
 const professionalFreeByDay = ref<Map<string, { start: number; end: number }[]>>(new Map());
@@ -209,11 +212,11 @@ async function refreshSnapGrid() {
     return;
   }
   const byDay = await loadSlotsByDay(profId);
-  // Grid row = one appointment: size rows by the professional's appointment duration (all are service-
-  // sized), never the free-slot lengths (a small booking gap would collapse the grid) and never a
-  // min-window fallback (an appointment-less week would explode into giant rows). 30 min when unknown.
+  // Drag-box / shading step = the professional's schedule slot size (never the free-slot lengths — a
+  // small booking gap would collapse it, and an empty week would explode it). Schedule-derived, so it
+  // is stable whether or not the week has bookings. 30 min when unknown.
   const lattice = latticeFromFreeSlots([...byDay.values()].flat());
-  applyGrid({ starts: lattice.starts, minutes: proAppointmentMinutes(profId) ?? 30 });
+  applyGrid({ starts: lattice.starts, minutes: proSlotMinutes() });
   const map = new Map<string, { start: number; end: number }[]>();
   for (const [date, slots] of byDay) {
     map.set(date, slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })));
@@ -224,48 +227,120 @@ async function refreshSnapGrid() {
 watch(() => filters.value.professional_user_id, refreshSnapGrid);
 watch(visibleRange, refreshSnapGrid, { deep: true });
 
-// The selected professional's working blocks (weekday + minute range), for the permanent slot outline
-// overlay. Fetched from the schedule directly (not availability) so booked slots are outlined too.
+// The selected professional's working blocks (weekday + minute range + per-block slot size), for the
+// permanent slot outline overlay. Fetched from the schedule directly (not availability) so booked
+// slots are outlined too. slotMinutes is the block's own tiling step (its service's effective
+// duration), so the grid is the same in an empty month as a busy one — never derived from bookings.
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-const professionalBlocks = ref<{ weekday: string; start: number; end: number }[]>([]);
+const professionalBlocks = ref<{ weekday: string; start: number; end: number; slotMinutes: number }[]>([]);
 async function loadProfessionalBlocks() {
   const profId = filters.value.professional_user_id;
   if (profId == null) { professionalBlocks.value = []; return; }
-  const res = await listRows('schedule_blocks', { filters: { professional_user_id: String(profId) }, limit: 500 });
-  professionalBlocks.value = res.ok
-    ? res.data
-        .filter((r) => r.resource_id == null)
-        .map((r) => ({ weekday: String(r.weekday), start: toMinutes(r.start_time.slice(0, 5)), end: toMinutes(r.end_time.slice(0, 5)) }))
-    : [];
+  const [blocksRes, offersRes, servicesRes] = await Promise.all([
+    listRows('schedule_blocks', { filters: { professional_user_id: String(profId) }, limit: 500 }),
+    listRows('schedule_block_services', { filters: { professional_user_id: String(profId) }, limit: 500 }),
+    listRows('services', { limit: 500 }),
+  ]);
+  if (!blocksRes.ok) { professionalBlocks.value = []; return; }
+  const serviceDefault = new Map<string, number>();
+  if (servicesRes.ok) for (const s of servicesRes.data) serviceDefault.set(String(s.id), Number(s.default_duration_minutes));
+  // A block tiles by its (first offered) service's effective duration: the per-block override, else the
+  // service default. Blocks are single-service in practice; first-wins is stable across reads (by pk).
+  const blockSlot = new Map<string, number>();
+  if (offersRes.ok) for (const o of offersRes.data) {
+    const key = String(o.schedule_block_id);
+    if (blockSlot.has(key)) continue;
+    const dur = o.duration_minutes != null ? Number(o.duration_minutes) : serviceDefault.get(String(o.service_id));
+    if (dur && dur > 0) blockSlot.set(key, dur);
+  }
+  professionalBlocks.value = blocksRes.data
+    .filter((r) => r.resource_id == null)
+    .map((r) => ({
+      weekday: String(r.weekday),
+      start: toMinutes(r.start_time.slice(0, 5)),
+      end: toMinutes(r.end_time.slice(0, 5)),
+      slotMinutes: blockSlot.get(String(r.id)) ?? 30,
+    }));
 }
 watch(() => filters.value.professional_user_id, loadProfessionalBlocks, { immediate: true });
 
-// The professional's slot size (service-sized appointments), 30 min when unknown.
+// A representative slot length for the professional (their first block's), used only for the
+// free-placement hover box in sobreturno mode. 30 min when unknown.
 function proSlotMinutes(): number {
-  const profId = filters.value.professional_user_id;
-  return (profId != null ? proAppointmentMinutes(profId) : null) ?? 30;
+  return professionalBlocks.value[0]?.slotMinutes ?? 30;
 }
 
 // The schedule slot (start/end minutes) covering `minute` on `date`, or null when the point is outside
-// every working block (a gap / off-hours). Tiles each block by the slot size, dropping a trailing partial.
+// every working block (a gap / off-hours). Tiles each block by its own slot size, dropping a trailing partial.
 function slotAt(date: string, minute: number): { startMin: number; endMin: number } | null {
   if (filters.value.professional_user_id == null) return null;
-  const dur = proSlotMinutes();
   const wk = WEEKDAY_KEYS[new Date(`${date}T00:00:00`).getDay()];
   for (const b of professionalBlocks.value) {
     if (b.weekday !== wk || minute < b.start || minute >= b.end) continue;
-    const start = b.start + Math.floor((minute - b.start) / dur) * dur;
-    if (start + dur <= b.end) return { startMin: start, endMin: start + dur };
+    const start = b.start + Math.floor((minute - b.start) / b.slotMinutes) * b.slotMinutes;
+    if (start + b.slotMinutes <= b.end) return { startMin: start, endMin: start + b.slotMinutes };
   }
   return null;
 }
 
-// One dotted outline per real schedule slot, always shown: each block tiled by the professional's slot
-// size (trailing partial dropped, matching the availability engine). Timegrid only.
+// The slot size of the block nearest (in time) to `minute` on `date` — the service duration to seed a
+// sobreturno placed there. Falls back to the professional's representative slot when they don't work
+// that weekday.
+function nearestBlockSlotMinutes(date: string, minute: number): number {
+  const wk = WEEKDAY_KEYS[new Date(`${date}T00:00:00`).getDay()];
+  const onDay = professionalBlocks.value.filter((b) => b.weekday === wk);
+  if (!onDay.length) return proSlotMinutes();
+  let best = onDay[0];
+  let bestDist = Infinity;
+  for (const b of onDay) {
+    const dist = minute < b.start ? b.start - minute : minute > b.end ? minute - b.end : 0;
+    if (dist < bestDist) { bestDist = dist; best = b; }
+  }
+  return best.slotMinutes;
+}
+
+// One dotted outline per real schedule slot, always shown: each block tiled by its own slot size
+// (trailing partial dropped, matching the availability engine). Timegrid only. Sobreturno mode books
+// off the lattice, so the grid is hidden there — the free-click placement replaces it.
+const VOID_STATES = new Set<string>(VOID_APPOINTMENT_STATES);
+
+// Occupied vs requested minute-intervals per date for the selected professional. Requested (a client's
+// pending request) is kept apart from confirmed occupancy so the calendar background can shade them
+// differently. Drives the background shading, the "no dotted outline on a taken slot", and the
+// "no hover on a taken slot" rules — one source so they never disagree.
+type BookedDay = { occupied: { start: number; end: number }[]; requested: { start: number; end: number }[] };
+const bookedByDate = computed<Map<string, BookedDay>>(() => {
+  const profId = filters.value.professional_user_id;
+  const map = new Map<string, BookedDay>();
+  if (profId == null) return map;
+  for (const a of appointments.value) {
+    if (Number(a.professional_user_id) !== profId || VOID_STATES.has(a.state)) continue;
+    const s = new Date(a.starts_at);
+    const e = new Date(a.ends_at);
+    const start = s.getHours() * 60 + s.getMinutes();
+    let end = e.getHours() * 60 + e.getMinutes();
+    if (end <= start) end = 24 * 60; // ends at/after midnight
+    const key = dayISO(s, 0);
+    const day = map.get(key) ?? { occupied: [], requested: [] };
+    (a.state === 'requested' ? day.requested : day.occupied).push({ start, end });
+    map.set(key, day);
+  }
+  return map;
+});
+
+// A weekly block slot is actually bookable only when the day's availability still contains it.
+// schedule_blocks alone don't know about a licencia/feriado (personal or business-wide) or existing
+// bookings; the availability free windows (blocks − time-off − booked) do. Gating the dotted grid and
+// the click/hover resolution on this stops a holiday from still advertising — and accepting — slots.
+function slotBookableByAvailability(date: string, startMin: number, endMin: number): boolean {
+  const windows = professionalFreeByDay.value.get(date);
+  if (!windows) return false;
+  return windows.some((w) => w.start <= startMin && endMin <= w.end);
+}
+
 const slotOutlineEvents = computed<EventInput[]>(() => {
   const profId = filters.value.professional_user_id;
-  if (profId == null || !professionalBlocks.value.length || !currentViewType.value.startsWith('timeGrid')) return [];
-  const dur = proSlotMinutes();
+  if (fineDrag.value || profId == null || !professionalBlocks.value.length || !currentViewType.value.startsWith('timeGrid')) return [];
   const out: EventInput[] = [];
   let d = new Date(`${visibleRange.value.from}T00:00:00`);
   const end = new Date(`${visibleRange.value.to}T00:00:00`);
@@ -274,8 +349,14 @@ const slotOutlineEvents = computed<EventInput[]>(() => {
     const wk = WEEKDAY_KEYS[d.getDay()];
     for (const b of professionalBlocks.value) {
       if (b.weekday !== wk) continue;
-      for (let s = b.start; s + dur <= b.end; s += dur) {
-        out.push({ start: `${date}T${toHHMM(s)}:00`, end: `${date}T${toHHMM(s + dur)}:00`, display: 'background', classNames: ['fc-slot-outline'] });
+      for (let s = b.start; s + b.slotMinutes <= b.end; s += b.slotMinutes) {
+        // Past slots aren't bookable — leave them plain (the grey past wash carries the day).
+        if (cellElapsed(date, s + b.slotMinutes)) continue;
+        // Only slots the day's availability still offers get a dotted outline — this drops booked
+        // slots (the appointment block covers them) AND time-off (a licencia/feriado), so a holiday
+        // no longer advertises bookable slots.
+        if (!slotBookableByAvailability(date, s, s + b.slotMinutes)) continue;
+        out.push({ start: `${date}T${toHHMM(s)}:00`, end: `${date}T${toHHMM(s + b.slotMinutes)}:00`, display: 'background', classNames: ['fc-slot-outline'] });
       }
     }
     d = new Date(d.getTime() + 86400000);
@@ -371,9 +452,10 @@ const targetEvents = computed<EventInput[]>(() => {
   }];
 });
 
-// The single slot cell the cursor is over (week/day view) — a discrete highlight like the month grid.
+// The single slot cell the cursor is over (week/day view) — a discrete background highlight like the
+// month grid. Grid mode only; sobreturno mode previews as a real (foreground) event instead.
 const hoverEvents = computed<EventInput[]>(() => {
-  if (!hoverTarget.value) return [];
+  if (!hoverTarget.value || fineDrag.value) return [];
   const { date, startMin, endMin } = hoverTarget.value;
   return [{
     start: `${date}T${toHHMM(startMin)}:00`,
@@ -383,41 +465,91 @@ const hoverEvents = computed<EventInput[]>(() => {
   }];
 });
 
-// Highlight the real schedule SLOT under the cursor (not a fixed grid cell): map the pointer to a
-// day+minute, resolve the block slot covering it, and paint that slot. Outside any block there is no
-// bookable slot → no highlight, default cursor.
+// Sobreturno hover: a foreground preview block at the hovered position. Being a real event, it joins
+// FullCalendar's side-by-side layout (slotEventOverlap:false), so any turnos it overlaps are shoved
+// aside — previewing how the sobreturno would render. No appointment prop, so a click still falls
+// through to onGridClick (opening the form) rather than a detail panel.
+const hoverPreviewEvents = computed<EventInput[]>(() => {
+  if (!fineDrag.value || !hoverTarget.value) return [];
+  const { date, startMin, endMin } = hoverTarget.value;
+  return [{
+    title: 'Sobreturno',
+    start: `${date}T${toHHMM(startMin)}:00`,
+    end: `${date}T${toHHMM(endMin)}:00`,
+    classNames: ['fc-sobreturno-preview'],
+  }];
+});
+
+// Sobreturno free-click step: a placement snaps to this (matching the sobreturno drag's 5-min snap).
+const FREE_SNAP_MINUTES = 5;
+// Free placement reads the cursor as this many px higher, so the ghost's top (the start line) tracks
+// the pointer rather than hanging below it. Applied identically to hover and click so they agree.
+const SOBRETURNO_GHOST_OFFSET_PX = 15;
+
+// The slot a pointer at (date, minute) resolves to for hover/click. Grid mode: the schedule slot
+// covering the point, or null outside every working block (nothing to book there). Sobreturno mode:
+// a freely-placed slot snapped to FREE_SNAP_MINUTES — the schedule grid is bypassed so staff can book
+// off the lattice. The caller decides what a past (elapsed) slot means.
+function resolveGridSlot(date: string, minute: number): { startMin: number; endMin: number } | null {
+  if (fineDrag.value) {
+    // Floor (not round) so the slot starts at or just above the cursor — never a step below it.
+    const startMin = Math.max(0, Math.floor(minute / FREE_SNAP_MINUTES) * FREE_SNAP_MINUTES);
+    return { startMin, endMin: startMin + proSlotMinutes() };
+  }
+  return slotAt(date, Math.floor(minute));
+}
+
+// Highlight the slot under the cursor: the real schedule slot (grid mode) or a free-placed slot
+// (sobreturno). Nothing to book (grid gap) or a fully-elapsed slot → no highlight, default cursor.
 function onGridPointerMove(ev: PointerEvent) {
   const root = calendarRef.value?.getRootEl();
   const reset = () => { hoverTarget.value = null; if (root) root.style.cursor = ''; };
   if (isDragging.value || !currentViewType.value.startsWith('timeGrid')) { reset(); return; }
   if (!root) { hoverTarget.value = null; return; }
+  // The toolbar and day headers sit inside the calendar root too — only the scrollable slot body maps
+  // to a bookable time, so ignore anything outside it (otherwise sobreturno hover fires on the header).
+  if (!(ev.target as HTMLElement).closest('.fc-timegrid-body')) { reset(); return; }
   const col = geometry.columnAt(ev.clientX);
-  const minute = col ? geometry.minutesAt(ev.clientY) : null;
+  const minute = col ? geometry.minutesAt(ev.clientY - (fineDrag.value ? SOBRETURNO_GHOST_OFFSET_PX : 0)) : null;
   if (!col || minute === null) { reset(); return; }
 
-  const slot = slotAt(col.date, Math.floor(minute));
+  const slot = resolveGridSlot(col.date, minute);
   if (!slot || cellElapsed(col.date, slot.endMin)) { reset(); return; }
+  // Grid mode only offers slots the day's availability still has (excludes booked AND time-off); a
+  // sobreturno may deliberately overlap, so only gate when not in fine mode.
+  if (!fineDrag.value && !slotBookableByAvailability(col.date, slot.startMin, slot.endMin)) { reset(); return; }
   root.style.cursor = 'pointer';
   // Only reassign when the slot actually changes — avoids a re-render on every pixel of movement.
   if (hoverTarget.value?.date === col.date && hoverTarget.value?.startMin === slot.startMin) return;
   hoverTarget.value = { date: col.date, startMin: slot.startMin, endMin: slot.endMin };
 }
 
-// Click inside a slot → open the new-appointment form prefilled with that slot (date, start, owner).
-// Clicks on an existing appointment fall through to eventClick (its detail panel).
+// Click a slot → open the new-appointment form prefilled with that slot (date, start, owner). Grid
+// mode: only inside a real slot. Sobreturno mode: anywhere, snapped freely. A past slot can't be
+// booked — warn (mirrors the drag-select / month past guard). Clicks on an existing appointment fall
+// through to eventClick (its detail panel).
 function onGridClick(ev: MouseEvent) {
   if (isDragging.value || suppressGridClick) { suppressGridClick = false; return; }
   if (!currentViewType.value.startsWith('timeGrid')) return;
-  if ((ev.target as HTMLElement).closest('.fc-timegrid-event')) return;
+  // The toolbar (prev/next/today/view) and day headers sit inside the calendar root too — only the
+  // slot body books, so a nav click never places a turno.
+  if (!(ev.target as HTMLElement).closest('.fc-timegrid-body')) return;
+  // A click on an existing turno normally opens its detail (eventClick). In sobreturno mode it instead
+  // places a new overlapping turno there, so don't defer to the event.
+  if (!fineDrag.value && (ev.target as HTMLElement).closest('.fc-timegrid-event')) return;
   const col = geometry.columnAt(ev.clientX);
-  const minute = col ? geometry.minutesAt(ev.clientY) : null;
+  const minute = col ? geometry.minutesAt(ev.clientY - (fineDrag.value ? SOBRETURNO_GHOST_OFFSET_PX : 0)) : null;
   if (!col || minute === null) return;
-  const slot = slotAt(col.date, Math.floor(minute));
-  if (!slot || cellElapsed(col.date, slot.endMin)) return;
+  const slot = resolveGridSlot(col.date, minute);
+  if (!slot) return;
+  if (!fineDrag.value && !slotBookableByAvailability(col.date, slot.startMin, slot.endMin)) return;
+  if (cellElapsed(col.date, slot.endMin)) { toast.info('pastNotBookable'); return; }
   formPrefillDate.value = col.date;
   formPrefillStart.value = toHHMM(slot.startMin);
   formPrefillProfId.value = filters.value.professional_user_id ?? undefined;
   formPrefillResourceId.value = filters.value.resource_id ?? undefined;
+  formPrefillSobreturno.value = fineDrag.value;
+  formPrefillDuration.value = fineDrag.value ? nearestBlockSlotMinutes(col.date, slot.startMin) : undefined;
   formAppt.value = undefined;
   formOpen.value = true;
 }
@@ -446,15 +578,21 @@ onBeforeUnmount(() => {
   }
 });
 
+// Whether loadHighlights has finished for the in-flight drag. Until then an empty valid-starts list
+// means "still loading", not "no free slot" — the coarse no-free-slot freeze must wait for this.
+const highlightsReady = ref(false);
+
 // Duration-aware valid slots for the dragged appointment across the visible days (its own span freed).
 async function loadHighlights(appt: Appointment) {
+  highlightsReady.value = false;
   dragDurationMinutes = appt.duration_minutes;
   const byDay = await loadSlotsByDay(appt.professional_user_id, appt.id);
   const targets = new Map<string, string[]>();
   for (const [date, slots] of byDay) {
-    targets.set(date, computeValidStarts(slots, appt.duration_minutes));
+    targets.set(date, tileFreeWindows(slots, appt.duration_minutes));
   }
   highlightStartsByDay.value = targets;
+  highlightsReady.value = true;
 }
 
 const geometry = useTimegridGeometry(() => calendarRef.value?.getRootEl() ?? null);
@@ -463,6 +601,7 @@ const customDrag = useCustomDrag({
   fine: fineDrag,
   ghostParent: () => calendarRef.value?.getRootEl() ?? null,
   validStartsFor: (date) => (highlightStartsByDay.value.get(date) ?? []).map(toMinutes),
+  ready: () => highlightsReady.value,
   onBegin: (appt) => { isDragging.value = true; hoverTarget.value = null; void loadHighlights(appt); },
   onEnd: () => { isDragging.value = false; highlightStartsByDay.value = new Map(); dragTarget.value = null; suppressEventClick = true; suppressGridClick = true; },
   onTarget: (date, minutes) => {
@@ -552,12 +691,21 @@ const professionalBgEvents = computed<EventInput[]>(() => {
   if (filters.value.resource_id != null) return [];
   if (filters.value.professional_user_id == null || !currentViewType.value.startsWith('timeGrid')) return [];
   const out: EventInput[] = [];
-  for (const [date, slots] of professionalFreeByDay.value) {
+  const push = (date: string, iv: { start: number; end: number }, cls: string) => {
+    out.push({ start: `${date}T${toHHMM(iv.start)}:00`, end: `${date}T${toHHMM(iv.end)}:00`, display: 'background', classNames: [cls] });
+  };
+  for (const [date, freeSlots] of professionalFreeByDay.value) {
     const floor = shadeFloorMinutes(date);
     if (floor == null) continue;
-    for (const g of complementIntervals(slots, floor, DAY_END_MINUTES)) {
-      out.push({ start: `${date}T${toHHMM(g.start)}:00`, end: `${date}T${toHHMM(g.end)}:00`, display: 'background', classNames: ['fc-res-closed'] });
-    }
+    const booked = bookedByDate.value.get(date) ?? { occupied: [], requested: [] };
+    const clip = (iv: { start: number; end: number }) => ({ start: Math.max(iv.start, floor), end: iv.end });
+    // Each occupancy kind gets its own background wash so the three read apart at the calendar level:
+    // occupied (confirmed) and requested (a client's pending request) are distinct tints…
+    for (const iv of mergeIntervals(booked.occupied.map(clip))) push(date, iv, 'fc-slot-occupied');
+    for (const iv of mergeIntervals(booked.requested.map(clip))) push(date, iv, 'fc-slot-requested-bg');
+    // …and never-available time (off-hours / day off) — neither free nor booked — is the grey hatch.
+    const working = mergeIntervals([...freeSlots, ...booked.occupied, ...booked.requested]);
+    for (const g of complementIntervals(working, floor, DAY_END_MINUTES)) push(date, g, 'fc-res-closed');
   }
   return out;
 });
@@ -586,6 +734,25 @@ const pastBgEvents = computed<EventInput[]>(() => {
   return out;
 });
 
+// Business closures as background bands — full-day (00:00–24:00) or the partial [start, end) window.
+// Rendered on every view/filter (feriados close the whole business); appointments stay on top as
+// foreground events. Distinct class from the per-owner exception overlay so a clinic holiday reads
+// apart from one professional's day off.
+const closureBgEvents = computed<EventInput[]>(() => {
+  const { from, to } = visibleRange.value;
+  const out: EventInput[] = [];
+  for (const c of businessClosures.value) {
+    if (c.exception_date < from || c.exception_date >= to) continue;
+    const base = { display: 'background' as const, classNames: ['fc-closure'], title: c.reason ?? '', extendedProps: { closure: c } };
+    if (!c.start_time || !c.end_time) {
+      out.push({ ...base, start: `${c.exception_date}T00:00:00`, end: `${nextDay(c.exception_date)}T00:00:00` });
+    } else {
+      out.push({ ...base, start: `${c.exception_date}T${c.start_time.slice(0, 5)}:00`, end: `${c.exception_date}T${c.end_time.slice(0, 5)}:00` });
+    }
+  }
+  return out;
+});
+
 // Must stay a computed (not a plain spread object) — FullCalendar's Vue wrapper only
 // re-diffs options when the prop reference changes; a plain object built once at setup
 // freezes `events` to whatever appointments held at that instant.
@@ -607,7 +774,9 @@ const fullOptions = computed<typeof calendarOptions.value>(() => {
       ...professionalBgEvents.value,
       ...slotOutlineEvents.value,
       ...exceptions.bgEvents.value,
+      ...closureBgEvents.value,
       ...hoverEvents.value,
+      ...hoverPreviewEvents.value,
       ...backgroundEvents.value,
       ...targetEvents.value,
     ],
@@ -663,6 +832,8 @@ function handleSelect(arg: DateSelectArg) {
   formPrefillStart.value = arg.startStr.slice(11, 16) || undefined;
   formPrefillProfId.value = filters.value.professional_user_id ?? undefined;
   formPrefillResourceId.value = filters.value.resource_id ?? undefined;
+  formPrefillSobreturno.value = fineDrag.value;
+  formPrefillDuration.value = undefined;
   formAppt.value = undefined;
   formOpen.value = true;
   // A drag-select ends with a trailing click on the grid — don't let it re-open the form.
@@ -671,6 +842,8 @@ function handleSelect(arg: DateSelectArg) {
 
 function handleEventClick(arg: EventClickArg) {
   if (suppressEventClick) { suppressEventClick = false; return; }
+  // Sobreturno mode: a plain click places a new overlapping turno (onGridClick), not the detail panel.
+  if (fineDrag.value) return;
   const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
   if (appt) {
     detailAppt.value = appt;
@@ -753,7 +926,7 @@ async function handleEventDrop(arg: EventDropArg) {
   }
 
   const slots = (await loadSlotsByDay(appt.professional_user_id, appt.id)).get(date) ?? [];
-  const validStarts = computeValidStarts(slots, appt.duration_minutes).map(toMinutes);
+  const validStarts = tileFreeWindows(slots, appt.duration_minutes).map(toMinutes);
   const resolved = validStarts.length ? resolveDrop(validStarts, toMinutes(dropped), Infinity) : null;
   const start = resolved !== null ? toHHMM(resolved) : dropped;
 
@@ -802,7 +975,6 @@ async function doReschedule(
   }
   const payload = result.data;
   if (!payload.saved) {
-    // Warn first — open override dialog with revert callback.
     conflictVerdict.value = payload.verdict;
     conflictRevert.value = revertFn ?? null;
     conflictRetryFn.value = (ov: boolean) => doReschedule(id, body, revertFn, ov);
@@ -866,6 +1038,8 @@ function onReschedule(appt: Appointment) {
   formPrefillStart.value = undefined;
   formPrefillProfId.value = undefined;
   formPrefillResourceId.value = undefined;
+  formPrefillSobreturno.value = false;
+  formPrefillDuration.value = undefined;
   formOpen.value = true;
   detailOpen.value = false;
 }
@@ -883,17 +1057,9 @@ function openNewForm() {
   formPrefillStart.value = undefined;
   formPrefillProfId.value = filters.value.professional_user_id ?? undefined;
   formPrefillResourceId.value = filters.value.resource_id ?? undefined;
+  formPrefillSobreturno.value = false;
+  formPrefillDuration.value = undefined;
   formOpen.value = true;
-}
-
-function openNewException() {
-  exceptionFormOpen.value = true;
-}
-
-async function onExceptionSaved() {
-  exceptionFormOpen.value = false;
-  await exceptions.reload();
-  await fetchAppointments();
 }
 
 async function onExceptionDeleted() {
@@ -910,19 +1076,9 @@ function onFiltersUpdate(f: FilterState) {
   <div class="flex flex-col gap-4 h-full">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">{{ t('nav.calendar') }}</h1>
-      <div class="flex gap-2">
-        <AppButton
-          variant="neutral"
-          :disabled="!canAddException"
-          :title="!canAddException ? t('calendar.selectOwnerForException') : undefined"
-          @click="openNewException"
-        >
-          {{ t('exception.addButton') }}
-        </AppButton>
-        <AppButton variant="primary" @click="openNewForm">
-          {{ t('calendar.newAppointment') }}
-        </AppButton>
-      </div>
+      <AppButton variant="primary" @click="openNewForm">
+        {{ t('calendar.newAppointment') }}
+      </AppButton>
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-2">
@@ -934,14 +1090,12 @@ function onFiltersUpdate(f: FilterState) {
       </label>
     </div>
 
-    <p class="text-xs text-neutral">
-      {{ fineDrag ? t('calendar.dragHintFine') : t('calendar.dragHintSnap') }}
-    </p>
-
     <div v-if="loading && appointments.length === 0" class="text-sm text-neutral">
       {{ t('loading') }}
     </div>
-    <CalendarViewComponent ref="calendarRef" :options="fullOptions" class="min-h-0 flex-1" />
+    <div class="flex min-h-0 flex-1 flex-col rounded-lg border border-border bg-card p-3 shadow-sm">
+      <CalendarViewComponent ref="calendarRef" :options="fullOptions" class="min-h-0 flex-1" />
+    </div>
 
     <ExceptionList v-if="canAddException" :rows="exceptions.rows.value" @deleted="onExceptionDeleted" />
 
@@ -958,6 +1112,7 @@ function onFiltersUpdate(f: FilterState) {
       :open="formOpen"
       :title="formAppt ? t('calendar.reschedule') : t('calendar.newAppointment')"
       variant="side"
+      size="2xl"
       @close="formOpen = false"
       @after-leave="formMounted = false"
     >
@@ -968,26 +1123,11 @@ function onFiltersUpdate(f: FilterState) {
         :prefill-start="formPrefillStart"
         :prefill-professional-id="formPrefillProfId"
         :prefill-resource-id="formPrefillResourceId"
+        :prefill-sobreturno="formPrefillSobreturno"
+        :prefill-duration="formPrefillDuration"
         @saved="onFormSaved"
         @conflict-detected="onFormConflict"
         @cancel="formOpen = false"
-      />
-    </DetailPanel>
-
-    <DetailPanel
-      :open="exceptionFormOpen"
-      :title="t('exception.formTitle')"
-      variant="side"
-      @close="exceptionFormOpen = false"
-      @after-leave="exceptionFormMounted = false"
-    >
-      <ExceptionForm
-        v-if="exceptionFormMounted"
-        :prefill-date="dayISO(new Date(), 0)"
-        :professional-id="filters.professional_user_id"
-        :resource-id="filters.resource_id"
-        @saved="onExceptionSaved"
-        @cancel="exceptionFormOpen = false"
       />
     </DetailPanel>
 

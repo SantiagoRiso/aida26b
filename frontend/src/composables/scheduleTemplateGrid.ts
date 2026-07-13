@@ -11,14 +11,14 @@ export type TemplateBlock = {
   id: string;
   professional_user_id: string;
   weekday: Weekday;
-  start_time: string; // 'HH:MM'
-  end_time: string;   // 'HH:MM'
+  start_time: string;
+  end_time: string;
 };
 
 function pad(n: number): string { return String(n).padStart(2, '0'); }
 
 export function weekdayToDate(weekday: Weekday): string {
-  const offset = MON_FIRST_WEEKDAYS.indexOf(weekday); // 0..6
+  const offset = MON_FIRST_WEEKDAYS.indexOf(weekday);
   const [y, m, d] = TEMPLATE_BASE_MONDAY.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + offset));
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
@@ -79,7 +79,6 @@ export function otherBlockEdges(blocks: TemplateBlock[], ignoreId?: string): num
     .flatMap((b) => [toMinutes(b.start_time), toMinutes(b.end_time)]);
 }
 
-// The nearest edge within SNAP_THRESHOLD_MINUTES of `value`, or null when none is close enough.
 export function nearestEdgeWithin(value: number, edges: number[]): number | null {
   let best: number | null = null;
   let bestDist = SNAP_THRESHOLD_MINUTES + 1;
@@ -90,7 +89,6 @@ export function nearestEdgeWithin(value: number, edges: number[]): number | null
   return best;
 }
 
-// Snap `value` onto the nearest block edge within range, else round to the whole minute (per-minute).
 export function snapMinuteToEdges(value: number, edges: number[]): number {
   return nearestEdgeWithin(value, edges) ?? Math.round(value);
 }

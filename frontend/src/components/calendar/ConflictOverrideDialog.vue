@@ -13,6 +13,7 @@ import {
 } from '@headlessui/vue';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
+import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -89,26 +90,17 @@ function handleCancel() {
               </ul>
 
               <p v-if="!description.canOverride" class="text-sm text-neutral italic">
-                Este conflicto no puede ser forzado. Elegí otro horario.
+                Este conflicto no puede ser forzado.
               </p>
             </div>
 
             <div class="px-6 pb-5 flex justify-end gap-3">
-              <button
-                type="button"
-                class="min-h-[44px] rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-surface"
-                @click="handleCancel"
-              >
+              <AppButton variant="neutral" @click="handleCancel">
                 {{ t('actions.cancel') }}
-              </button>
-              <button
-                v-if="description.canOverride"
-                type="button"
-                class="min-h-[44px] rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-                @click="handleConfirm"
-              >
+              </AppButton>
+              <AppButton v-if="description.canOverride" variant="primary" @click="handleConfirm">
                 {{ t('actions.bookAnyway') }}
-              </button>
+              </AppButton>
             </div>
           </DialogPanel>
         </TransitionChild>

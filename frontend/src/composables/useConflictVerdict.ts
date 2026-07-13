@@ -6,11 +6,11 @@ const CONFLICT_MESSAGES: Record<string, (entity: string, start: string, end: str
   professional_overlap: (entity, start, end) =>
     `Este horario se superpone con otro turno de ${entity} (${start}–${end}).`,
   resource_overlap: (entity, start, end) =>
-    `El recurso "${entity}" ya está ocupado en ese horario (${start}–${end}).`,
+    `La sala "${entity}" ya está ocupada en ese horario (${start}–${end}).`,
   professional_availability: (entity) =>
     `${entity} no tiene disponibilidad en este horario.`,
   resource_availability: (entity) =>
-    `El recurso "${entity}" no está disponible en este horario.`,
+    `La sala "${entity}" no está disponible en este horario.`,
   requested_block: (entity, start, end) =>
     `Hay una solicitud pendiente de ${entity} en ese horario (${start}–${end}).`,
   slot_alignment: (entity) =>

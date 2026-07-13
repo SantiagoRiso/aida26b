@@ -92,7 +92,14 @@ function apptToEvent(appt: Appointment, decorators?: CalendarDecorators): EventI
     backgroundColor: colors.bg,
     borderColor: colors.border,
     textColor: '#ffffff',
-    classNames: [`appt-state-${appt.state}`],
+    // override_conflict → a sobreturno (booked over a conflict / outside availability); marked with a
+    // corner flag so staff can spot overbooked slots at a glance. in_conflict → the turno now overlaps
+    // active time-off (a closure or the professional's exception); ringed so it stands out for triage.
+    classNames: [
+      `appt-state-${appt.state}`,
+      ...(appt.override_conflict ? ['appt-sobreturno'] : []),
+      ...(appt.in_conflict ? ['appt-in-conflict'] : []),
+    ],
     extendedProps: { appointment: appt },
   };
 }
@@ -194,8 +201,11 @@ export function useAppointmentCalendar(
       if (appt) {
         info.el.setAttribute('data-testid', `appt-${appt.id}`);
         info.el.setAttribute('data-appt-state', appt.state);
+        if (appt.in_conflict) info.el.setAttribute('data-in-conflict', 'true');
         const tip = decorators?.tooltip?.(appt);
-        if (tip) info.el.setAttribute('title', tip);
+        const conflictTip = appt.in_conflict ? i18n.global.t('calendar.inConflictTooltip') : '';
+        const fullTip = [tip, conflictTip].filter(Boolean).join(' · ');
+        if (fullTip) info.el.setAttribute('title', fullTip);
         if (handlers.onEventPointerDown) {
           info.el.addEventListener('pointerdown', (ev) =>
             handlers.onEventPointerDown!(appt, ev as PointerEvent, info.el),
@@ -212,6 +222,13 @@ export function useAppointmentCalendar(
         const tip = exception.reason || i18n.global.t(`exception.kind.${kind}`);
         info.el.setAttribute('title', tip);
         info.el.setAttribute('data-testid', `exception-${exception.id}`);
+        return;
+      }
+      const closure = info.event.extendedProps.closure as { id: string; reason: string | null } | undefined;
+      if (closure) {
+        const holiday = i18n.global.t('calendar.businessHoliday');
+        info.el.setAttribute('title', closure.reason ? `${holiday}: ${closure.reason}` : holiday);
+        info.el.setAttribute('data-testid', `closure-${closure.id}`);
       }
     },
 

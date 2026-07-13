@@ -65,20 +65,27 @@ export function complementIntervals(
   return out;
 }
 
-// Slot starts where the appointment's FULL duration fits inside one contiguous free window.
-export function computeValidStarts(
-  freeSlots: { start: string; end: string }[],
+// Every start (HH:MM) where the appointment's full duration fits, tiling each free window back-to-back
+// by the duration. Service-less availability hands us contiguous free WINDOWS (not tiled slots), so
+// returning just the window starts would offer a single drop position on an open day. Bookings are
+// grid-aligned, so free-window edges are too — tiling from the window start reproduces the schedule's
+// slot grid within free time.
+export function tileFreeWindows(
+  freeWindows: { start: string; end: string }[],
   durationMinutes: number,
 ): string[] {
-  const windows = mergeIntervals(
-    freeSlots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })),
+  if (durationMinutes <= 0) return [];
+  const merged = mergeIntervals(
+    freeWindows.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })),
   );
-  return freeSlots
-    .map((s) => s.start)
-    .filter((start) => {
-      const s = toMinutes(start);
-      return windows.some((w) => w.start <= s && s + durationMinutes <= w.end);
-    });
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const out: string[] = [];
+  for (const w of merged) {
+    for (let s = w.start; s + durationMinutes <= w.end; s += durationMinutes) {
+      out.push(`${pad(Math.floor(s / 60))}:${pad(s % 60)}`);
+    }
+  }
+  return out;
 }
 
 // Slot-start lattice + finest slot length from a day's free slots — the grid the calendar snaps

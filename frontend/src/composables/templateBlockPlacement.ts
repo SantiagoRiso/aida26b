@@ -9,7 +9,6 @@ import { nearestEdgeWithin } from './scheduleTemplateGrid';
 // Match the template calendar's visible range (slotMinTime/slotMaxTime in useScheduleTemplate).
 export const DAY_MIN_MINUTES = 6 * 60;
 export const DAY_MAX_MINUTES = 23 * 60;
-// The smallest block a resize may leave.
 export const MIN_BLOCK_MINUTES = 5;
 
 export interface MinuteInterval { start: number; end: number; }
@@ -47,8 +46,6 @@ function snapWithin(value: number, edges: number[], lo: number, hi: number): num
   return clamp(nearestEdgeWithin(c, edges) ?? Math.round(c), lo, hi);
 }
 
-// Resize the top edge (start moves, end fixed): clamp within the enclosing window and min-duration,
-// snapping the start onto the nearest block edge. Returns the new start (minutes).
 export function placeResizeTop(block: MinuteInterval, desiredStart: number, windows: MinuteInterval[], edges: number[]): number {
   const w = enclosingWindow(windows, block.start, block.end);
   const lo = w ? w.start : DAY_MIN_MINUTES;
@@ -56,8 +53,6 @@ export function placeResizeTop(block: MinuteInterval, desiredStart: number, wind
   return snapWithin(desiredStart, edges, lo, hi);
 }
 
-// Resize the bottom edge (end moves, start fixed): clamp within the enclosing window and min-duration,
-// snapping the end onto the nearest block edge. Returns the new end (minutes).
 export function placeResizeBottom(block: MinuteInterval, desiredEnd: number, windows: MinuteInterval[], edges: number[]): number {
   const w = enclosingWindow(windows, block.start, block.end);
   const lo = block.start + MIN_BLOCK_MINUTES;

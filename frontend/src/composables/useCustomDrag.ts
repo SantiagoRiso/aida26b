@@ -20,6 +20,9 @@ export interface CustomDragDeps {
   ghostParent?: () => HTMLElement | null;
   // Valid slot starts (minutes-of-day) for a day, for coarse snapping. Empty when unknown or none.
   validStartsFor: (date: string) => number[];
+  // Whether availability for this drag has finished loading. Until then, an empty validStartsFor means
+  // "not loaded yet" rather than "no free slot", so the coarse no-free-slot freeze must wait for this.
+  ready: () => boolean;
   // A real drag started (threshold crossed) — the view loads slots and shows highlights.
   onBegin: (appt: Appointment) => void;
   // Drag ended (commit or abort) — the view clears highlights and the live target.
@@ -43,6 +46,7 @@ interface Session {
   lastWidth: number;
   lastDate: string;
   lastStart: number; // snapped minutes-of-day
+  validTarget: boolean; // whether the current position is a droppable spot (false = over a booked/off day in coarse mode)
 }
 
 function hhmm(minutes: number): string {
@@ -84,7 +88,20 @@ export function useCustomDrag(deps: CustomDragDeps): {
     const topMin = geometry.minutesAt(ev.clientY - session.grabOffsetPx);
     if (topMin === null) return;
 
-    const snapped = snapDragMinutes(topMin, deps.validStartsFor(date), deps.fine.value);
+    const validStarts = deps.validStartsFor(date);
+    // Coarse (non-sobreturno) drag only lands on real free slots. Once availability has loaded, a day
+    // with none (fully booked / day off) is not a valid drop — freeze the ghost and mark the target
+    // invalid instead of free-floating there. Free placement is the sobreturno (fine) privilege alone.
+    // While availability is still loading, every day looks empty, so don't freeze yet — let the ghost
+    // follow (the final move is still gated on commit).
+    if (!deps.fine.value && deps.ready() && validStarts.length === 0) {
+      session.validTarget = false;
+      deps.onTarget(null, null);
+      return;
+    }
+    session.validTarget = true;
+
+    const snapped = snapDragMinutes(topMin, validStarts, deps.fine.value);
     const y = geometry.yForMinutes(snapped);
     if (y === null) return;
 
@@ -114,12 +131,14 @@ export function useCustomDrag(deps: CustomDragDeps): {
 
   function onUp() {
     if (!session) return;
-    const { appt, dragging, lastDate, lastStart } = session;
+    const { appt, dragging, lastDate, lastStart, validTarget } = session;
     const wasDrag = dragging;
     cleanup();
     if (wasDrag) {
       deps.onEnd();
-      deps.onCommit(appt, { date: lastDate, start: hhmm(lastStart) });
+      // Released over a booked/off day in coarse mode → no valid slot, so revert (the destroyed ghost
+      // restores the event to its original spot). Only a valid target commits the move.
+      if (validTarget) deps.onCommit(appt, { date: lastDate, start: hhmm(lastStart) });
     }
   }
 
@@ -147,6 +166,7 @@ export function useCustomDrag(deps: CustomDragDeps): {
       lastWidth: 0,
       lastDate: `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`,
       lastStart: startDate.getHours() * 60 + startDate.getMinutes(),
+      validTarget: true,
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
