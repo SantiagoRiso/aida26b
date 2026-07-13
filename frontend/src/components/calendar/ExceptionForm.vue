@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { createRow } from '@/api/crud';
+import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
-import { buildExceptionBody, type ExceptionKind } from '@/composables/scheduleExceptions';
+import { useLabel } from '@/composables/useLabel';
+import { useTimeOffConflictGate, shortDate } from '@/composables/useTimeOffConflictGate';
+import { buildExceptionBody, classifyException, type ExceptionKind, type ExceptionRow } from '@/composables/scheduleExceptions';
 import AppButton from '@/components/shared/AppButton.vue';
+import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import DateField from '@/components/shared/DateField.vue';
+import TimeField from '@/components/shared/TimeField.vue';
 import type { ColumnValue, TableRecordMap } from '@shared/types/types';
 
 const props = defineProps<{
   prefillDate?: string;
   professionalId?: number | null;
   resourceId?: number | null;
+  // When set, the form edits this existing row (updateRow) instead of creating a new one.
+  exception?: ExceptionRow;
 }>();
 
 const emit = defineEmits<{
@@ -21,7 +27,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { label } = useLabel();
 const toast = useToast();
+const gate = useTimeOffConflictGate();
 
 interface FormState {
   kind: ExceptionKind;
@@ -32,14 +40,25 @@ interface FormState {
   reason: string;
 }
 
-const form = reactive<FormState>({
-  kind: 'off',
-  date: props.prefillDate ?? '',
-  start_time: '',
-  end_time: '',
-  granularity_minutes: '',
-  reason: '',
-});
+// Editing reconstructs the form's kind + fields from the stored row; otherwise a blank 'off' form.
+// Parent re-mounts (keyed) when the edited row changes, so setup-time init is enough.
+const form = reactive<FormState>(props.exception
+  ? {
+      kind: classifyException(props.exception),
+      date: props.exception.exception_date,
+      start_time: props.exception.start_time?.slice(0, 5) ?? '',
+      end_time: props.exception.end_time?.slice(0, 5) ?? '',
+      granularity_minutes: props.exception.granularity_minutes != null ? String(props.exception.granularity_minutes) : '',
+      reason: props.exception.reason ?? '',
+    }
+  : {
+      kind: 'off',
+      date: props.prefillDate ?? '',
+      start_time: '',
+      end_time: '',
+      granularity_minutes: '',
+      reason: '',
+    });
 
 const fieldErrors = ref<Record<string, string>>({});
 const saving = ref(false);
@@ -71,11 +90,30 @@ async function submit() {
     return;
   }
 
+  // Blocking time off (full-day 'off' or a partial 'block') for a professional may collide with
+  // their booked turnos — warn first. 'extra' adds hours (never conflicts) and resources are out of
+  // scope for turno conflicts, so both skip the gate.
+  if (props.professionalId != null && (form.kind === 'off' || form.kind === 'block')) {
+    const proceed = await gate.confirmTimeOff(
+      {
+        date: form.date,
+        professional_user_id: props.professionalId,
+        start: form.kind === 'block' ? form.start_time || null : null,
+        end: form.kind === 'block' ? form.end_time || null : null,
+      },
+      (n) => label({
+        es: `Va a dejar ${n} turno${n === 1 ? '' : 's'} en conflicto el ${shortDate(form.date)}. ¿Continuar?`,
+        en: `This will leave ${n} appointment${n === 1 ? '' : 's'} in conflict on ${shortDate(form.date)}. Continue?`,
+      }),
+    );
+    if (!proceed) return;
+  }
+
   saving.value = true;
-  const result = await createRow(
-    'schedule_exceptions',
-    built.body as Record<string, ColumnValue | undefined> as Partial<TableRecordMap['schedule_exceptions']>,
-  );
+  const body = built.body as Record<string, ColumnValue | undefined> as Partial<TableRecordMap['schedule_exceptions']>;
+  const result = props.exception
+    ? await updateRow('schedule_exceptions', props.exception.id, body)
+    : await createRow('schedule_exceptions', body);
   saving.value = false;
 
   if (!result.ok) {
@@ -94,7 +132,7 @@ async function submit() {
   <form class="flex flex-col gap-4" @submit.prevent="submit">
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="exc-kind">{{ t('exception.kindLabel') }} *</label>
-      <select id="exc-kind" v-model="form.kind" class="rounded border border-border px-3 py-2 text-sm">
+      <select id="exc-kind" v-model="form.kind" class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent">
         <option value="off">{{ t('exception.kind.off') }}</option>
         <option value="block">{{ t('exception.kind.block') }}</option>
         <option value="extra">{{ t('exception.kind.extra') }}</option>
@@ -110,11 +148,11 @@ async function submit() {
     <div v-if="form.kind !== 'off'" class="flex gap-3">
       <div class="flex flex-col gap-1 flex-1">
         <label class="text-sm font-semibold" for="exc-start">{{ t('exception.startLabel') }} *</label>
-        <input id="exc-start" v-model="form.start_time" type="time" class="rounded border border-border px-3 py-2 text-sm" />
+        <TimeField id="exc-start" v-model="form.start_time" />
       </div>
       <div class="flex flex-col gap-1 flex-1">
         <label class="text-sm font-semibold" for="exc-end">{{ t('exception.endLabel') }} *</label>
-        <input id="exc-end" v-model="form.end_time" type="time" class="rounded border border-border px-3 py-2 text-sm" />
+        <TimeField id="exc-end" v-model="form.end_time" />
         <FieldError :message="fieldErrors.end_time" />
       </div>
     </div>
@@ -126,23 +164,32 @@ async function submit() {
         v-model="form.granularity_minutes"
         type="number"
         min="1"
-        class="rounded border border-border px-3 py-2 text-sm"
+        class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
       />
       <FieldError :message="fieldErrors.granularity_minutes" />
     </div>
 
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="exc-reason">{{ t('exception.reasonLabel') }}</label>
-      <textarea id="exc-reason" v-model="form.reason" rows="2" class="rounded border border-border px-3 py-2 text-sm" />
+      <textarea id="exc-reason" v-model="form.reason" rows="2" class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
     </div>
 
     <div class="flex gap-2 pt-2">
       <AppButton type="submit" variant="primary" :loading="saving">
-        {{ t('actions.save') }}
+        {{ exception ? label({ es: 'Guardar cambios', en: 'Save changes' }) : t('actions.save') }}
       </AppButton>
       <AppButton type="button" variant="neutral" @click="emit('cancel')">
         {{ t('actions.cancel') }}
       </AppButton>
     </div>
+
+    <ConfirmDialog
+      :open="gate.open.value"
+      :title="label({ es: 'Agregar licencia', en: 'Add time off' })"
+      :body="gate.message.value"
+      :confirm-label="label({ es: 'Continuar', en: 'Continue' })"
+      @confirm="gate.onConfirm"
+      @cancel="gate.onCancel"
+    />
   </form>
 </template>

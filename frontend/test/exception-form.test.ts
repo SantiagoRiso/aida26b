@@ -5,10 +5,17 @@ import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import ExceptionForm from '@/components/calendar/ExceptionForm.vue';
+import TimeField from '@/components/shared/TimeField.vue';
 import { createRow } from '@/api/crud';
 
 vi.mock('@/api/crud', () => ({
   createRow: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+}));
+
+// Blocking time off previews its turno-conflict count before saving; default to none so these
+// body-construction tests proceed straight to createRow. The confirm flow is covered separately.
+vi.mock('@/api/scheduling', () => ({
+  previewTimeOffConflicts: vi.fn().mockResolvedValue({ ok: true, data: { count: 0 } }),
 }));
 
 function makeI18n() {
@@ -20,6 +27,14 @@ function mountForm(props: Partial<InstanceType<typeof ExceptionForm>['$props']> 
     props: { prefillDate: '2026-07-15', professionalId: 10, resourceId: null, ...props },
     global: { plugins: [makeI18n()] },
   });
+}
+
+// Start/end use the shared 24h TimeField (VueDatePicker), driven via its model like DateField.
+async function setTimes(wrapper: ReturnType<typeof mountForm>, start: string, end: string) {
+  const fields = wrapper.findAllComponents(TimeField);
+  fields[0].vm.$emit('update:modelValue', start);
+  fields[1].vm.$emit('update:modelValue', end);
+  await flushPromises();
 }
 
 describe('ExceptionForm', () => {
@@ -50,8 +65,7 @@ describe('ExceptionForm', () => {
   it('submits a partial-unavailable body with start/end set and granularity null', async () => {
     const wrapper = mountForm();
     await wrapper.get('#exc-kind').setValue('block');
-    await wrapper.get('#exc-start').setValue('09:00');
-    await wrapper.get('#exc-end').setValue('12:00');
+    await setTimes(wrapper, '09:00', '12:00');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 
@@ -66,8 +80,7 @@ describe('ExceptionForm', () => {
   it('submits an extra-hours body with is_unavailable false and a positive granularity', async () => {
     const wrapper = mountForm();
     await wrapper.get('#exc-kind').setValue('extra');
-    await wrapper.get('#exc-start').setValue('18:00');
-    await wrapper.get('#exc-end').setValue('20:00');
+    await setTimes(wrapper, '18:00', '20:00');
     await wrapper.get('#exc-granularity').setValue('30');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
@@ -83,8 +96,7 @@ describe('ExceptionForm', () => {
   it('does NOT call createRow for an invalid extra-hours body missing granularity', async () => {
     const wrapper = mountForm();
     await wrapper.get('#exc-kind').setValue('extra');
-    await wrapper.get('#exc-start').setValue('18:00');
-    await wrapper.get('#exc-end').setValue('20:00');
+    await setTimes(wrapper, '18:00', '20:00');
     // granularity left blank
     await wrapper.get('form').trigger('submit');
     await flushPromises();
@@ -96,8 +108,7 @@ describe('ExceptionForm', () => {
   it('does NOT call createRow for a partial window with start >= end', async () => {
     const wrapper = mountForm();
     await wrapper.get('#exc-kind').setValue('block');
-    await wrapper.get('#exc-start').setValue('12:00');
-    await wrapper.get('#exc-end').setValue('09:00');
+    await setTimes(wrapper, '12:00', '09:00');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 

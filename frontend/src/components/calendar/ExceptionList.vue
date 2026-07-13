@@ -7,10 +7,11 @@ import { useCurrency } from '@/composables/useCurrency';
 import { classifyException, type ExceptionRow } from '@/composables/scheduleExceptions';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 
-defineProps<{ rows: ExceptionRow[] }>();
+defineProps<{ rows: ExceptionRow[]; showEdit?: boolean }>();
 
 const emit = defineEmits<{
   deleted: [];
+  edit: [row: ExceptionRow];
 }>();
 
 const { t } = useI18n();
@@ -66,14 +67,25 @@ async function confirmDelete() {
           </span>
           <span v-if="row.reason" class="text-xs text-neutral">{{ row.reason }}</span>
         </div>
-        <button
-          type="button"
-          class="text-xs font-semibold text-destructive hover:underline"
-          :data-testid="`exception-delete-${row.id}`"
-          @click="requestDelete(row.id)"
-        >
-          {{ t('exception.delete') }}
-        </button>
+        <span class="flex items-center gap-3">
+          <button
+            v-if="showEdit"
+            type="button"
+            class="text-xs font-semibold text-accent hover:underline"
+            :data-testid="`exception-edit-${row.id}`"
+            @click="emit('edit', row)"
+          >
+            {{ t('actions.edit') }}
+          </button>
+          <button
+            type="button"
+            class="text-xs font-semibold text-destructive hover:underline"
+            :data-testid="`exception-delete-${row.id}`"
+            @click="requestDelete(row.id)"
+          >
+            {{ t('exception.delete') }}
+          </button>
+        </span>
       </li>
     </ul>
 

@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import { listAppointments, transitionAppointment } from '@/api/appointments';
+import { listAppointments, transitionAppointment, approveAppointment, ignoreAppointmentConflict } from '@/api/appointments';
+import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { createEntry } from '@/api/ledger';
 import { listAudit } from '@/api/audit';
 import type { Appointment } from '@/api/appointments';
@@ -17,6 +18,8 @@ import type { SettleAction } from '@/views/staff/dashboard-current';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -98,10 +101,82 @@ async function loadAdmin() {
   loadingAdmin.value = false;
 }
 
+// Open, future turnos that now overlap active time-off (a closure or the professional's licencia).
+// Server role-scopes the list; every staff role sees the ones they own so nobody's conflicts hide.
+const conflictTurnos = ref<Appointment[]>([]);
+const conflictTotal = ref(0);
+
+async function loadConflicts() {
+  const res = await listAppointments({ conflicting: true, limit: 50 });
+  if (res.ok) {
+    conflictTurnos.value = res.data;
+    conflictTotal.value = res.meta?.total ?? res.data.length;
+  }
+}
+
+const conflictBusy = ref<Record<number, boolean>>({});
+// A pending turno is denied (rejected); a booked one is canceled — same destructive confirm, two verbs.
+const resolveTarget = ref<{ appt: Appointment; to: 'canceled' | 'rejected' } | null>(null);
+
+// Accept the turno as-is: it stays booked but stops being flagged (reversible from the calendar).
+async function ignoreConflict(appt: Appointment) {
+  conflictBusy.value[appt.id] = true;
+  const res = await ignoreAppointmentConflict(appt.id, true);
+  conflictBusy.value[appt.id] = false;
+  if (res.ok) await loadConflicts();
+  else toast.error('genericError');
+}
+
+// Rescheduling needs the calendar's slot UI; send them there to move it off the time-off.
+function goReschedule() {
+  router.push('/staff/calendar');
+}
+
+async function confirmResolve() {
+  const target = resolveTarget.value;
+  resolveTarget.value = null;
+  if (!target) return;
+  const res = await transitionAppointment(target.appt.id, target.to);
+  if (res.ok) await loadConflicts();
+  else toast.error('genericError');
+}
+
+// Approving a conflicting request books it over the time-off — the same conflict-aware path the
+// calendar uses, so an availability conflict surfaces the override dialog rather than failing silently.
+const conflictOpen = ref(false);
+const conflictVerdict = ref<ConflictVerdict | null>(null);
+const conflictRetry = ref<((override: boolean) => Promise<void>) | null>(null);
+
+async function approveConflict(appt: Appointment, override = false) {
+  const res = await approveAppointment(appt.id, override);
+  if (!res.ok) { toast.error('genericError'); return; }
+  if (!res.data.saved) {
+    conflictVerdict.value = res.data.verdict;
+    conflictRetry.value = (ov: boolean) => approveConflict(appt, ov);
+    conflictOpen.value = true;
+  } else {
+    await loadConflicts();
+  }
+}
+
+async function onOverrideConfirm() {
+  conflictOpen.value = false;
+  if (conflictRetry.value) await conflictRetry.value(true);
+  conflictVerdict.value = null;
+  conflictRetry.value = null;
+}
+
+function onOverrideCancel() {
+  conflictOpen.value = false;
+  conflictVerdict.value = null;
+  conflictRetry.value = null;
+}
+
 onMounted(() => {
   if (role.value === 'Professional') loadProfessional();
   else if (role.value === 'Receptionist') loadReceptionist();
   else if (role.value === 'Admin') loadAdmin();
+  if (role.value !== 'Client') void loadConflicts();
   if (showsCard.value) {
     void loadCurrent();
     // Re-evaluate the card window as time passes so cards appear on their own.
@@ -234,8 +309,8 @@ async function settle(appt: Appointment, action: SettleAction) {
 </script>
 
 <template>
-  <div class="p-6">
-    <h1 class="text-[28px] font-semibold leading-tight text-heading mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold mb-6">
       {{ label({ es: 'Inicio', en: 'Dashboard' }) }}
     </h1>
 
@@ -291,6 +366,49 @@ async function settle(appt: Appointment, action: SettleAction) {
           </p>
         </div>
       </div>
+    </div>
+
+    <div v-if="conflictTurnos.length" class="mb-6 rounded-lg border-2 border-destructive bg-card p-5">
+      <h2 class="text-lg font-semibold text-heading">
+        {{ label({ es: 'Turnos en conflicto', en: 'Appointments in conflict' }) }}
+        <span class="ml-2 text-sm font-normal text-destructive">({{ conflictTotal }})</span>
+      </h2>
+      <p class="mt-1 text-sm text-neutral">
+        {{ label({ es: 'Se superponen con una licencia o feriado. Reprogramá o cancelá cada uno.', en: 'These overlap time off or a holiday. Reschedule or cancel each one.' }) }}
+      </p>
+      <ul class="mt-3 max-h-72 space-y-2 overflow-y-auto">
+        <li
+          v-for="appt in conflictTurnos"
+          :key="appt.id"
+          class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border pb-2 text-sm last:border-0 last:pb-0"
+        >
+          <span class="flex flex-wrap items-center gap-2">
+            <span class="font-semibold text-heading">{{ formatDateTime(appt.starts_at) }}</span>
+            <span>{{ apptLabel(appt) }}</span>
+            <span v-if="role !== 'Professional' && professionalNameFor(appt)" class="text-neutral">
+              · {{ professionalNameFor(appt) }}
+            </span>
+          </span>
+          <span class="flex items-center gap-3 text-xs font-semibold">
+            <button type="button" class="text-neutral hover:underline disabled:opacity-50" :disabled="conflictBusy[appt.id]" @click="ignoreConflict(appt)">
+              {{ label({ es: 'Ignorar', en: 'Ignore' }) }}
+            </button>
+            <button v-if="appt.state === 'requested'" type="button" class="text-success hover:underline" @click="approveConflict(appt)">
+              {{ label({ es: 'Aprobar', en: 'Approve' }) }}
+            </button>
+            <button type="button" class="text-accent hover:underline" @click="goReschedule">
+              {{ label({ es: 'Reprogramar', en: 'Reschedule' }) }}
+            </button>
+            <button
+              type="button"
+              class="text-destructive hover:underline"
+              @click="resolveTarget = { appt, to: appt.state === 'requested' ? 'rejected' : 'canceled' }"
+            >
+              {{ appt.state === 'requested' ? label({ es: 'Denegar', en: 'Deny' }) : label({ es: 'Cancelar', en: 'Cancel' }) }}
+            </button>
+          </span>
+        </li>
+      </ul>
     </div>
 
     <template v-if="role === 'Professional'">
@@ -455,5 +573,29 @@ async function settle(appt: Appointment, action: SettleAction) {
         </div>
       </div>
     </template>
+
+    <ConfirmDialog
+      :open="resolveTarget !== null"
+      :title="resolveTarget?.to === 'rejected'
+        ? label({ es: 'Denegar solicitud', en: 'Deny request' })
+        : label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
+      :body="resolveTarget?.to === 'rejected'
+        ? label({ es: '¿Denegar esta solicitud en conflicto?', en: 'Deny this conflicting request?' })
+        : label({ es: '¿Cancelar este turno en conflicto?', en: 'Cancel this conflicting appointment?' })"
+      :confirm-label="resolveTarget?.to === 'rejected'
+        ? label({ es: 'Denegar', en: 'Deny' })
+        : label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
+      destructive
+      @confirm="confirmResolve"
+      @cancel="resolveTarget = null"
+    />
+
+    <ConflictOverrideDialog
+      :open="conflictOpen"
+      :verdict="conflictVerdict"
+      :revert="null"
+      @confirm="onOverrideConfirm"
+      @cancel="onOverrideCancel"
+    />
   </div>
 </template>
