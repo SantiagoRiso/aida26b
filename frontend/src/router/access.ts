@@ -3,7 +3,6 @@ import type { Role } from '@shared/types/types';
 // The single place role-access logic lives.
 // No view or component checks user.role directly — import from here instead.
 
-// An undefined/empty roles array means any authenticated user may access the route.
 export function roleAllowedFor(roles: Role[] | undefined, role: Role): boolean {
   if (!roles || roles.length === 0) return true;
   return roles.includes(role);

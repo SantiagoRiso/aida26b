@@ -4,7 +4,7 @@ import { useI18n, Translation as I18nT } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listRows } from '@/api/crud';
-import { checkConflict } from '@/api/scheduling';
+import { checkConflict, getBookingWindow } from '@/api/scheduling';
 import { requestAppointment, listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { TableRecordMap } from '@shared/types/types';
@@ -14,6 +14,8 @@ import Selector from '@/components/shared/Selector.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import DateField from '@/components/shared/DateField.vue';
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
+import { useLabel } from '@/composables/useLabel';
 
 const emit = defineEmits<{
   success: [appt: Appointment];
@@ -23,6 +25,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const ui = useUiStore();
 const { formatARS, formatDate } = useCurrency();
+const { label } = useLabel();
 
 type Step = 1 | 2 | 3;
 const step = ref<Step>(1);
@@ -155,10 +158,27 @@ const selectedDate = ref<string>('');
 const selectedStart = ref<string | null>(null);
 const selectedSlotDuration = ref<number>(0);
 
-watch([selectedProfId, selectedService], () => {
+// Effective booking window (concrete dates) for the chosen professional+service; clamps the picker.
+const windowMin = ref<string | null>(null);
+const windowMax = ref<string | null>(null);
+
+watch([selectedProfId, selectedService], async () => {
   selectedDate.value = '';
   selectedStart.value = null;
   selectedSlotDuration.value = 0;
+  windowMin.value = null;
+  windowMax.value = null;
+
+  const profId = selectedProfId.value;
+  const svc = selectedService.value;
+  if (profId == null || svc == null) return;
+  const res = await getBookingWindow(profId, Number(svc.id));
+  // Ignore a stale response if the selection changed while awaiting.
+  if (selectedProfId.value !== profId || selectedService.value?.id !== svc.id) return;
+  if (res.ok) {
+    windowMin.value = res.data.min_date;
+    windowMax.value = res.data.max_date;
+  }
 });
 
 watch(selectedDate, () => {
@@ -227,7 +247,8 @@ async function submitRequest() {
   submitting.value = false;
 
   if (!res.ok) {
-    ui.toast('error', 'genericError');
+    // The window can move between load and submit; name that reason instead of a generic failure.
+    ui.toast('error', res.code === 'outside_booking_window' ? 'outsideBookingWindow' : 'genericError');
     return;
   }
 
@@ -259,6 +280,26 @@ function goStep3() {
 }
 
 const today = todayLocalISO();
+
+// Effective lower bound: the booking window's minimum when loaded, never earlier than today.
+const minDate = computed(() => (windowMin.value && windowMin.value > today ? windowMin.value : today));
+
+// Prev/next day arrows for the date field (mirrors the staff appointment form). Step by whole days
+// via local midnight so a timezone offset can't drift the day, clamped to the booking window so
+// clients can't step into the past or past the window's far end. From empty, stepping starts at min.
+function ymd(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function stepDate(days: number): void {
+  const [y, m, d] = (selectedDate.value || minDate.value).split('-').map(Number);
+  let next = ymd(new Date(y, m - 1, d + days));
+  if (next < minDate.value) next = minDate.value;
+  if (windowMax.value && next > windowMax.value) next = windowMax.value;
+  selectedDate.value = next;
+}
+const atMinDate = computed(() => (selectedDate.value || minDate.value) <= minDate.value);
+const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value || minDate.value) >= windowMax.value);
 </script>
 
 <template>
@@ -326,7 +367,27 @@ const today = todayLocalISO();
 
       <div>
         <label class="mb-1 block text-sm font-medium" for="date-input">{{ t('portal.date') }}</label>
-        <DateField id="date-input" v-model="selectedDate" :min="today" />
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="atMinDate"
+            :aria-label="label({ es: 'Día anterior', en: 'Previous day' })"
+            @click="stepDate(-1)"
+          >
+            <ChevronLeftIcon class="h-5 w-5" />
+          </button>
+          <DateField id="date-input" v-model="selectedDate" :min="minDate" :max="windowMax" class="flex-1" />
+          <button
+            type="button"
+            class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="atMaxDate"
+            :aria-label="label({ es: 'Día siguiente', en: 'Next day' })"
+            @click="stepDate(1)"
+          >
+            <ChevronRightIcon class="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <!-- Only free slots shown; busy time is opaque to clients. -->

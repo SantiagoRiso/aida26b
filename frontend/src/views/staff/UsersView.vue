@@ -243,7 +243,7 @@ async function submitReset() {
     <ConfirmDialog
       :open="deactivateConfirmOpen"
       :title="label({ es: 'Desactivar usuario', en: 'Deactivate user' })"
-      :body="label({ es: `Desactivar a ${pendingDeactivateName}: no va a poder iniciar sesión ni ser asignado a nuevos turnos. ¿Confirmás?`, en: `Deactivate ${pendingDeactivateName}: they won't be able to log in or be assigned to new appointments. Confirm?` })"
+      :body="label({ es: `Desactivar a ${pendingDeactivateName}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${pendingDeactivateName}: they won't be able to log in or be assigned to new appointments.` })"
       :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
       :destructive="true"
       @confirm="confirmDeactivate"

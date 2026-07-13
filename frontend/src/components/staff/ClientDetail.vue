@@ -372,7 +372,7 @@ onMounted(load);
     <template v-else>
       <EmptyState
         :heading="label({ es: 'Cliente no encontrado', en: 'Client not found' })"
-        :body="label({ es: 'No pudimos cargar este cliente.', en: 'We could not load this client.' })"
+        :body="label({ es: 'No se pudo cargar este cliente.', en: 'Could not load this client.' })"
       />
     </template>
 
@@ -450,7 +450,7 @@ onMounted(load);
     <ConfirmDialog
       :open="cancelConfirmOpen"
       :title="label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
-      :body="label({ es: '¿Confirmás la cancelación de este turno?', en: 'Confirm cancellation of this appointment?' })"
+      :body="label({ es: '¿Cancelar este turno?', en: 'Cancel this appointment?' })"
       :confirm-label="label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
       :destructive="true"
       @confirm="confirmCancel"
@@ -460,7 +460,7 @@ onMounted(load);
     <ConfirmDialog
       :open="deactivateConfirmOpen"
       :title="label({ es: 'Desactivar cliente', en: 'Deactivate client' })"
-      :body="label({ es: `Desactivar a ${client?.display_name ?? ''}: no va a poder iniciar sesión ni ser asignado a nuevos turnos. ¿Confirmás?`, en: `Deactivate ${client?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments. Confirm?` })"
+      :body="label({ es: `Desactivar a ${client?.display_name ?? ''}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${client?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments.` })"
       :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
       :destructive="true"
       @confirm="confirmDeactivate"

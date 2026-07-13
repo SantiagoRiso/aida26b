@@ -9,11 +9,14 @@ import { structure } from '@shared/ssot/structure';
 import type { TableKey, TableRecordMap, ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
+import AppButton from '@/components/shared/AppButton.vue';
 import GenericFilters from '@/components/generic/GenericFilters.vue';
 import Pagination from '@/components/generic/Pagination.vue';
 
 const props = defineProps<{
   tableKey: K;
+  // The table's own title is a page-level heading; suppress it when embedded under an outer heading.
+  hideTitle?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -194,17 +197,17 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-semibold">{{ tableTitle }}</h1>
+      <h1 v-if="!hideTitle" class="text-2xl font-semibold">{{ tableTitle }}</h1>
+      <div v-else></div>
       <div class="flex items-center gap-2">
         <slot name="header-actions" />
-        <button
+        <AppButton
           v-if="canCreate()"
-          type="button"
-          class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+          variant="primary"
           @click="emit('create')"
         >
           {{ addLabel }}
-        </button>
+        </AppButton>
       </div>
     </div>
 
@@ -244,7 +247,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
               <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <EmptyState
                   :heading="label({ es: `No hay ${tableTitle} para mostrar`, en: `No ${tableTitle} to show` })"
-                  :body="label({ es: 'Probá ajustar los filtros o creá el primero.', en: 'Try adjusting the filters, or create the first one.' })"
+                  :body="label({ es: 'No hay resultados para los filtros aplicados.', en: 'No results for the current filters.' })"
                 />
               </td>
             </tr>

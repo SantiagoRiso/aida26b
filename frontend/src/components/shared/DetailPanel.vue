@@ -15,7 +15,7 @@ const props = withDefaults(
     title?: string;
     // 'side' slides in from the right — used on the calendar so the grid stays visible behind the panel.
     variant?: 'modal' | 'side';
-    // Ignored by the side variant (always max-w-md).
+    // Caps the panel width in both variants (the side panel still keeps the grid visible behind it).
     size?: 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | '7xl';
   }>(),
   { variant: 'modal', size: 'lg' },
@@ -63,6 +63,8 @@ const modalMaxWidth = computed(
         />
       </TransitionChild>
 
+      <!-- w-screen (not w-full) gives the DialogPanel a definite base width so max-w-* actually binds:
+           the side parent is shrink-to-fit, where w-full would collapse to the content's natural width. -->
       <div v-if="variant === 'side'" class="fixed inset-y-0 right-0 flex">
         <TransitionChild
           as="template"
@@ -73,7 +75,7 @@ const modalMaxWidth = computed(
           leave-from="translate-x-0 opacity-100"
           leave-to="translate-x-full opacity-0"
         >
-          <DialogPanel class="relative flex w-full max-w-md flex-col bg-card shadow-xl">
+          <DialogPanel class="relative flex w-screen flex-col bg-card shadow-xl" :class="modalMaxWidth">
             <div class="flex items-center justify-between border-b border-border px-6 py-4">
               <slot name="header">
                 <DialogTitle v-if="title" class="text-lg font-semibold">{{ title }}</DialogTitle>
@@ -94,7 +96,10 @@ const modalMaxWidth = computed(
         </TransitionChild>
       </div>
 
-      <div v-else class="fixed inset-0 flex items-center justify-center p-4">
+      <!-- Anchor near the top (not vertically centered): as content height changes — request-flow
+           steps, variable slot lists — a centered panel re-centers and visibly jumps. Top-anchoring
+           keeps the panel's top fixed; only its bottom grows (capped by max-h + internal scroll). -->
+      <div v-else class="fixed inset-0 flex items-start justify-center p-4 sm:pt-[8vh]">
         <TransitionChild
           as="template"
           enter="ease-out duration-200"

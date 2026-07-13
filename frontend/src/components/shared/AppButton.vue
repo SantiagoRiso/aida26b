@@ -6,7 +6,7 @@ const { t } = useI18n();
 
 const props = withDefaults(defineProps<{
   variant?: 'primary' | 'destructive' | 'neutral';
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   disabled?: boolean;
   type?: 'button' | 'submit' | 'reset';
@@ -19,9 +19,12 @@ const props = withDefaults(defineProps<{
 });
 
 const classes = computed(() => {
+  // sm is for compact inline controls (filter bars); md/lg are the standard/touch page actions.
   const sizing = props.size === 'lg'
     ? 'min-h-[52px] px-6 py-3 text-base'
-    : 'min-h-[44px] px-4 py-2 text-sm';
+    : props.size === 'sm'
+      ? 'min-h-[36px] px-3 py-1.5 text-sm'
+      : 'min-h-[44px] px-4 py-2 text-sm';
   const base = `inline-flex items-center justify-center ${sizing} rounded-md font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap`;
   if (props.variant === 'primary') {
     return `${base} bg-accent text-white hover:bg-accent-hover focus-visible:ring-accent`;

@@ -11,12 +11,14 @@ import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{
   tableKey: K;
   panelTitle: LocalizedText;
   deleteLabel: LocalizedText;
   deleteBody: LocalizedText;
+  hideTitle?: boolean;
 }>();
 
 const { label } = useLabel();
@@ -82,7 +84,7 @@ async function confirmDelete() {
 
 <template>
   <div>
-    <GenericTable :key="reloadKey" :table-key="tableKey" @create="onCreate" @edit="onEdit" />
+    <GenericTable :key="reloadKey" :table-key="tableKey" :hide-title="hideTitle" @create="onCreate" @edit="onEdit" />
 
     <DetailPanel :open="panelOpen" :title="label(panelTitle)" @close="panelOpen = false">
       <GenericForm
@@ -93,13 +95,9 @@ async function confirmDelete() {
         @cancel="panelOpen = false"
       />
       <div v-if="editingRow && canDelete()" class="mt-6 border-t border-border pt-4">
-        <button
-          type="button"
-          class="w-full rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-white hover:bg-destructive-hover"
-          @click="onDeleteClick"
-        >
+        <AppButton variant="destructive" class="w-full" @click="onDeleteClick">
           {{ label(deleteLabel) }}
-        </button>
+        </AppButton>
       </div>
     </DetailPanel>
 

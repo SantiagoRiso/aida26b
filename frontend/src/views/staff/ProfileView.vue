@@ -10,6 +10,7 @@ import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import PasswordInput from '@/components/shared/PasswordInput.vue';
 import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
+import MyExceptionsSection from '@/components/settings/MyExceptionsSection.vue';
 import type { ColumnValue, TableRecordMap } from '@shared/types/types';
 
 const { label } = useLabel();
@@ -98,86 +99,93 @@ async function saveSvc(row: SvcOverride) {
 </script>
 
 <template>
-  <div class="p-6 space-y-8 max-w-2xl">
-    <h1 class="text-[28px] font-semibold leading-tight text-heading">
+  <!-- No page padding here — the layout's <main> already provides it; matches Clientes/Horario/Calendario. -->
+  <div class="space-y-6">
+    <h1 class="text-2xl font-semibold">
       {{ label({ es: 'Perfil', en: 'Profile' }) }}
     </h1>
 
-    <section v-if="!loading" class="rounded-lg border border-border bg-card p-5 space-y-4">
-      <div class="flex flex-col gap-1">
-        <label for="pf-name" class="text-sm font-semibold">{{ label({ es: 'Nombre visible', en: 'Display name' }) }}</label>
-        <input id="pf-name" v-model="form.display_name" type="text"
-          class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label for="pf-email" class="text-sm font-semibold">{{ label({ es: 'Email', en: 'Email' }) }}</label>
-        <input id="pf-email" v-model="form.email" type="email"
-          class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label for="pf-phone" class="text-sm font-semibold">{{ label({ es: 'Teléfono', en: 'Phone' }) }}</label>
-        <input id="pf-phone" v-model="form.phone" type="text"
-          class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label for="pf-bio" class="text-sm font-semibold">{{ label({ es: 'Biografía', en: 'Bio' }) }}</label>
-        <textarea id="pf-bio" v-model="form.bio" rows="3"
-          class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <FieldError :message="formError" />
-      <AppButton id="pf-save" variant="primary" :loading="saving" @click="saveProfile">
-        {{ label({ es: 'Guardar', en: 'Save' }) }}
-      </AppButton>
-    </section>
-
-    <section class="rounded-lg border border-border bg-card p-5 space-y-4">
-      <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Cambiar contraseña', en: 'Change password' }) }}</h2>
-      <div class="flex flex-col gap-1">
-        <label for="pf-cur" class="text-sm font-semibold">{{ label({ es: 'Contraseña actual', en: 'Current password' }) }}</label>
-        <PasswordInput id="pf-cur" v-model="pw.current"
-          input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label for="pf-new" class="text-sm font-semibold">{{ label({ es: 'Nueva contraseña', en: 'New password' }) }}</label>
-        <PasswordInput id="pf-new" v-model="pw.next"
-          input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-      </div>
-      <FieldError :message="pwError" />
-      <AppButton id="pf-pw-save" variant="primary" :loading="pwSaving" @click="changePassword">
-        {{ label({ es: 'Cambiar contraseña', en: 'Change password' }) }}
-      </AppButton>
-    </section>
-
-    <section class="rounded-lg border border-border bg-card p-5 space-y-4">
-      <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Mis servicios', en: 'My services' }) }}</h2>
-      <p class="text-sm text-neutral">
-        {{ label({ es: 'Anticipación de reserva por servicio. Vacío = usa el valor del negocio.', en: 'Per-service booking window. Empty = uses the business default.' }) }}
-      </p>
-      <div v-if="svcLoading" class="text-sm text-neutral">…</div>
-      <p v-else-if="svcRows.length === 0" class="text-sm text-neutral">
-        {{ label({ es: 'No tenés servicios asignados.', en: 'You have no assigned services.' }) }}
-      </p>
-      <div v-else class="space-y-3">
-        <div v-for="row in svcRows" :key="row.id" class="flex flex-wrap items-end gap-3 border-b border-border pb-3">
-          <div class="min-w-[10rem] flex-1 text-sm font-medium">{{ serviceLabelFor(row.service_id) ?? row.service_id }}</div>
-          <label class="flex flex-col gap-1 text-xs text-neutral">
-            {{ label({ es: 'Mín (días)', en: 'Min (days)' }) }}
-            <input v-model="row.min" type="number" min="0" class="w-24 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
-          </label>
-          <label class="flex flex-col gap-1 text-xs text-neutral">
-            {{ label({ es: 'Máx (días)', en: 'Max (days)' }) }}
-            <input v-model="row.max" type="number" min="0" class="w-24 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
-          </label>
-          <AppButton variant="neutral" :loading="row.saving" @click="saveSvc(row)">
-            {{ label({ es: 'Guardar', en: 'Save' }) }}
-          </AppButton>
+    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+      <section v-if="!loading" class="rounded-lg border border-border bg-card p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Datos personales', en: 'Personal details' }) }}</h2>
+        <div class="flex flex-col gap-1">
+          <label for="pf-name" class="text-sm font-semibold">{{ label({ es: 'Nombre visible', en: 'Display name' }) }}</label>
+          <input id="pf-name" v-model="form.display_name" type="text"
+            class="max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
-      </div>
-    </section>
+        <div class="flex flex-col gap-1">
+          <label for="pf-email" class="text-sm font-semibold">{{ label({ es: 'Email', en: 'Email' }) }}</label>
+          <input id="pf-email" v-model="form.email" type="email"
+            class="max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="pf-phone" class="text-sm font-semibold">{{ label({ es: 'Teléfono', en: 'Phone' }) }}</label>
+          <input id="pf-phone" v-model="form.phone" type="text"
+            class="max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="pf-bio" class="text-sm font-semibold">{{ label({ es: 'Biografía', en: 'Bio' }) }}</label>
+          <textarea id="pf-bio" v-model="form.bio" rows="3"
+            class="max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </div>
+        <FieldError :message="formError" />
+        <AppButton id="pf-save" variant="primary" :loading="saving" @click="saveProfile">
+          {{ label({ es: 'Guardar', en: 'Save' }) }}
+        </AppButton>
+      </section>
 
-    <section class="rounded-lg border border-border bg-card p-5 space-y-4">
-      <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Quién gestiona mi calendario', en: 'Who manages my calendar' }) }}</h2>
-      <CalendarGrantsSection :professional-user-id="auth.user?.id ?? null" />
-    </section>
+      <section class="rounded-lg border border-border bg-card p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Mis servicios', en: 'My services' }) }}</h2>
+        <p class="text-sm text-neutral">
+          {{ label({ es: 'Anticipación de reserva por servicio, en días. Vacío = valor del negocio.', en: 'Per-service booking window, in days. Empty = business default.' }) }}
+        </p>
+        <div v-if="svcLoading" class="text-sm text-neutral">…</div>
+        <p v-else-if="svcRows.length === 0" class="text-sm text-neutral">
+          {{ label({ es: 'No hay servicios asignados.', en: 'No services assigned.' }) }}
+        </p>
+        <div v-else class="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 gap-y-2 text-sm">
+          <div></div>
+          <div class="w-20 text-center text-xs font-medium text-neutral">{{ label({ es: 'Mín', en: 'Min' }) }}</div>
+          <div class="w-20 text-center text-xs font-medium text-neutral">{{ label({ es: 'Máx', en: 'Max' }) }}</div>
+          <div></div>
+          <template v-for="row in svcRows" :key="row.id">
+            <div class="truncate font-medium">{{ serviceLabelFor(row.service_id) ?? row.service_id }}</div>
+            <input v-model="row.min" type="number" min="0" class="w-20 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
+            <input v-model="row.max" type="number" min="0" class="w-20 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
+            <AppButton variant="neutral" :loading="row.saving" @click="saveSvc(row)">
+              {{ label({ es: 'Guardar', en: 'Save' }) }}
+            </AppButton>
+          </template>
+        </div>
+      </section>
+
+      <section class="rounded-lg border border-border bg-card p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Cambiar contraseña', en: 'Change password' }) }}</h2>
+        <div class="flex flex-col gap-1">
+          <label for="pf-cur" class="text-sm font-semibold">{{ label({ es: 'Contraseña actual', en: 'Current password' }) }}</label>
+          <PasswordInput id="pf-cur" v-model="pw.current"
+            input-class="w-full max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="pf-new" class="text-sm font-semibold">{{ label({ es: 'Nueva contraseña', en: 'New password' }) }}</label>
+          <PasswordInput id="pf-new" v-model="pw.next"
+            input-class="w-full max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </div>
+        <FieldError :message="pwError" />
+        <AppButton id="pf-pw-save" variant="primary" :loading="pwSaving" @click="changePassword">
+          {{ label({ es: 'Cambiar contraseña', en: 'Change password' }) }}
+        </AppButton>
+      </section>
+
+      <section v-if="auth.user?.role === 'Professional'" class="rounded-lg border border-border bg-card p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Mis licencias', en: 'My time off' }) }}</h2>
+        <MyExceptionsSection />
+      </section>
+
+      <section class="rounded-lg border border-border bg-card p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Quién gestiona mi calendario', en: 'Who manages my calendar' }) }}</h2>
+        <CalendarGrantsSection :professional-user-id="auth.user?.id ?? null" />
+      </section>
+    </div>
   </div>
 </template>

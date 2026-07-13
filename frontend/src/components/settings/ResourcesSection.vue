@@ -8,7 +8,10 @@ import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import AppButton from '@/components/shared/AppButton.vue';
 import ScheduleBlockEditor from '@/components/schedule/ScheduleBlockEditor.vue';
+
+defineProps<{ hideTitle?: boolean }>();
 
 const { label } = useLabel();
 const { toast } = useToast();
@@ -71,6 +74,7 @@ async function confirmDelete() {
     <GenericTable
       :key="reloadKey"
       :table-key="TABLE_KEY"
+      :hide-title="hideTitle"
       @create="onCreate"
       @edit="onEdit"
     >
@@ -85,7 +89,7 @@ async function confirmDelete() {
       </template>
     </GenericTable>
 
-    <DetailPanel :open="panelOpen" :title="label({ es: 'Recurso', en: 'Resource' })" @close="panelOpen = false">
+    <DetailPanel :open="panelOpen" :title="label({ es: 'Sala', en: 'Room' })" @close="panelOpen = false">
       <GenericForm
         :table-key="TABLE_KEY"
         :mode="mode"
@@ -94,20 +98,16 @@ async function confirmDelete() {
         @cancel="panelOpen = false"
       />
       <div v-if="editingRow" class="mt-6 border-t border-border pt-4">
-        <button
-          type="button"
-          class="w-full rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-white hover:bg-destructive-hover"
-          @click="requestDelete(editingRow)"
-        >
-          {{ label({ es: 'Eliminar recurso', en: 'Delete resource' }) }}
-        </button>
+        <AppButton variant="destructive" class="w-full" @click="requestDelete(editingRow)">
+          {{ label({ es: 'Eliminar sala', en: 'Delete room' }) }}
+        </AppButton>
       </div>
     </DetailPanel>
 
     <DetailPanel
       :open="scheduleOpen"
       size="7xl"
-      :title="label({ es: 'Horario del recurso', en: 'Resource schedule' })"
+      :title="label({ es: 'Horario de la sala', en: 'Room schedule' })"
       @close="scheduleOpen = false"
       @after-leave="scheduleResourceId = null"
     >
@@ -119,8 +119,8 @@ async function confirmDelete() {
 
     <ConfirmDialog
       :open="confirmOpen"
-      :title="label({ es: 'Eliminar recurso', en: 'Delete resource' })"
-      :body="label({ es: 'Esta acción no se puede deshacer. ¿Confirmás?', en: 'This action cannot be undone. Confirm?' })"
+      :title="label({ es: 'Eliminar sala', en: 'Delete room' })"
+      :body="label({ es: 'Esta acción no se puede deshacer.', en: 'This action cannot be undone.' })"
       :confirm-label="label({ es: 'Eliminar', en: 'Delete' })"
       :destructive="true"
       @confirm="confirmDelete"

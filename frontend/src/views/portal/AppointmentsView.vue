@@ -165,7 +165,7 @@ const past = computed(() =>
 <template>
   <div class="space-y-8">
     <div class="space-y-4">
-      <h1 class="text-2xl font-bold">{{ t('nav.myAppointments') }}</h1>
+      <h1 class="text-2xl font-semibold">{{ t('nav.myAppointments') }}</h1>
       <AppButton size="lg" class="w-full shadow-md" @click="requestOpen = true">
         <PlusIcon class="mr-2 h-5 w-5" aria-hidden="true" />
         {{ t('actions.requestAppointment') }}

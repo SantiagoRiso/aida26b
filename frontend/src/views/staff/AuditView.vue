@@ -37,7 +37,7 @@ const filterOutcome = ref('');
 const ENTITY_TYPES = [
   { value: '', label: { es: 'Todos los tipos', en: 'All types' } },
   { value: 'appointments', label: { es: 'Turnos', en: 'Appointments' } },
-  { value: 'ledger_entries', label: { es: 'Ledger', en: 'Ledger' } },
+  { value: 'ledger_entries', label: { es: 'Cuenta corriente', en: 'Ledger' } },
   { value: 'auth.users', label: { es: 'Usuarios', en: 'Users' } },
   { value: 'businesses', label: { es: 'Negocio', en: 'Business' } },
   { value: 'permissions', label: { es: 'Permisos', en: 'Permissions' } },
@@ -91,15 +91,15 @@ if (isAdmin.value) {
 </script>
 
 <template>
-  <div class="p-6">
-    <h1 class="text-[28px] font-semibold leading-tight text-heading mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold mb-6">
       {{ label({ es: 'Auditoría', en: 'Audit Log' }) }}
     </h1>
 
     <template v-if="!isAdmin">
       <EmptyState
         :heading="label({ es: 'Acceso restringido', en: 'Access restricted' })"
-        :body="label({ es: 'Solo los administradores pueden ver el log de auditoría.', en: 'Only administrators can view the audit log.' })"
+        :body="label({ es: 'Solo los administradores pueden ver la auditoría.', en: 'Only administrators can view the audit log.' })"
       />
     </template>
 

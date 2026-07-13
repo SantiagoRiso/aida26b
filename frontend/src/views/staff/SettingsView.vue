@@ -6,8 +6,8 @@ const { label } = useLabel();
 </script>
 
 <template>
-  <div class="p-6 max-w-2xl">
-    <h1 class="text-[28px] font-semibold leading-tight text-heading mb-6">
+  <div class="max-w-2xl">
+    <h1 class="text-2xl font-semibold mb-6">
       {{ label({ es: 'Configuración', en: 'Settings' }) }}
     </h1>
 

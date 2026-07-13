@@ -143,7 +143,7 @@ describe('router guard: Guard 1 — unauthenticated → login', () => {
   });
 });
 
-describe('router guard: Guard 2 — must_change_password locks to change-password (D-28)', () => {
+describe('router guard: Guard 2 — must_change_password locks to change-password', () => {
   it('redirects to change-password when must_change_password is true', async () => {
     const { router } = buildTestRouter({ role: 'Admin', must_change_password: true }, false);
     await router.push('/staff/dashboard');
@@ -163,7 +163,7 @@ describe('router guard: Guard 2 — must_change_password locks to change-passwor
   });
 });
 
-describe('router guard: Guard 3 — sessionExpired consumed on next navigation → login (D-27)', () => {
+describe('router guard: Guard 3 — sessionExpired consumed on next navigation → login', () => {
   it('redirects to login when sessionExpired is true and consumes the flag', async () => {
     const { router, ui } = buildTestRouter({ role: 'Admin', must_change_password: false }, true);
     expect(ui.sessionExpired).toBe(true);
@@ -180,7 +180,7 @@ describe('router guard: Guard 3 — sessionExpired consumed on next navigation �
   });
 });
 
-describe('router guard: Guard 4 — role mismatch → toast + stay put (D-29)', () => {
+describe('router guard: Guard 4 — role mismatch → toast + stay put', () => {
   it('pushes a notPermitted toast and stays put when a role is denied', async () => {
     const { router, ui } = buildTestRouter({ role: 'Professional', must_change_password: false }, false);
     await router.push('/staff/dashboard');

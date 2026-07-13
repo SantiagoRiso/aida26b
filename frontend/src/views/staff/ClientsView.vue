@@ -103,8 +103,8 @@ onMounted(load);
       <EmptyState
         :heading="label({ es: 'No hay clientes para mostrar', en: 'No clients to show' })"
         :body="includeUnrelated
-          ? label({ es: 'Probá ajustar la búsqueda.', en: 'Try adjusting your search.' })
-          : label({ es: 'No hay clientes con relación previa. Marcá la casilla para ver todos.', en: 'No clients with a prior relationship. Tick the box to see all.' })"
+          ? label({ es: 'No hay resultados para la búsqueda.', en: 'No results for the search.' })
+          : label({ es: 'No hay clientes con relación previa.', en: 'No clients with a prior relationship.' })"
       />
     </div>
 

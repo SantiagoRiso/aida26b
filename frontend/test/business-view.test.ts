@@ -29,6 +29,12 @@ vi.mock('@/api/grants', () => ({
   createGrant: vi.fn().mockResolvedValue({ ok: true, data: { id: '1' } }),
   revokeGrant: vi.fn().mockResolvedValue({ ok: true, data: { id: '1', revoked: true } }),
 }));
+// The business-closures accordion mounts BusinessClosuresSection (v-show); stub so it stays offline.
+vi.mock('@/api/closures', () => ({
+  listClosures: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  createClosure: vi.fn().mockResolvedValue({ ok: true, data: { id: '1' } }),
+  deleteClosure: vi.fn().mockResolvedValue({ ok: true, data: { id: '1', deleted: true } }),
+}));
 
 function makeI18n() {
   return createI18n({ legacy: false, locale: 'es', messages: { es, en } });

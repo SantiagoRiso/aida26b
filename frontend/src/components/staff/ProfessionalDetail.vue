@@ -192,7 +192,7 @@ onMounted(load);
     <template v-else>
       <EmptyState
         :heading="label({ es: 'Profesional no encontrado', en: 'Professional not found' })"
-        :body="label({ es: 'No pudimos cargar este profesional.', en: 'We could not load this professional.' })"
+        :body="label({ es: 'No se pudo cargar este profesional.', en: 'Could not load this professional.' })"
       />
     </template>
 
@@ -214,7 +214,7 @@ onMounted(load);
     <ConfirmDialog
       :open="deactivateConfirmOpen"
       :title="label({ es: 'Desactivar profesional', en: 'Deactivate professional' })"
-      :body="label({ es: `Desactivar a ${professional?.display_name ?? ''}: no va a poder iniciar sesión ni ser asignado a nuevos turnos. ¿Confirmás?`, en: `Deactivate ${professional?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments. Confirm?` })"
+      :body="label({ es: `Desactivar a ${professional?.display_name ?? ''}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${professional?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments.` })"
       :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
       :destructive="true"
       @confirm="confirmDeactivate"

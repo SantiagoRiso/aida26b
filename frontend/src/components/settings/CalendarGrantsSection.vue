@@ -51,7 +51,6 @@ watch(
   { immediate: true },
 );
 
-// Grantable = staff other than the professional themselves, minus anyone already granted.
 const grantableOptions = computed(() => {
   const grantedIds = new Set(grants.value.map((g) => g.grantee_user_id));
   return staff.value
@@ -93,7 +92,7 @@ async function revoke(id: string) {
 <template>
   <div class="space-y-4">
     <p v-if="professionalUserId == null" class="text-sm text-neutral">
-      {{ label({ es: 'Elegí un profesional para ver sus permisos.', en: 'Pick a professional to see their permissions.' }) }}
+      {{ label({ es: 'Seleccionar un profesional para ver sus permisos.', en: 'Select a professional to see their permissions.' }) }}
     </p>
 
     <template v-else>
@@ -117,14 +116,14 @@ async function revoke(id: string) {
             :loading="revokingId === g.id"
             @click="revoke(g.id)"
           >
-            {{ label({ es: 'Revocar', en: 'Revoke' }) }}
+            {{ label({ es: 'Quitar acceso', en: 'Remove access' }) }}
           </AppButton>
         </li>
       </ul>
 
       <div class="flex flex-wrap items-end gap-3 border-t border-border pt-4">
         <label class="flex min-w-[220px] flex-1 flex-col gap-1 text-sm">
-          <span class="font-medium text-neutral">{{ label({ es: 'Otorgar acceso a', en: 'Grant access to' }) }}</span>
+          <span class="font-medium text-neutral">{{ label({ es: 'Dar acceso a', en: 'Give access to' }) }}</span>
           <Selector
             id="grant-grantee-select"
             v-model="selectedGranteeId"
@@ -139,7 +138,7 @@ async function revoke(id: string) {
           :loading="granting"
           @click="grant"
         >
-          {{ label({ es: 'Otorgar', en: 'Grant' }) }}
+          {{ label({ es: 'Dar acceso', en: 'Give access' }) }}
         </AppButton>
       </div>
       <FieldError :message="grantError" />

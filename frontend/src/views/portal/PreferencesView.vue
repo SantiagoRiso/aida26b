@@ -9,7 +9,7 @@ const { t } = useI18n();
 
 <template>
   <div class="space-y-6">
-    <h1 class="text-2xl font-bold">{{ t('nav.preferences') }}</h1>
+    <h1 class="text-2xl font-semibold">{{ t('nav.preferences') }}</h1>
 
     <section class="rounded-lg border border-border bg-card p-6 space-y-4">
       <!-- Bilingual heading so a user stuck in the wrong language still finds the toggle. -->

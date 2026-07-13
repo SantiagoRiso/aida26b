@@ -5,15 +5,18 @@ import { useLabel } from '@/composables/useLabel';
 import { useCurrency } from '@/composables/useCurrency';
 import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
-import { getRow } from '@/api/crud';
+import { getRow, listRows } from '@/api/crud';
 import { getBalance } from '@/api/ledger';
+import { getAvailability } from '@/api/scheduling';
 import { listAppointments, approveAppointment, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 import type { TableRecordMap } from '@shared/types/types';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
+import { mergeIntervals, complementIntervals } from '@/composables/calendarGrid';
 import type { AuthUser } from '@/stores/auth';
-import type { EventContentArg } from '@fullcalendar/core';
+import type { EventContentArg, EventInput } from '@fullcalendar/core';
 import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -21,11 +24,12 @@ import DetailPanel from '@/components/shared/DetailPanel.vue';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
+import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
 
 // The server scopes /appointments by role (Admin: all, Professional: own,
 // Receptionist: granted), so the requested rows returned here already respect
 // who may see which requests.
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { label } = useLabel();
 const { formatDateTime, formatARS } = useCurrency();
 const toast = useToast();
@@ -45,6 +49,16 @@ async function load() {
   }
 }
 onMounted(load);
+
+// Filter the already-loaded (role-scoped) list by professional, client-side — no refetch. The
+// picker self-hides unless more than one professional is in scope, so a Professional / single-grant
+// Receptionist never sees it and keeps their full list (which is already only their requests).
+const selectedProfessionalId = ref<number | null>(null);
+const filteredRequests = computed(() => {
+  const sel = selectedProfessionalId.value;
+  // Wire rows serialize ids as strings, so compare as strings (a strict number === always misses).
+  return sel == null ? requests.value : requests.value.filter((a) => String(a.professional_user_id) === String(sel));
+});
 
 const { labelFor: clientLabelFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
 const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
@@ -71,6 +85,24 @@ const loadingDetail = ref(false);
 // The professional's whole day around the requested slot — shown as a read-only day calendar
 // so the request can be judged against that day's existing schedule.
 const dayAppts = ref<Appointment[]>([]);
+// That day's free windows + working blocks, to reproduce the main calendar's availability
+// background (off-hours hatch, occupied/requested washes, free-slot outlines) around the request.
+const dayFreeSlots = ref<{ start: number; end: number }[]>([]);
+const dayBlocks = ref<{ weekday: string; start: number; end: number; slotMinutes: number }[]>([]);
+
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_END_MINUTES = 24 * 60;
+function toMinutes(hhmm: string): number { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
+function toHHMM(min: number): string { const p = (n: number) => String(n).padStart(2, '0'); return `${p(Math.floor(min / 60))}:${p(min % 60)}`; }
+
+const dayHeading = computed(() => {
+  const appt = detailAppt.value;
+  if (!appt) return '';
+  const d = new Date(`${appt.starts_at.slice(0, 10)}T00:00:00`);
+  const weekday = d.toLocaleDateString(locale.value === 'en' ? 'en-US' : 'es-AR', { weekday: 'long' });
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${weekday} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+});
 
 function dayAfter(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00`);
@@ -85,12 +117,16 @@ async function openDetail(appt: Appointment) {
   clientBalance.value = null;
   clientAppts.value = [];
   dayAppts.value = [];
+  dayFreeSlots.value = [];
+  dayBlocks.value = [];
   const cid = appt.client_user_id;
+  const pid = String(appt.professional_user_id);
   loadingDetail.value = true;
   const day = appt.starts_at.slice(0, 10);
   // Ledger reads are allowed for anyone who can see the request (the request itself is the
   // relationship). The appointment history is the caller's own scoped view of this client.
-  const [prof, bal, appts, proDay] = await Promise.all([
+  // The professional's availability + working blocks drive the day calendar's background shading.
+  const [prof, bal, appts, proDay, avail, blocksRes, offersRes, servicesRes] = await Promise.all([
     cid != null ? getRow('clients', cid) : Promise.resolve(null),
     cid != null ? getBalance(cid) : Promise.resolve(null),
     cid != null ? listAppointments({ client_user_id: cid, limit: 500 }) : Promise.resolve(null),
@@ -100,11 +136,39 @@ async function openDetail(appt: Appointment) {
       date_to: dayAfter(day),
       limit: 200,
     }),
+    getAvailability(`prof:${pid}`, day),
+    listRows('schedule_blocks', { filters: { professional_user_id: pid }, limit: 500 }),
+    listRows('schedule_block_services', { filters: { professional_user_id: pid }, limit: 500 }),
+    listRows('services', { limit: 500 }),
   ]);
   if (prof && prof.ok) clientProfile.value = prof.data;
   clientBalance.value = bal && bal.ok ? bal.data.balance_ars : null;
   clientAppts.value = appts && appts.ok ? appts.data : [];
   dayAppts.value = proDay.ok ? proDay.data : [];
+  dayFreeSlots.value = avail.ok
+    ? avail.data.slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) }))
+    : [];
+  // A block tiles by its (first offered) service's effective duration — the per-block override,
+  // else the service default. 30 min when unknown. Mirrors the staff calendar's slot sizing.
+  const serviceDefault = new Map<string, number>();
+  if (servicesRes.ok) for (const s of servicesRes.data) serviceDefault.set(String(s.id), Number(s.default_duration_minutes));
+  const blockSlot = new Map<string, number>();
+  if (offersRes.ok) for (const o of offersRes.data) {
+    const key = String(o.schedule_block_id);
+    if (blockSlot.has(key)) continue;
+    const dur = o.duration_minutes != null ? Number(o.duration_minutes) : serviceDefault.get(String(o.service_id));
+    if (dur && dur > 0) blockSlot.set(key, dur);
+  }
+  dayBlocks.value = blocksRes.ok
+    ? blocksRes.data
+        .filter((r) => r.resource_id == null)
+        .map((r) => ({
+          weekday: String(r.weekday),
+          start: toMinutes(r.start_time.slice(0, 5)),
+          end: toMinutes(r.end_time.slice(0, 5)),
+          slotMinutes: blockSlot.get(String(r.id)) ?? 30,
+        }))
+    : [];
   loadingDetail.value = false;
 }
 
@@ -120,7 +184,63 @@ function onDetailAfterLeave() {
   clientBalance.value = null;
   clientAppts.value = [];
   dayAppts.value = [];
+  dayFreeSlots.value = [];
+  dayBlocks.value = [];
 }
+
+// Reproduce the staff calendar's availability background for the request's day and professional:
+// off-hours grey hatch, occupied/requested washes, a flat past wash, and dotted free-slot outlines.
+// Same classNames as the main calendar — styled by CalendarView's own scoped CSS.
+const dayBgEvents = computed<EventInput[]>(() => {
+  const appt = detailAppt.value;
+  if (!appt) return [];
+  const day = appt.starts_at.slice(0, 10);
+  const out: EventInput[] = [];
+  const push = (s: number, e: number, cls: string) => {
+    if (e > s) out.push({ start: `${day}T${toHHMM(s)}:00`, end: `${day}T${toHHMM(e)}:00`, display: 'background', classNames: [cls] });
+  };
+
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  // A fully past day can't be booked — grey the whole column and skip the availability shading.
+  if (day < today) { push(0, DAY_END_MINUTES, 'fc-slot-past'); return out; }
+  const floor = day === today ? now.getHours() * 60 + now.getMinutes() : 0;
+  if (floor > 0) push(0, floor, 'fc-slot-past');
+
+  const VOID = new Set<string>(VOID_APPOINTMENT_STATES);
+  const occupied: { start: number; end: number }[] = [];
+  const requested: { start: number; end: number }[] = [];
+  for (const a of dayAppts.value) {
+    if (VOID.has(a.state)) continue;
+    const s = new Date(a.starts_at);
+    const e = new Date(a.ends_at);
+    const start = s.getHours() * 60 + s.getMinutes();
+    let end = e.getHours() * 60 + e.getMinutes();
+    if (end <= start) end = DAY_END_MINUTES;
+    (a.state === 'requested' ? requested : occupied).push({ start, end });
+  }
+
+  const clip = (iv: { start: number; end: number }) => ({ start: Math.max(iv.start, floor), end: iv.end });
+  for (const iv of mergeIntervals(occupied.map(clip))) push(iv.start, iv.end, 'fc-slot-occupied');
+  for (const iv of mergeIntervals(requested.map(clip))) push(iv.start, iv.end, 'fc-slot-requested-bg');
+  // Never-available time (off-hours / day off) — neither free nor booked — is the grey hatch.
+  const working = mergeIntervals([...dayFreeSlots.value, ...occupied, ...requested]);
+  for (const g of complementIntervals(working, floor, DAY_END_MINUTES)) push(g.start, g.end, 'fc-res-closed');
+
+  // A dotted outline per free, bookable schedule slot (each block tiled by its own slot size).
+  const wk = WEEKDAY_KEYS[new Date(`${day}T00:00:00`).getDay()];
+  const booked = [...occupied, ...requested];
+  for (const b of dayBlocks.value) {
+    if (b.weekday !== wk) continue;
+    for (let s = b.start; s + b.slotMinutes <= b.end; s += b.slotMinutes) {
+      if (s < floor) continue;
+      if (booked.some((k) => s < k.end && k.start < s + b.slotMinutes)) continue;
+      push(s, s + b.slotMinutes, 'fc-slot-outline');
+    }
+  }
+  return out;
+});
 
 // Read-only day calendar for the request's professional + date. Null viewer keeps it
 // non-editable; a fresh :key per request re-applies initialDate on open.
@@ -135,7 +255,14 @@ const dayCalendarOptions = computed(() => ({
   ...dayCalendarBase.value,
   initialView: 'timeGridDay',
   initialDate: detailAppt.value ? detailAppt.value.starts_at.slice(0, 10) : undefined,
+  events: [
+    ...((dayCalendarBase.value.events as EventInput[]) ?? []),
+    ...dayBgEvents.value,
+  ],
   headerToolbar: false as const,
+  // The single day column's header carries the request's weekday + date (e.g. "miércoles 15/07"),
+  // so it doesn't need to sit in the panel title.
+  dayHeaderContent: () => dayHeading.value,
   // Fill the calendar column instead of a short fixed block (parent gives it the height).
   height: '100%' as const,
   expandRows: true,
@@ -213,24 +340,28 @@ async function confirmReject() {
 </script>
 
 <template>
-  <div class="p-6">
-    <h1 class="text-[28px] font-semibold leading-tight text-heading mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold mb-6">
       {{ label({ es: 'Solicitudes', en: 'Requests' }) }}
     </h1>
+
+    <div class="mb-6 max-w-[260px]">
+      <ProfessionalPicker allow-all v-model="selectedProfessionalId" />
+    </div>
 
     <div v-if="loading">
       <Skeleton variant="row" :rows="4" />
     </div>
 
     <EmptyState
-      v-else-if="requests.length === 0"
+      v-else-if="filteredRequests.length === 0"
       :heading="label({ es: 'Sin solicitudes pendientes', en: 'No pending requests' })"
-      :body="label({ es: 'Cuando un cliente pida un turno, va a aparecer acá.', en: 'When a client requests an appointment, it shows up here.' })"
+      :body="label({ es: 'Las solicitudes de turno aparecen aquí.', en: 'Appointment requests appear here.' })"
     />
 
     <ul v-else class="space-y-3">
       <li
-        v-for="appt in requests"
+        v-for="appt in filteredRequests"
         :key="appt.id"
         class="cursor-pointer rounded-lg border border-border bg-card p-4 transition-colors hover:border-accent/50 hover:bg-accent/5"
         role="button"
@@ -373,7 +504,7 @@ async function confirmReject() {
     <ConfirmDialog
       :open="rejectTarget !== null"
       :title="label({ es: 'Rechazar solicitud', en: 'Reject request' })"
-      :body="label({ es: '¿Rechazás esta solicitud de turno? Esta acción no se puede deshacer.', en: 'Reject this appointment request? This cannot be undone.' })"
+      :body="label({ es: '¿Rechazar esta solicitud? Esta acción no se puede deshacer.', en: 'Reject this request? This cannot be undone.' })"
       :confirm-label="label({ es: 'Rechazar', en: 'Reject' })"
       :destructive="true"
       @confirm="confirmReject"

@@ -71,7 +71,7 @@ onMounted(load);
 
 <template>
   <div class="space-y-8">
-    <h1 class="text-2xl font-bold">{{ t('nav.myBalance') }}</h1>
+    <h1 class="text-2xl font-semibold">{{ t('nav.myBalance') }}</h1>
 
     <section :aria-label="t('portal.balanceSummaryLabel')">
       <div v-if="loadingBalance">

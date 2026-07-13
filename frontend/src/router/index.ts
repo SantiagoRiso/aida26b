@@ -73,7 +73,6 @@ router.beforeEach((to) => {
     return { name: 'login' };
   }
 
-  // Role gate: user authenticated but lacks permission — stay put and notify.
   if (to.meta.roles && auth.user && !roleAllowedFor(to.meta.roles, auth.user.role)) {
     ui.toast('error', 'notPermitted');
     return false;

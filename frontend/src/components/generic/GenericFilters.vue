@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { structure } from '@shared/ssot/structure';
 import type { TableKey, ColumnDef } from '@shared/types/types';
+import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{ tableKey: TableKey }>();
 const emit = defineEmits<{ change: [filters: Record<string, string>] }>();
@@ -94,14 +95,9 @@ function onValueChange() {
           {{ label(col.label) }}
         </option>
       </select>
-      <button
-        type="button"
-        class="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-        :disabled="!selectedField"
-        @click="addFilter"
-      >
+      <AppButton size="sm" :disabled="!selectedField" @click="addFilter">
         {{ label({ es: 'Agregar', en: 'Add' }) }}
-      </button>
+      </AppButton>
     </div>
 
     <div v-for="f in filters" :key="f.field" class="flex flex-wrap items-center gap-2 rounded-md bg-surface px-3 py-2">

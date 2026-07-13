@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import {
   Dialog,
   DialogPanel,
@@ -6,6 +7,7 @@ import {
   TransitionRoot,
   TransitionChild,
 } from '@headlessui/vue';
+import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -19,6 +21,8 @@ const emit = defineEmits<{
   confirm: [];
   cancel: [];
 }>();
+
+const { t } = useI18n();
 </script>
 
 <template>
@@ -51,23 +55,12 @@ const emit = defineEmits<{
             <p class="mt-2 text-sm text-neutral">{{ body }}</p>
 
             <div class="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                class="min-h-[44px] rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-surface"
-                @click="emit('cancel')"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                :class="[
-                  'min-h-[44px] rounded-md px-4 py-2 text-sm font-semibold text-white',
-                  destructive ? 'bg-destructive hover:bg-destructive-hover' : 'bg-accent hover:bg-accent-hover',
-                ]"
-                @click="emit('confirm')"
-              >
+              <AppButton variant="neutral" @click="emit('cancel')">
+                {{ t('actions.cancel') }}
+              </AppButton>
+              <AppButton :variant="destructive ? 'destructive' : 'primary'" @click="emit('confirm')">
                 {{ confirmLabel }}
-              </button>
+              </AppButton>
             </div>
           </DialogPanel>
         </TransitionChild>

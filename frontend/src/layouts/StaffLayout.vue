@@ -16,7 +16,9 @@ async function logout() {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-surface">
+  <!-- Fixed to the viewport height so the sidebar stays put and only <main> scrolls when a view
+       is taller than the screen (otherwise the whole page scrolls and the sidebar leaves with it). -->
+  <div class="flex h-screen bg-surface">
     <aside class="flex w-56 flex-col border-r border-border bg-card">
       <div class="flex h-14 items-center px-4 border-b border-border">
         <span class="text-sm font-semibold text-current truncate">Agenda</span>

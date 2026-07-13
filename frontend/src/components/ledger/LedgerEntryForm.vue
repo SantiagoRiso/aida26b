@@ -131,7 +131,7 @@ async function submit() {
         class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         required
       >
-        <option value="">{{ label({ es: 'Seleccioná un tipo', en: 'Select a type' }) }}</option>
+        <option value="">{{ label({ es: 'Seleccionar un tipo', en: 'Select a type' }) }}</option>
         <option
           v-for="type in availableTypes"
           :key="type.value"
