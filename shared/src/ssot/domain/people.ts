@@ -29,7 +29,7 @@ const professionalSchedulable: SchedulableCapability = {
 };
 
 const resourceSchedulable: SchedulableCapability = {
-  calendarLabel: { es: 'Recurso', en: 'Resource' },
+  calendarLabel: { es: 'Sala', en: 'Room' },
   identityField: 'id',
   displayField: 'name',
   ownerForeignKey: 'resource_id',
@@ -89,7 +89,7 @@ export const peopleTables = {
       },
       must_change_password: {
         type: 'boolean',
-        label: { es: 'Debe Cambiar Contraseña', en: 'Must Change Password' },
+        label: { es: 'Debe cambiar contraseña', en: 'Must Change Password' },
         filterable: false,
         sortable: false,
       },
@@ -202,7 +202,7 @@ export const peopleTables = {
     pk: 'id',
     uiName: { es: 'Cliente', en: 'Client' },
     title: { es: 'Clientes', en: 'Clients' },
-    addButtonLabel: { es: 'Agregar Cliente', en: 'Add Client' },
+    addButtonLabel: { es: 'Agregar cliente', en: 'Add Client' },
     sqlTable: 'auth.users',
     sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Client' },
@@ -245,7 +245,7 @@ export const peopleTables = {
     pk: 'id',
     uiName: { es: 'Profesional', en: 'Professional' },
     title: { es: 'Profesionales', en: 'Professionals' },
-    addButtonLabel: { es: 'Agregar Profesional', en: 'Add Professional' },
+    addButtonLabel: { es: 'Agregar profesional', en: 'Add Professional' },
     sqlTable: 'auth.users',
     sqlReadTable: 'auth.users_directory',
     roleDiscriminator: { column: 'role', value: 'Professional' },
@@ -288,9 +288,9 @@ export const peopleTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Recurso', en: 'Resource' },
-    title: { es: 'Recursos', en: 'Resources' },
-    addButtonLabel: { es: 'Agregar Recurso', en: 'Add Resource' },
+    uiName: { es: 'Sala', en: 'Room' },
+    title: { es: 'Salas', en: 'Rooms' },
+    addButtonLabel: { es: 'Agregar sala', en: 'Add Room' },
     businessScoped: true,
     crud: { create: true, read: true, update: true, delete: true },
     softDelete,

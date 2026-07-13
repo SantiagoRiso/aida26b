@@ -51,7 +51,7 @@ export const catalogTables = {
     pk: 'id',
     uiName: { es: 'Servicio', en: 'Service' },
     title: { es: 'Servicios', en: 'Services' },
-    addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    addButtonLabel: { es: 'Agregar servicio', en: 'Add Service' },
     businessScoped: true,
     crud: { create: true, read: true, update: true, delete: true },
     softDelete,
@@ -100,9 +100,9 @@ export const catalogTables = {
       price_ars: priceColumn,
     },
     pk: 'id',
-    uiName: { es: 'Precio por Cliente', en: 'Client Price' },
-    title: { es: 'Precios por Cliente', en: 'Client Prices' },
-    addButtonLabel: { es: 'Agregar Precio', en: 'Add Price' },
+    uiName: { es: 'Precio por cliente', en: 'Client Price' },
+    title: { es: 'Precios por cliente', en: 'Client Prices' },
+    addButtonLabel: { es: 'Agregar precio', en: 'Add Price' },
     crud: { create: true, read: true, update: true, delete: false },
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'client_user_id', parentPk: 'id' }],
@@ -163,9 +163,9 @@ export const catalogTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Servicio del Profesional', en: 'Professional Service' },
-    title: { es: 'Servicios del Profesional', en: 'Professional Services' },
-    addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    uiName: { es: 'Servicio del profesional', en: 'Professional Service' },
+    title: { es: 'Servicios del profesional', en: 'Professional Services' },
+    addButtonLabel: { es: 'Agregar servicio', en: 'Add Service' },
     crud: { create: true, read: true, update: true, delete: true },
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
@@ -184,17 +184,15 @@ export const catalogTables = {
 
 // Resolves the booking's captured price and duration.
 //   Price    = client override > per-block/service override > service default.
-//   Duration = staff sobreturno > per-block/service override > service default > (legacy) slot.
+//   Duration = staff sobreturno > per-block/service override > service default.
 // The dry-run and the save call this so preview never drifts from the saved value. Prices stay
-// decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'. slotGranularityMinutes is a legacy
-// fallback for pre-block callers and is retained until every caller supplies a service default.
+// decimal strings matching priceColumn's '^\d+(\.\d{1,2})?$'.
 export function resolveBooking(input: {
   serviceDefaultPriceArs: string;
   serviceDefaultDurationMinutes?: number | null;
   clientOverridePriceArs?: string | null;
   blockServicePriceArs?: string | null;
   blockServiceDurationMinutes?: number | null;
-  slotGranularityMinutes?: number | null;
   sobreturnoDurationMinutes?: number | null;
 }): { effective_price: string; effective_duration_minutes: number } {
   const price = (v?: string | null): string | undefined =>
@@ -209,11 +207,10 @@ export function resolveBooking(input: {
   const effective_duration_minutes =
     dur(input.sobreturnoDurationMinutes) ??
     dur(input.blockServiceDurationMinutes) ??
-    dur(input.serviceDefaultDurationMinutes) ??
-    dur(input.slotGranularityMinutes);
+    dur(input.serviceDefaultDurationMinutes);
   if (effective_duration_minutes === undefined) {
     throw new Error(
-      'resolveBooking requires a duration source: service default, block override, slot, or sobreturno',
+      'resolveBooking requires a duration source: service default, block override, or sobreturno',
     );
   }
 

@@ -47,7 +47,7 @@ export const businessTables = {
       },
       timezone: {
         type: 'string',
-        label: { es: 'Zona Horaria', en: 'Timezone' },
+        label: { es: 'Zona horaria', en: 'Timezone' },
         validator: { required: true },
         filterable: false,
         sortable: false,
@@ -113,7 +113,7 @@ export const businessTables = {
       },
       entity_id: {
         type: 'string',
-        label: { es: 'ID Entidad', en: 'Entity ID' },
+        label: { es: 'ID de entidad', en: 'Entity ID' },
         validator: { nullable: true },
         filterable: true,
         sortable: false,
@@ -129,7 +129,7 @@ export const businessTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Evento de Auditoría', en: 'Audit Event' },
+    uiName: { es: 'Evento de auditoría', en: 'Audit Event' },
     title: { es: 'Auditoría', en: 'Audit Log' },
     businessScoped: true,
     protected: true,

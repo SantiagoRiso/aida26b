@@ -79,7 +79,7 @@ export const financeTables = {
     },
     pk: 'id',
     uiName: { es: 'Movimiento', en: 'Ledger Entry' },
-    title: { es: 'Cuenta Corriente', en: 'Ledger' },
+    title: { es: 'Cuenta corriente', en: 'Ledger' },
     protected: true,
     status: {
       column: 'entry_type',

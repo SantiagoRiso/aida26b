@@ -34,7 +34,7 @@ type BusinessJoinPath = {
   parentPk:    string;
 };
 
-// Two paths support dual-owner tables (schedules, schedule_exceptions).
+// Two paths support dual-owner tables (schedule_blocks, schedule_exceptions).
 type BusinessJoinDescriptor = {
   paths: BusinessJoinPath[];
 };
@@ -133,7 +133,7 @@ type SchedulableCapability = {
   calendarLabel: LocalizedText;
   identityField: string;
   displayField: string;
-  ownerForeignKey: string;            // FK column naming this owner on schedules/appointments
+  ownerForeignKey: string;            // FK column naming this owner on schedule_blocks/appointments
   availability: {
     weeklySource: string;
     exceptionSource: string;

@@ -67,7 +67,6 @@ export function getScheduleOwnerForeignKeys(): string[] {
   return [...fks];
 }
 
-// True when a table declares the professional owner+grant guard for this write op.
 export function professionalOwnerGuardedOn(
   tableKey: string,
   op: 'create' | 'update' | 'delete',

@@ -59,7 +59,7 @@ const APPOINTMENT_STATES = [
   { value: 'scheduled', label: { es: 'Agendado', en: 'Scheduled' } },
   { value: 'completed', label: { es: 'Completado', en: 'Completed' } },
   { value: 'canceled', label: { es: 'Cancelado', en: 'Canceled' } },
-  { value: 'no_show', label: { es: 'No Asistió', en: 'No Show' } },
+  { value: 'no_show', label: { es: 'No asistió', en: 'No Show' } },
   { value: 'rejected', label: { es: 'Rechazado', en: 'Rejected' } },
 ] as const;
 
@@ -85,7 +85,7 @@ export const schedulingTables = {
       },
       resource_id: {
         type: 'string',
-        label: { es: 'Recurso', en: 'Resource' },
+        label: { es: 'Sala', en: 'Room' },
         input: 'select',
         validator: { nullable: true },
         filterable: true,
@@ -111,23 +111,23 @@ export const schedulingTables = {
       },
       start_time: {
         type: 'string',
-        label: { es: 'Hora Inicio', en: 'Start Time' },
+        label: { es: 'Hora inicio', en: 'Start Time' },
         validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
         filterable: false,
         sortable: true,
       },
       end_time: {
         type: 'string',
-        label: { es: 'Hora Fin', en: 'End Time' },
+        label: { es: 'Hora fin', en: 'End Time' },
         validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
         filterable: false,
         sortable: false,
       },
     },
     pk: 'id',
-    uiName: { es: 'Bloque de Horario', en: 'Schedule Block' },
-    title: { es: 'Bloques de Horario', en: 'Schedule Blocks' },
-    addButtonLabel: { es: 'Agregar Bloque', en: 'Add Block' },
+    uiName: { es: 'Bloque de horario', en: 'Schedule Block' },
+    title: { es: 'Bloques de horario', en: 'Schedule Blocks' },
+    addButtonLabel: { es: 'Agregar bloque', en: 'Add Block' },
     crud: { create: true, read: true, update: true, delete: true },
     businessJoin: {
       paths: [
@@ -202,9 +202,9 @@ export const schedulingTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Servicio del Bloque', en: 'Block Service' },
-    title: { es: 'Servicios del Bloque', en: 'Block Services' },
-    addButtonLabel: { es: 'Agregar Servicio', en: 'Add Service' },
+    uiName: { es: 'Servicio del bloque', en: 'Block Service' },
+    title: { es: 'Servicios del bloque', en: 'Block Services' },
+    addButtonLabel: { es: 'Agregar servicio', en: 'Add Service' },
     crud: { create: true, read: true, update: true, delete: true },
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
@@ -239,12 +239,25 @@ export const schedulingTables = {
       },
       resource_id: {
         type: 'string',
-        label: { es: 'Recurso', en: 'Resource' },
+        label: { es: 'Sala', en: 'Room' },
         input: 'select',
         validator: { nullable: true },
         filterable: true,
         sortable: false,
         foreignKey: { table: 'resources', valueField: 'id', labelField: 'name' },
+      },
+      // The third owner: a business-wide closure. Set only when both owners are null, stamped
+      // server-side by the closures endpoint — never accepted from a request body (editable: false),
+      // so the generic write path leaves it null and a per-owner row keeps deriving business via its
+      // owner. Exactly one of professional_user_id / resource_id / business_id is non-null (DB CHECK).
+      business_id: {
+        type: 'string',
+        label: { es: 'Negocio', en: 'Business' },
+        editable: false,
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
       },
       exception_date: {
         type: 'string',
@@ -256,21 +269,21 @@ export const schedulingTables = {
       },
       is_unavailable: {
         type: 'boolean',
-        label: { es: 'No Disponible', en: 'Unavailable' },
+        label: { es: 'No disponible', en: 'Unavailable' },
         validator: { nullable: true },
         filterable: true,
         sortable: false,
       },
       start_time: {
         type: 'string',
-        label: { es: 'Hora Inicio', en: 'Start Time' },
+        label: { es: 'Hora inicio', en: 'Start Time' },
         validator: { nullable: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
         filterable: false,
         sortable: false,
       },
       end_time: {
         type: 'string',
-        label: { es: 'Hora Fin', en: 'End Time' },
+        label: { es: 'Hora fin', en: 'End Time' },
         validator: { nullable: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
         filterable: false,
         sortable: false,
@@ -278,7 +291,7 @@ export const schedulingTables = {
       // Required only for a changed-hours "available" exception; null for full-day/blocked (DB CHECK).
       granularity_minutes: {
         type: 'number',
-        label: { es: 'Granularidad (min)', en: 'Granularity (min)' },
+        label: { es: 'Intervalo (min)', en: 'Interval (min)' },
         input: 'number',
         validator: { nullable: true, integer: true, minValue: 1 },
         filterable: false,
@@ -338,7 +351,7 @@ export const schedulingTables = {
       },
       resource_id: {
         type: 'string',
-        label: { es: 'Recurso', en: 'Resource' },
+        label: { es: 'Sala', en: 'Room' },
         input: 'select',
         validator: { nullable: true },
         filterable: true,
@@ -414,7 +427,7 @@ export const schedulingTables = {
       },
       override_conflict: {
         type: 'boolean',
-        label: { es: 'Conflicto Forzado', en: 'Conflict Override' },
+        label: { es: 'Conflicto forzado', en: 'Conflict Override' },
         filterable: true,
         sortable: false,
       },
@@ -430,7 +443,7 @@ export const schedulingTables = {
       // Staff-only memo field. Writable in any state; once terminal it is the only editable field.
       staff_note: {
         type: 'string',
-        label: { es: 'Nota de Staff', en: 'Staff Note' },
+        label: { es: 'Nota de staff', en: 'Staff Note' },
         input: 'textarea',
         validator: { nullable: true },
         filterable: false,
@@ -463,7 +476,7 @@ export const schedulingTables = {
       },
       grantee_user_id: {
         type: 'string',
-        label: { es: 'Usuario Autorizado', en: 'Grantee' },
+        label: { es: 'Usuario autorizado', en: 'Grantee' },
         input: 'select',
         validator: { required: true },
         filterable: true,
@@ -472,8 +485,8 @@ export const schedulingTables = {
       },
     },
     pk: 'id',
-    uiName: { es: 'Permiso de Calendario', en: 'Calendar Grant' },
-    title: { es: 'Permisos de Calendario', en: 'Calendar Grants' },
+    uiName: { es: 'Permiso de calendario', en: 'Calendar Grant' },
+    title: { es: 'Permisos de calendario', en: 'Calendar Grants' },
     protected: true,
     businessJoin: {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
@@ -558,10 +571,6 @@ export function detectOverlap(
 // caller resolves slot_minutes; this function only tiles.
 export type ServiceBlock = { start: string; end: string; slot_minutes: number };
 
-// Service-driven slots for one owner on one date: each block chopped into back-to-back slots of
-// its own slot_minutes (measured from block start), kept only when the slot lies fully inside the
-// available window (blocks ± exceptions) and overlaps no booked interval. End-exclusive. The slot
-// size comes from the chosen service, not a fixed per-block grid.
 // Working windows for one date after exceptions: blocks ∪ extra-hours − blocked-hours, merged.
 // Empty on a full-day off. The service-independent base the slot tiler and the free-window view
 // both build on.
@@ -597,6 +606,10 @@ export function computeFreeWindows(input: {
   return subtractIntervals(available, bookedMin).map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
 }
 
+// Service-driven slots for one owner on one date: each block chopped into back-to-back slots of
+// its own slot_minutes (measured from block start), kept only when the slot lies fully inside the
+// available window (blocks ± exceptions) and overlaps no booked interval. End-exclusive. The slot
+// size comes from the chosen service, not a fixed per-block grid.
 export function computeServiceSlots(input: {
   blocks: ServiceBlock[];
   exceptions?: ScheduleExceptionInput[];

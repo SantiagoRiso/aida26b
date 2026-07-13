@@ -75,6 +75,12 @@ export type AppointmentRow = {
   staff_note: string | null;
   created_at: Date;
   updated_at: Date;
+  // Staff acknowledged this turno may overlap time-off — keep it and stop flagging it (suppresses
+  // in_conflict). The one stored bit; reversible.
+  conflict_ignored: boolean;
+  // Present only on list reads: an open, future turno overlapping active time-off (a business
+  // closure or its professional's exception), not yet ignored. Computed per read, never stored.
+  in_conflict?: boolean;
 };
 
 // Wall-clock date/start of an appointment, derived in SQL at the business timezone.
@@ -108,6 +114,16 @@ export type ScheduleExceptionRow = {
   end_time: string | null;
   granularity_minutes: number | null;
 };
+
+// A business-wide closure (schedule_exceptions row owned by the business) as the closures endpoint
+// emits it: dates/times projected to strings for the Negocio management UI.
+export interface BusinessClosureRow {
+  id: string;
+  exception_date: string;      // 'YYYY-MM-DD'
+  start_time: string | null;   // 'HH:MM' or null (full-day closure)
+  end_time: string | null;
+  reason: string | null;
+}
 
 // An open appointment projected to wall-clock HH:MM for conflict evaluation.
 export type BookedAppointmentRow = {
