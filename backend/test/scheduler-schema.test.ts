@@ -337,7 +337,6 @@ test('scheduler-schema: direct-owner tables (resources, services, audit_events) 
       'calendar_grants',
       'schedule_blocks',
       'schedule_block_services',
-      'schedule_exceptions',
       'client_professional_services',
     ];
 
@@ -348,6 +347,15 @@ test('scheduler-schema: direct-owner tables (resources, services, audit_events) 
         `Derived table '${t}' must not have business_id column`
       );
     }
+
+    // schedule_exceptions is the deliberate hybrid: per-owner rows derive business through the owner
+    // (business_id null), but a business-wide closure IS owned by the business, so the column exists
+    // as the optional third owner (exactly one of professional/resource/business is set).
+    assert.equal(
+      await columnExists(pool, 'public', 'schedule_exceptions', 'business_id'),
+      true,
+      'schedule_exceptions carries business_id as its optional third (business-wide) owner'
+    );
   } finally {
     await pool.end();
   }
@@ -460,7 +468,8 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
       return;
     }
 
-    // calendar_grants stays SELECT-only — grant management goes through explicit endpoints.
+    // calendar_grants: grant/revoke run through explicit endpoints as the app role, so INSERT and
+    // DELETE must be granted. UPDATE stays withheld — a grant row is presence-as-access, never mutated.
     const calGrantPerms = await pool.query<{ privilege_type: string }>(
       `SELECT privilege_type
        FROM   information_schema.role_table_grants
@@ -469,11 +478,10 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
          AND  table_name = 'calendar_grants'
          AND  privilege_type IN ('INSERT','UPDATE','DELETE')`,
     );
-    assert.equal(
-      calGrantPerms.rows.length,
-      0,
-      `calendar_grants must not grant INSERT/UPDATE/DELETE to aida26_user; found: ${calGrantPerms.rows.map((x) => x.privilege_type).join(',')}`
-    );
+    const calGrants = new Set(calGrantPerms.rows.map((x) => x.privilege_type));
+    assert.ok(calGrants.has('INSERT'), 'calendar_grants must grant INSERT to aida26_user (grant creation)');
+    assert.ok(calGrants.has('DELETE'), 'calendar_grants must grant DELETE to aida26_user (grant revocation)');
+    assert.ok(!calGrants.has('UPDATE'), 'calendar_grants must not grant UPDATE to aida26_user; grant rows are immutable');
 
     // Immutable tables: UPDATE and DELETE must never be granted.
     for (const t of ['ledger_entries', 'audit_events']) {

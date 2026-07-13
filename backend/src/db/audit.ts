@@ -3,7 +3,7 @@ import type { Queryable } from './core';
 import type { AuditEventRow } from '../../../shared/src/ssot/query-types';
 import type { SqlParam } from '../../../shared/src/types/types';
 
-// Write one audit row. ip is null for in-transaction writes (auditInTx) that don't carry a request.
+// ip is null for in-transaction writes (auditInTx) that don't carry a request.
 export async function insertAuditEvent(
   db: Queryable,
   e: {
@@ -38,8 +38,7 @@ export type AuditListFilter = {
   offset: number;
 };
 
-// Audit events for the session business, newest first. Only code-controlled column names are
-// interpolated; every filter value is a bound $N param.
+// Only code-controlled column names are interpolated; every filter value is a bound $N param.
 export async function listAuditEvents(
   db: Queryable,
   f: AuditListFilter,

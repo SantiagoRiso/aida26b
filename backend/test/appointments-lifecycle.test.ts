@@ -223,7 +223,7 @@ describe('POST /api/appointments/request', () => {
 });
 
 describe('POST /api/appointments/schedule', () => {
-  test('clash without override returns 200 verdict and writes no row (warn-first, D-03)', async () => {
+  test('clash without override returns 200 verdict and writes no row (warn-first)', async () => {
     const blocker = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -343,7 +343,7 @@ describe('cross-business tenant isolation on /schedule (CR-03)', () => {
 });
 
 describe('POST /api/appointments/:id/approve', () => {
-  test('approve on now-clashing slot returns 200 verdict without writing (D-03)', async () => {
+  test('approve on now-clashing slot returns 200 verdict without writing', async () => {
     const requested = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -404,7 +404,7 @@ describe('POST /api/appointments/:id/approve', () => {
 });
 
 describe('POST /api/appointments/:id/transition — illegal transitions', () => {
-  test('requested → completed is illegal (422, D-10)', async () => {
+  test('requested → completed is illegal (422)', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -421,7 +421,7 @@ describe('POST /api/appointments/:id/transition — illegal transitions', () => 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
 
-  test('DB trigger rejects raw illegal state UPDATE (backstop, D-10)', async () => {
+  test('DB trigger rejects raw illegal state UPDATE (backstop)', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -439,7 +439,7 @@ describe('POST /api/appointments/:id/transition — illegal transitions', () => 
   });
 });
 
-describe('POST /api/appointments/:id/transition — timing guard (D-13)', () => {
+describe('POST /api/appointments/:id/transition — timing guard', () => {
   test('completing before starts_at → 422', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
@@ -516,7 +516,7 @@ describe('POST /api/appointments/:id/transition — charge on completion', () =>
   });
 });
 
-describe('Client cancellation cutoff (D-16/D-17)', () => {
+describe('Client cancellation cutoff', () => {
   test('cutoff=0: client can cancel a scheduled appointment any time before starts_at', async () => {
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 0 WHERE id = $1`, [bizId]);
 
@@ -558,7 +558,7 @@ describe('Client cancellation cutoff (D-16/D-17)', () => {
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
 
-  test('client can withdraw a requested appointment regardless of cutoff (D-17)', async () => {
+  test('client can withdraw a requested appointment regardless of cutoff', async () => {
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 9999 WHERE id = $1`, [bizId]);
 
     const r = await pool.query<{ id: string }>(
@@ -627,7 +627,7 @@ describe('POST /api/appointments/:id/reschedule', () => {
   });
 });
 
-describe('PATCH /api/appointments/:id — terminal freeze (D-12)', () => {
+describe('PATCH /api/appointments/:id — terminal freeze', () => {
   test('name change on canceled appointment → 422', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
@@ -645,7 +645,7 @@ describe('PATCH /api/appointments/:id — terminal freeze (D-12)', () => {
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
 
-  test('staff_note update on canceled appointment succeeds (D-31)', async () => {
+  test('staff_note update on canceled appointment succeeds', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
@@ -665,7 +665,7 @@ describe('PATCH /api/appointments/:id — terminal freeze (D-12)', () => {
 });
 
 describe('GET /api/appointments/:id — staff detail read', () => {
-  test('client is always 403 regardless of ownership (D-08)', async () => {
+  test('client is always 403 regardless of ownership', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO appointments
          (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict, staff_note)
@@ -799,7 +799,7 @@ describe('GET /api/appointments — paginated list', () => {
     }
   });
 
-  test('audit events are written in the same transaction as lifecycle actions (D-14)', async () => {
+  test('audit events are written in the same transaction as lifecycle actions', async () => {
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq('POST', '/api/appointments/schedule', {
       professional_user_id: proId,

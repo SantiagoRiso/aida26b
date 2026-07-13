@@ -3,7 +3,6 @@ import type { Queryable } from './core';
 import type { ActiveProfessionalRow, ActiveUserRow, SelfProfileRow } from '../../../shared/src/ssot/query-types';
 import type { SqlParam } from '../../../shared/src/types/types';
 
-// An active professional: an auth.users row with role Professional that is not deactivated.
 export function findActiveProfessional(db: Queryable, userId: number | string): Promise<ActiveProfessionalRow | null> {
   return queryOne<ActiveProfessionalRow>(
     db,
@@ -67,8 +66,6 @@ export function updateSelfProfile(
     [opts.userId, opts.displayName, opts.bio, opts.email, opts.phone],
   );
 }
-
-// --- admin user management (auth.users writes) ---
 
 export function insertUser(
   db: Queryable,

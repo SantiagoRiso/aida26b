@@ -130,7 +130,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('audit_events immutability trigger (04-01, T-04-18)', () => {
+describe('audit_events immutability trigger', () => {
   test('raw UPDATE on audit_events is rejected by the DB trigger', async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO audit_events
@@ -162,7 +162,7 @@ describe('audit_events immutability trigger (04-01, T-04-18)', () => {
   });
 });
 
-describe('GET /api/audit — admin-only gate (D-27, T-04-16)', () => {
+describe('GET /api/audit — admin-only gate', () => {
   test('non-admin Professional → 403', async () => {
     currentUser = asUser(proId, 'Professional');
     const res = await auditReq('GET', '/api/audit');
@@ -203,7 +203,7 @@ describe('GET /api/audit — admin-only gate (D-27, T-04-16)', () => {
     }
   });
 
-  test('denied and failure outcomes appear alongside success (D-28)', async () => {
+  test('denied and failure outcomes appear alongside success', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit');
     expect(res.status).toBe(200);
@@ -213,7 +213,7 @@ describe('GET /api/audit — admin-only gate (D-27, T-04-16)', () => {
   });
 });
 
-describe('GET /api/audit filters (D-27, T-04-17 — parameterized values)', () => {
+describe('GET /api/audit filters (parameterized values)', () => {
   test('?entity_type=appointments returns only appointment events', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?entity_type=appointments');
@@ -382,7 +382,7 @@ describe('GET /api/businesses/:id/settings — admin-only read', () => {
   });
 });
 
-describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-19, T-04-20)', () => {
+describe('PATCH /api/businesses/:id/settings — admin-only cutoff', () => {
   test('non-admin → 403', async () => {
     currentUser = asUser(proId, 'Professional');
     const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
@@ -430,7 +430,7 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-1
     expect(res.status).toBe(422);
   });
 
-  test('cross-tenant :id → 404 (hides existence, T-04-19)', async () => {
+  test('cross-tenant :id → 404 (hides existence)', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('PATCH', `/api/businesses/${biz2Id}/settings`, {
       cancellation_cutoff_hours: 12,
@@ -440,7 +440,7 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff (D-15, T-04-1
     expect(res.status).toBe(404);
   });
 
-  test('endpoint does not expose other businesses columns (T-04-20)', async () => {
+  test('endpoint does not expose other businesses columns', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('PATCH', `/api/businesses/${bizId}/settings`, {
       cancellation_cutoff_hours: 24,

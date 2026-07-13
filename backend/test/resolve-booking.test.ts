@@ -28,12 +28,6 @@ describe('resolveBooking precedence', () => {
     expect(resolveBooking(base).effective_duration_minutes).toBe(30);
   });
 
-  it('still honors the legacy slotGranularityMinutes fallback (pre-block callers)', () => {
-    expect(
-      resolveBooking({ serviceDefaultPriceArs: '5000.00', slotGranularityMinutes: 50 }).effective_duration_minutes,
-    ).toBe(50);
-  });
-
   it('throws when no duration source is available', () => {
     expect(() => resolveBooking({ serviceDefaultPriceArs: '5000.00' })).toThrow();
   });

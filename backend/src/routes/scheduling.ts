@@ -7,9 +7,16 @@ import type { AuthUser } from '../auth';
 import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
 import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
-import { getBlockServiceForSlot } from '../db/scheduling';
-import { DATE_RE, HHMM_RE, addMinutes, crossesMidnight } from '../time';
-import { loadOwnerState, loadConflictInputs, toAggregatorOwner } from '../services/scheduling';
+import { getBlockServiceForSlot, countAppointmentsHitByTimeOff } from '../db/scheduling';
+import { assertOwnScheduleAllowed } from './crud-policy';
+import { BUSINESS_TZ, DATE_RE, HHMM_RE, addMinutes, crossesMidnight } from '../time';
+import {
+  loadOwnerState,
+  loadConflictInputs,
+  toAggregatorOwner,
+  resolveBookingWindow,
+  isOutsideBookingWindow,
+} from '../services/scheduling';
 import type { ColumnValue } from '../../../shared/src/types/types';
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -135,8 +142,93 @@ export function mountSchedulingRoutes(
     });
     if (!state) return sendError(res, 404, 'not_found', 'Owner not found in this business');
 
+    // Client self-service can't book outside the booking window — return no slots for those dates
+    // so the picker offers nothing. Staff (calendar) are exempt and see real availability.
+    if (user.role === 'Client' && kind === 'professional' && serviceId !== undefined) {
+      const bounds = await resolveBookingWindow(pool, businessId, Number(owner![2]), serviceId);
+      if (bounds && isOutsideBookingWindow(date, bounds)) {
+        return sendData(res, { date, slots: [], open: false, outside_window: true });
+      }
+    }
+
     // `open` distinguishes "doesn't work that day" (false) from "works but fully booked"
     // (true + empty slots) so the UI can say which one it is.
     return sendData(res, { date, slots: state.freeSlots, open: state.gridSlots.length > 0 });
+  }));
+
+  // Concrete booking-window bounds for one (professional, service), so the client UI can clamp the
+  // date picker and disable the next-day arrow past the window. Staff paths ignore it.
+  app.get('/api/booking-window', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'A business context is required');
+    }
+    const professionalId = Number(req.query.professional);
+    const serviceId = Number(req.query.service);
+    const fields: Record<string, string> = {};
+    if (!Number.isInteger(professionalId) || professionalId <= 0) fields.professional = 'required';
+    if (!Number.isInteger(serviceId) || serviceId <= 0) fields.service = 'required';
+    if (Object.keys(fields).length > 0) {
+      return sendError(res, 422, 'invalid_request', 'Invalid booking-window query', fields);
+    }
+
+    const bounds = await resolveBookingWindow(pool, user.business_id, professionalId, serviceId);
+    if (!bounds) return sendError(res, 404, 'not_found', 'Professional not found in this business');
+    return sendData(res, { min_date: bounds.minDate, max_date: bounds.maxDate });
+  }));
+
+  // How many open, future turnos a not-yet-saved time-off would put in conflict — read-only, backs
+  // the warn-then-confirm dialog before adding a personal exception or a business closure. Naming a
+  // professional_user_id previews a personal exception (gated like editing that schedule);
+  // omitting it previews a whole-business closure (Admin only, mirroring the closures route).
+  app.post('/api/time-off/conflict-preview', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'A business context is required');
+    }
+    const businessId = user.business_id;
+
+    const body = req.body ?? {};
+    const date = typeof body.date === 'string' ? body.date : '';
+    if (!DATE_RE.test(date)) {
+      return sendError(res, 422, 'invalid_request', 'date must be YYYY-MM-DD');
+    }
+
+    // Both-or-neither endpoints; absent ⇒ a full-day block.
+    const start = body.start == null || body.start === '' ? null : String(body.start);
+    const end = body.end == null || body.end === '' ? null : String(body.end);
+    if ((start == null) !== (end == null)) {
+      return sendError(res, 422, 'invalid_request', 'A time range needs both a start and an end');
+    }
+    if (start != null && end != null) {
+      if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
+        return sendError(res, 422, 'invalid_request', 'Times must be HH:MM');
+      }
+      if (end <= start) {
+        return sendError(res, 422, 'invalid_request', 'The end time must be after the start time');
+      }
+    }
+
+    let scope: { kind: 'business' } | { kind: 'professional'; professionalUserId: number };
+    const hasProf = body.professional_user_id != null && body.professional_user_id !== '';
+    if (hasProf) {
+      const professionalUserId = Number(body.professional_user_id);
+      if (!Number.isInteger(professionalUserId) || professionalUserId <= 0) {
+        return sendError(res, 422, 'invalid_request', 'professional_user_id must be a positive integer');
+      }
+      const allowed = await assertOwnScheduleAllowed(pool, user, { professional_user_id: professionalUserId });
+      if (!allowed.ok) {
+        return sendError(res, allowed.status, allowed.code, allowed.message);
+      }
+      scope = { kind: 'professional', professionalUserId };
+    } else {
+      if (user.role !== 'Admin') {
+        return sendError(res, 403, 'forbidden', 'Only an Admin may preview a business closure');
+      }
+      scope = { kind: 'business' };
+    }
+
+    const count = await countAppointmentsHitByTimeOff(pool, businessId, BUSINESS_TZ, scope, { date, start, end });
+    return sendData(res, { count });
   }));
 }

@@ -309,12 +309,12 @@ describe('pure scheduling rules (availability is computed, not stored)', () => {
   });
 });
 
-describe('resolveBooking — effective price + duration (D-12/D-13)', () => {
+describe('resolveBooking — effective price + duration', () => {
   it('uses the per-client override price when present', () => {
     const r = resolveBooking({
       serviceDefaultPriceArs: '1000.00',
       clientOverridePriceArs: '750.50',
-      slotGranularityMinutes: 15,
+      serviceDefaultDurationMinutes: 15,
     });
     expect(r.effective_price).toBe('750.50');
     expect(r.effective_duration_minutes).toBe(15);
@@ -324,28 +324,28 @@ describe('resolveBooking — effective price + duration (D-12/D-13)', () => {
     const r = resolveBooking({
       serviceDefaultPriceArs: '1000.00',
       clientOverridePriceArs: null,
-      slotGranularityMinutes: 30,
+      serviceDefaultDurationMinutes: 30,
     });
     expect(r.effective_price).toBe('1000.00');
     expect(r.effective_duration_minutes).toBe(30);
   });
 
-  it('uses the slot granularity as the duration for a normal booking', () => {
-    const r = resolveBooking({ serviceDefaultPriceArs: '500.00', slotGranularityMinutes: 45 });
+  it('uses the service default duration for a normal booking', () => {
+    const r = resolveBooking({ serviceDefaultPriceArs: '500.00', serviceDefaultDurationMinutes: 45 });
     expect(r.effective_duration_minutes).toBe(45);
   });
 
-  it('lets a staff sobreturno duration win over the slot granularity (D-07b)', () => {
+  it('lets a staff sobreturno duration win over the service default', () => {
     const r = resolveBooking({
       serviceDefaultPriceArs: '500.00',
-      slotGranularityMinutes: 15,
+      serviceDefaultDurationMinutes: 15,
       sobreturnoDurationMinutes: 20,
     });
     expect(r.effective_duration_minutes).toBe(20);
   });
 });
 
-describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08)', () => {
+describe('evaluateConflicts — structured conflict verdict', () => {
   const MONDAY = '2026-06-29';
   // Grid: 12 back-to-back 15-min slots 09:00–12:00.
   const grid = computeServiceSlots({
@@ -373,7 +373,7 @@ describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08
     expect(v.conflicts.some((c) => c.type === 'professional_overlap' && c.entity.kind === 'professional')).toBe(true);
   });
 
-  it('flags a requested-state overlap as requested_block (D-08)', () => {
+  it('flags a requested-state overlap as requested_block', () => {
     const v = evaluateConflicts({
       proposed: { start: '10:00', end: '10:15', date: MONDAY },
       callerIsStaff: true,
@@ -414,7 +414,7 @@ describe('evaluateConflicts — structured conflict verdict (D-03/D-04/D-05/D-08
     expect(v.can_save).toBe(true);
   });
 
-  it('excludeAppointmentId removes the edited appointment from the clash search (D-04)', () => {
+  it('excludeAppointmentId removes the edited appointment from the clash search', () => {
     const v = evaluateConflicts({
       proposed: { start: '10:00', end: '10:15', date: MONDAY },
       callerIsStaff: true,

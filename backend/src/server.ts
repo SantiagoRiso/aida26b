@@ -10,6 +10,7 @@ import { createAuditWriter, createAuthGuards } from './session';
 import { mountAuthRoutes } from './routes/auth';
 import { mountUserAdminRoutes } from './routes/users';
 import { mountGrantRoutes } from './routes/grants';
+import { mountBusinessClosureRoutes } from './routes/business-closures';
 import { mountSchedulingRoutes } from './routes/scheduling';
 import { mountAppointmentRoutes } from './routes/appointments';
 import { mountLedgerRoutes } from './routes/ledger';
@@ -39,6 +40,14 @@ mountUserAdminRoutes(app, pool, { audit, requireAuth, requirePasswordReady, requ
 
 // calendar_grants stays protected in SSOT (no generic CRUD), so grants need this explicit route.
 mountGrantRoutes(app, pool, {
+  auth: requireAuth,
+  passwordReady: requirePasswordReady,
+  audit,
+});
+
+// Business-wide closures are owner-less schedule_exceptions rows; the generic engine only writes
+// per-owner exceptions, so these Admin-scoped rows are created/read/deleted through this route.
+mountBusinessClosureRoutes(app, pool, {
   auth: requireAuth,
   passwordReady: requirePasswordReady,
   audit,

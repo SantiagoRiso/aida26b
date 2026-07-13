@@ -145,7 +145,7 @@ afterAll(async () => {
 });
 
 describe('POST /api/ledger — Admin write matrix', () => {
-  test('admin creates a charge → 201 with audit event in same transaction (D-14)', async () => {
+  test('admin creates a charge → 201 with audit event in same transaction', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('POST', '/api/ledger', {
       client_user_id: clientId,
@@ -215,7 +215,7 @@ describe('POST /api/ledger — Admin write matrix', () => {
     expect(audit.rows.some((r) => r.event_type === 'ledger_adjustment_credit_created')).toBe(true);
   });
 
-  test('two charges referencing the same appointment both succeed (D-18, no dedupe)', async () => {
+  test('two charges referencing the same appointment both succeed (no dedupe)', async () => {
     currentUser = asUser(adminId, 'Admin');
     const r1 = await req('POST', '/api/ledger', {
       client_user_id: clientId,
@@ -236,7 +236,7 @@ describe('POST /api/ledger — Admin write matrix', () => {
   });
 });
 
-describe('POST /api/ledger — charge prefill from appointment (D-22)', () => {
+describe('POST /api/ledger — charge prefill from appointment', () => {
   test('charge with appointment_id but no amount_ars prefills from booked price', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('POST', '/api/ledger', {
@@ -249,7 +249,7 @@ describe('POST /api/ledger — charge prefill from appointment (D-22)', () => {
     expect(res.body.data.amount_ars).toBe('2500.00');
   });
 
-  test('charge with explicit amount_ars overrides the appointment price (D-22)', async () => {
+  test('charge with explicit amount_ars overrides the appointment price', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('POST', '/api/ledger', {
       client_user_id: clientId,
@@ -262,7 +262,7 @@ describe('POST /api/ledger — charge prefill from appointment (D-22)', () => {
   });
 });
 
-describe('POST /api/ledger — Professional write matrix (D-23)', () => {
+describe('POST /api/ledger — Professional write matrix', () => {
   test('professional creates charge for own client → 201', async () => {
     currentUser = asUser(proId, 'Professional');
     const res = await req('POST', '/api/ledger', {
@@ -295,7 +295,7 @@ describe('POST /api/ledger — Professional write matrix (D-23)', () => {
   });
 });
 
-describe('POST /api/ledger — Receptionist write matrix (D-23/D-24)', () => {
+describe('POST /api/ledger — Receptionist write matrix', () => {
   test('receptionist with grant creates appointment-linked charge → 201', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
     const res = await req('POST', '/api/ledger', {
@@ -338,7 +338,7 @@ describe('POST /api/ledger — Receptionist write matrix (D-23/D-24)', () => {
     expect(res.status).toBe(403);
   });
 
-  test('receptionist standalone charge (no appointment_id) → 403 (D-24)', async () => {
+  test('receptionist standalone charge (no appointment_id) → 403', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
     const res = await req('POST', '/api/ledger', {
       client_user_id: clientId,
@@ -414,7 +414,7 @@ describe('POST /api/ledger — Validation (422 / 404)', () => {
   });
 });
 
-describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
+describe('GET /api/clients/:id/balance — signed balance formula', () => {
   // Uses a fresh client (client2) for an isolated balance calculation.
   let balanceClientId: number;
 
@@ -452,7 +452,7 @@ describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
     await insertEntry('adjustment_credit', '200.00');
   });
 
-  test('balance is exact D-19 signed sum for seeded entries', async () => {
+  test('balance is exact signed sum for seeded entries', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(200);
@@ -476,13 +476,13 @@ describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
     expect(Number(res.body.data.balance_ars)).toBe(500);
   });
 
-  test('client can read own balance → 200 (D-25)', async () => {
+  test('client can read own balance → 200', async () => {
     currentUser = asUser(balanceClientId, 'Client');
     const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(200);
   });
 
-  test('client cannot read another client balance → 403 (T-04-13, D-25)', async () => {
+  test('client cannot read another client balance → 403', async () => {
     // balanceClientId = client2; clientId = client1; using client1's session
     currentUser = asUser(clientId, 'Client');
     const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
@@ -490,7 +490,7 @@ describe('GET /api/clients/:id/balance — D-19 signed balance formula', () => {
   });
 });
 
-describe('GET /api/clients/:id/ledger — paginated list (D-25/D-26)', () => {
+describe('GET /api/clients/:id/ledger — paginated list', () => {
   test('admin reads paginated ledger for client → 200 with total', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await req('GET', `/api/clients/${clientId}/ledger?page=1&limit=10`);
@@ -518,7 +518,7 @@ describe('GET /api/clients/:id/ledger — paginated list (D-25/D-26)', () => {
     expect(res.status).toBe(200);
   });
 
-  test('client reads another client ledger → 403 (T-04-13)', async () => {
+  test('client reads another client ledger → 403', async () => {
     currentUser = asUser(clientId, 'Client');
     const res = await req('GET', `/api/clients/${client2Id}/ledger`);
     expect(res.status).toBe(403);
@@ -575,7 +575,7 @@ describe('ledger reads are business-scoped for Admin', () => {
   });
 });
 
-describe('ledger_entries immutability trigger (D-11)', () => {
+describe('ledger_entries immutability trigger', () => {
   let immutableEntryId: number;
 
   beforeAll(async () => {

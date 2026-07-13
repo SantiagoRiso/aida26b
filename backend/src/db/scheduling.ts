@@ -6,6 +6,7 @@ import type {
   ProfessionalOwnerRow,
   ResourceOwnerRow,
   ScheduleExceptionRow,
+  BusinessClosureRow,
   BookedAppointmentRow,
 } from '../../../shared/src/ssot/query-types';
 
@@ -112,11 +113,12 @@ export function getBlockServiceForSlot(
 }
 
 // Effective booking window for (professional, service): the per-service override else the business
-// default. null only when the professional row is missing (caller maps to 404).
+// default. Business-scoped so a cross-tenant professional id yields null (caller maps to 404).
 export function getEffectiveBookingWindow(
   db: Queryable,
   professionalUserId: number,
   serviceId: number,
+  businessId: number,
 ): Promise<{ min_booking_days: number; max_booking_days: number | null } | null> {
   return queryOne<{ min_booking_days: number; max_booking_days: number | null }>(
     db,
@@ -126,8 +128,8 @@ export function getEffectiveBookingWindow(
        JOIN businesses b ON b.id = u.business_id
        LEFT JOIN professional_services ps
          ON ps.professional_user_id = u.id AND ps.service_id = $2
-      WHERE u.id = $1`,
-    [professionalUserId, serviceId],
+      WHERE u.id = $1 AND u.business_id = $3`,
+    [professionalUserId, serviceId, businessId],
   );
 }
 
@@ -147,6 +149,169 @@ export function getScheduleExceptions(
       WHERE ${ownerCol} = $1 AND exception_date = $2::date`,
     [ownerId, date],
   );
+}
+
+// Business-wide closures for a business on a date: schedule_exceptions rows owned by the business
+// (both per-owner columns null). Unioned into every professional's and resource's exceptions on each
+// owner lookup, so a clinic closure blocks the whole business. Keyed by (business_id, exception_date).
+export function getBusinessClosures(
+  db: Queryable,
+  businessId: number,
+  date: string,
+): Promise<ScheduleExceptionRow[]> {
+  return query<ScheduleExceptionRow>(
+    db,
+    `SELECT is_unavailable,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time,
+            granularity_minutes
+       FROM schedule_exceptions
+      WHERE business_id = $1 AND exception_date = $2::date`,
+    [businessId, date],
+  );
+}
+
+// A business-wide closure is a schedule_exceptions row owned by the business (both owner columns
+// null). is_unavailable is always true — a closure only blocks. These four functions are the only
+// place that writes/reads business-owned rows; the generic engine only ever touches owned rows.
+export function insertBusinessClosure(
+  db: Queryable,
+  businessId: number,
+  data: { exception_date: string; start_time: string | null; end_time: string | null; reason: string | null },
+): Promise<BusinessClosureRow | null> {
+  return queryOne<BusinessClosureRow>(
+    db,
+    `INSERT INTO schedule_exceptions (business_id, exception_date, is_unavailable, start_time, end_time, reason)
+     VALUES ($1, $2::date, true, $3::time, $4::time, $5)
+     RETURNING id,
+               to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
+               to_char(start_time, 'HH24:MI') AS start_time,
+               to_char(end_time,   'HH24:MI') AS end_time,
+               reason`,
+    [businessId, data.exception_date, data.start_time, data.end_time, data.reason],
+  );
+}
+
+export function updateBusinessClosure(
+  db: Queryable,
+  id: number,
+  data: { exception_date: string; start_time: string | null; end_time: string | null; reason: string | null },
+): Promise<BusinessClosureRow | null> {
+  return queryOne<BusinessClosureRow>(
+    db,
+    `UPDATE schedule_exceptions
+        SET exception_date = $2::date, start_time = $3::time, end_time = $4::time, reason = $5
+      WHERE id = $1 AND business_id IS NOT NULL
+      RETURNING id,
+                to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
+                to_char(start_time, 'HH24:MI') AS start_time,
+                to_char(end_time,   'HH24:MI') AS end_time,
+                reason`,
+    [id, data.exception_date, data.start_time, data.end_time, data.reason],
+  );
+}
+
+export function listBusinessClosures(db: Queryable, businessId: number): Promise<BusinessClosureRow[]> {
+  return query<BusinessClosureRow>(
+    db,
+    `SELECT id,
+            to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time,
+            reason
+       FROM schedule_exceptions
+      WHERE business_id = $1
+      ORDER BY exception_date`,
+    [businessId],
+  );
+}
+
+export function findBusinessClosure(
+  db: Queryable,
+  id: number,
+): Promise<{ id: string; business_id: string | null } | null> {
+  return queryOne<{ id: string; business_id: string | null }>(
+    db,
+    `SELECT id, business_id FROM schedule_exceptions WHERE id = $1 AND business_id IS NOT NULL`,
+    [id],
+  );
+}
+
+export async function deleteBusinessClosure(db: Queryable, id: number): Promise<void> {
+  await query(db, `DELETE FROM schedule_exceptions WHERE id = $1 AND business_id IS NOT NULL`, [id]);
+}
+
+// SQL predicate: is this an open, future turno whose time overlaps active time-off that applies to
+// it — a business-wide closure, or its own professional's unavailable exception? End-exclusive;
+// full-day time-off (null times) covers the whole date. Assumes the query aliases appointments AS a
+// and joins auth.users AS u on the professional (for u.business_id). `tzParam` is the business TZ
+// placeholder. Resource-owned exceptions are intentionally excluded (rooms, not professional time).
+export function appointmentInConflictSql(tzParam: string): string {
+  return `(
+    a.state IN (${OPEN_STATES_SQL})
+    AND a.starts_at >= now()
+    AND a.conflict_ignored = false
+    AND EXISTS (
+      SELECT 1 FROM schedule_exceptions se
+       WHERE se.is_unavailable = true
+         AND se.exception_date = (a.starts_at AT TIME ZONE ${tzParam})::date
+         AND (
+              (se.professional_user_id IS NULL AND se.resource_id IS NULL AND se.business_id = u.business_id)
+           OR se.professional_user_id = a.professional_user_id
+         )
+         AND (
+              se.start_time IS NULL
+           OR ((a.starts_at AT TIME ZONE ${tzParam})::time < se.end_time
+               AND (a.ends_at   AT TIME ZONE ${tzParam})::time > se.start_time)
+         )
+    )
+  )`;
+}
+
+// How many open, future turnos a not-yet-inserted time-off would put in conflict — powers the
+// warn-then-confirm dialog before a closure or personal exception is saved. Scope is the whole
+// business (a closure) or one professional (a personal exception). Full-day when start/end are null.
+export async function countAppointmentsHitByTimeOff(
+  db: Queryable,
+  businessId: number,
+  tz: string,
+  scope: { kind: 'business' } | { kind: 'professional'; professionalUserId: number },
+  timeOff: { date: string; start: string | null; end: string | null },
+): Promise<number> {
+  const params: SqlParam[] = [businessId, tz, timeOff.date];
+  const pBiz = '$1', pTz = '$2', pDate = '$3';
+
+  let scopeSql = '';
+  if (scope.kind === 'professional') {
+    params.push(scope.professionalUserId);
+    scopeSql = `AND a.professional_user_id = $${params.length}`;
+  }
+
+  let overlapSql = 'TRUE';
+  if (timeOff.start != null && timeOff.end != null) {
+    params.push(timeOff.start);
+    const pStart = `$${params.length}`;
+    params.push(timeOff.end);
+    const pEnd = `$${params.length}`;
+    overlapSql = `((a.starts_at AT TIME ZONE ${pTz})::time < ${pEnd}::time
+                  AND (a.ends_at AT TIME ZONE ${pTz})::time > ${pStart}::time)`;
+  }
+
+  const rows = await query<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n
+       FROM appointments a
+       JOIN auth.users u ON u.id = a.professional_user_id
+      WHERE u.business_id = ${pBiz}
+        AND a.state IN (${OPEN_STATES_SQL})
+        AND a.starts_at >= now()
+        AND a.conflict_ignored = false
+        AND (a.starts_at AT TIME ZONE ${pTz})::date = ${pDate}::date
+        ${scopeSql}
+        AND ${overlapSql}`,
+    params,
+  );
+  return Number(rows[0].n);
 }
 
 export function getBookedAppointments(

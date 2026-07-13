@@ -21,3 +21,11 @@ export function crossesMidnight(start: string, durationMinutes: number): boolean
 export function buildStartsAt(date: string, start: string): string {
   return `${date} ${start}:00 ${BUSINESS_TZ}`;
 }
+
+// Shift an ISO date by whole days via local midnight, so a timezone offset can't drift the day.
+export function addDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const nd = new Date(y, m - 1, d + days);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${nd.getFullYear()}-${p(nd.getMonth() + 1)}-${p(nd.getDate())}`;
+}

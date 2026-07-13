@@ -96,7 +96,7 @@ export function buildBusinessScope(
   }
 
   if (join && join.paths.length >= 2) {
-    // Dual-owner tables (schedules, schedule_exceptions): either owner may satisfy the filter.
+    // Dual-owner tables (schedule_blocks, schedule_exceptions): either owner may satisfy the filter.
     const parts = join.paths.map(({ parentTable, localFk, parentPk }) =>
       `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE business_id = ?)`,
     );

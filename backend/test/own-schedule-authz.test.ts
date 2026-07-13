@@ -103,7 +103,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('own-schedule authz (D-16) via generic schedule_exceptions create', () => {
+describe('own-schedule authz via generic schedule_exceptions create', () => {
   test('Admin may create an exception for any in-business professional', async () => {
     currentUser = asUser(100000, 'Admin');
     expect(await createException(pro1, '2026-07-06')).toBe(201);

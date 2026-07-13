@@ -14,10 +14,12 @@ import {
   getProfessionalBlocks,
   getResourceBlocks,
   getScheduleExceptions,
+  getBusinessClosures,
   getBookedAppointments,
+  getEffectiveBookingWindow,
   acquireOwnerLock,
 } from '../db/scheduling';
-import { BUSINESS_TZ, addMinutes } from '../time';
+import { BUSINESS_TZ, addMinutes, addDaysISO } from '../time';
 import { httpError } from '../db/errors';
 
 // Resources offer no services, so their blocks are bare windows; tile them at a fixed display
@@ -27,6 +29,31 @@ const RESOURCE_SLOT_MINUTES = 30;
 
 // Domain orchestration with no HTTP surface, so both the scheduling routes and the appointment
 // write path consume it from here rather than one route importing another.
+
+// Client self-service is bounded by the effective booking window as concrete dates (today in
+// business TZ + min/max days). null when the professional row is missing in the business (404).
+// Staff paths skip this entirely; they may book any date.
+export async function resolveBookingWindow(
+  q: Queryable,
+  businessId: number,
+  professionalUserId: number,
+  serviceId: number,
+): Promise<{ minDate: string; maxDate: string | null } | null> {
+  const window = await getEffectiveBookingWindow(q, professionalUserId, serviceId, businessId);
+  if (!window) return null;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+  return {
+    minDate: addDaysISO(today, window.min_booking_days),
+    maxDate: window.max_booking_days != null ? addDaysISO(today, window.max_booking_days) : null,
+  };
+}
+
+export function isOutsideBookingWindow(
+  date: string,
+  bounds: { minDate: string; maxDate: string | null },
+): boolean {
+  return date < bounds.minDate || (bounds.maxDate !== null && date > bounds.maxDate);
+}
 
 export type OwnerState = {
   id: number;
@@ -75,8 +102,11 @@ export async function loadOwnerState(
     serviceBlocks = rows.map((b) => ({ start: b.start, end: b.end, slot_minutes: RESOURCE_SLOT_MINUTES }));
   }
 
+  // This owner's own exceptions plus any business-wide closure — a clinic closure blocks every
+  // professional and resource, so it unions into each owner's unavailability the same way.
   const excRows = await getScheduleExceptions(q, ownerCol, ref.id, date);
-  const exceptions = excRows.map((e) => ({
+  const closureRows = await getBusinessClosures(q, businessId, date);
+  const exceptions = [...excRows, ...closureRows].map((e) => ({
     is_unavailable: e.is_unavailable,
     start_time: e.start_time,
     end_time: e.end_time,

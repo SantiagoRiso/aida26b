@@ -1,10 +1,9 @@
 import { query, queryOne } from './core';
 import type { Queryable } from './core';
 import { grantedProfessionalScope } from './grants';
+import { appointmentInConflictSql } from './scheduling';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
 import type { SqlParam } from '../../../shared/src/types/types';
-
-// --- tenant existence checks ---
 
 export async function resourceExistsInBusiness(db: Queryable, resourceId: number, businessId: number): Promise<boolean> {
   const rows = await query(
@@ -24,10 +23,7 @@ export async function clientExistsInBusiness(db: Queryable, clientUserId: number
   return rows.length > 0;
 }
 
-// --- appointment reads ---
-
-// Loads an appointment scoped to the session business via a JOIN through auth.users on
-// professional_user_id. Null when absent or cross-tenant (both surface as 404 to hide existence).
+// Null when absent or cross-tenant — both surface as 404 to hide existence.
 export function loadAppointment(db: Queryable, id: number, businessId: number): Promise<AppointmentRow | null> {
   return queryOne<AppointmentRow>(
     db,
@@ -50,8 +46,6 @@ export function getAppointmentWallClock(db: Queryable, id: number, tz: string): 
     [tz, id],
   ).then((r) => (r ? { date: r.date_str, start: r.start_str } : null));
 }
-
-// --- appointment writes (run inside the caller's transaction) ---
 
 export function insertRequestedAppointment(
   db: Queryable,
@@ -164,6 +158,14 @@ export function rescheduleAppointment(
   );
 }
 
+export function setAppointmentConflictIgnored(db: Queryable, id: number, ignored: boolean): Promise<AppointmentRow | null> {
+  return queryOne<AppointmentRow>(
+    db,
+    `UPDATE appointments SET conflict_ignored = $1 WHERE id = $2 RETURNING *`,
+    [ignored, id],
+  );
+}
+
 export function transitionAppointmentState(db: Queryable, id: number, to: string): Promise<AppointmentRow | null> {
   return queryOne<AppointmentRow>(
     db,
@@ -172,7 +174,7 @@ export function transitionAppointmentState(db: Queryable, id: number, to: string
   );
 }
 
-// Dynamic partial update. Caller guarantees at least one field is present.
+// Caller guarantees at least one field is present.
 export function patchAppointmentFields(
   db: Queryable,
   id: number,
@@ -192,8 +194,7 @@ export function patchAppointmentFields(
   );
 }
 
-// --- listing (dynamic scope + filters, built here so routes stay SQL-free) ---
-
+// Built here (not in routes) so routes stay SQL-free.
 export type AppointmentRoleScope =
   | { kind: 'client'; userId: number }
   | { kind: 'professional'; userId: number }
@@ -203,12 +204,16 @@ export type AppointmentRoleScope =
 export type AppointmentListFilter = {
   businessId: number;
   roleScope: AppointmentRoleScope;
+  // Business timezone — feeds the per-row in_conflict flag (turno time vs. time-off, wall-clock).
+  tz: string;
   dateFrom?: string;
   dateTo?: string;
   professionalUserId?: number;
   resourceId?: number;
   clientUserId?: number;
   state?: string;
+  // Return only turnos that overlap active time-off (open + future, enforced by the predicate).
+  conflicting?: boolean;
   limit: number;
   offset: number;
 };
@@ -238,19 +243,26 @@ export async function listAppointments(
   if (f.resourceId != null) { conditions.push(`a.resource_id = $${p++}`); params.push(f.resourceId); }
   if (f.clientUserId != null) { conditions.push(`a.client_user_id = $${p++}`); params.push(f.clientUserId); }
   if (f.state != null) { conditions.push(`a.state = $${p++}`); params.push(f.state); }
+  if (f.conflicting) { conditions.push(appointmentInConflictSql(`$${p++}`)); params.push(f.tz); }
 
   const where = conditions.join(' AND ');
+
+  // The row query also computes the in_conflict flag, so it carries an extra tz param (after the
+  // shared WHERE params) that the count query does not; hence the two build their param lists apart.
+  const flagTz = `$${params.length + 1}`;
+  const limitPh = `$${params.length + 2}`;
+  const offsetPh = `$${params.length + 3}`;
 
   const [rows, count] = await Promise.all([
     query<AppointmentRow>(
       db,
-      `SELECT a.*
+      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
         WHERE ${where}
         ORDER BY a.starts_at
-        LIMIT $${p} OFFSET $${p + 1}`,
-      [...params, f.limit, f.offset],
+        LIMIT ${limitPh} OFFSET ${offsetPh}`,
+      [...params, f.tz, f.limit, f.offset],
     ),
     query<{ n: string }>(
       db,
@@ -265,7 +277,6 @@ export async function listAppointments(
   return { rows, total: Number(count[0].n) };
 }
 
-// Distinct client ids the caller has any appointment with, in their role scope.
 export async function listRelatedClientIds(
   db: Queryable,
   opts: { businessId: number; professionalUserId?: number; granteeUserId?: number },

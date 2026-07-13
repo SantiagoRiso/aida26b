@@ -10,8 +10,7 @@ const VOID_STATES_SQL = VOID_APPOINTMENT_STATES.map((s) => `'${s}'`).join(', ');
 // EXISTS probes backing the ledger/appointment authorization decisions. Boolean-only; the policy
 // (which role, which message) stays in appointment-authz.ts.
 
-// A professional has an appointment with this client, in the caller's business (closes the
-// cross-business leak by joining the client through auth.users.business_id).
+// Joins through auth.users.business_id to close the cross-business leak.
 export async function professionalHasClientAppointment(
   db: Queryable,
   clientUserId: number,
@@ -33,7 +32,6 @@ export async function professionalHasClientAppointment(
   return rows[0].allowed;
 }
 
-// A grantee holds a calendar grant covering this appointment (and it belongs to the client).
 export async function granteeCanActOnAppointment(
   db: Queryable,
   appointmentId: number,

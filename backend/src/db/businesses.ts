@@ -26,7 +26,6 @@ export function updateBusinessSettings(
   );
 }
 
-// The cancellation cutoff for the business a given user belongs to. Null when unresolved.
 export function getCancellationCutoffHours(db: Queryable, userId: number): Promise<number | null> {
   return queryOne<{ cancellation_cutoff_hours: number }>(
     db,

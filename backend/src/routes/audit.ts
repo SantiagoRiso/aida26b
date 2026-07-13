@@ -195,7 +195,6 @@ export function mountAuditRoutes(
       });
     }
 
-    // Overlay the supplied keys onto the current row, then validate the merged window.
     const current = await getBusinessSettings(pool, user.business_id);
     if (!current) {
       return sendError(res, 404, 'not_found', 'Business not found');

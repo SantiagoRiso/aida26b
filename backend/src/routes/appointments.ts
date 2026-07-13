@@ -17,7 +17,7 @@ import { httpError } from '../db/errors';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
 import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
-import { getBlockServiceForSlot, getEffectiveBookingWindow } from '../db/scheduling';
+import { getBlockServiceForSlot } from '../db/scheduling';
 import { weekdayOf } from '../../../shared/src/ssot/domain';
 import {
   loadAppointment,
@@ -28,6 +28,7 @@ import {
   rescheduleAppointment,
   transitionAppointmentState,
   patchAppointmentFields,
+  setAppointmentConflictIgnored,
   listAppointments,
   listRelatedClientIds,
   type AppointmentRoleScope,
@@ -49,13 +50,6 @@ type AuditFn = (
 
 const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
-// Add n days to a 'YYYY-MM-DD' string via UTC arithmetic (no DST drift; result stays a date-only
-// string that compares lexically). Used to turn the booking window (days-from-today) into bounds.
-function addDaysISO(iso: string, n: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-}
 
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
@@ -103,19 +97,14 @@ export function mountAppointmentRoutes(
     } = resolved;
 
     // Client self-service is bounded by the effective booking window; staff paths stay exempt.
-    const window = await getEffectiveBookingWindow(pool, professionalUserId, serviceId);
-    if (window) {
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
-      const minDate = addDaysISO(today, window.min_booking_days);
-      const maxDate = window.max_booking_days != null ? addDaysISO(today, window.max_booking_days) : null;
-      if (date < minDate || (maxDate !== null && date > maxDate)) {
-        return sendError(res, 422, 'outside_booking_window',
-          `Requests are allowed from ${minDate}${maxDate !== null ? ` to ${maxDate}` : ''}`);
-      }
+    const { loadConflictInputs, resolveBookingWindow, isOutsideBookingWindow } = await import('../services/scheduling');
+    const bounds = await resolveBookingWindow(pool, businessId, professionalUserId, serviceId);
+    if (bounds && isOutsideBookingWindow(date, bounds)) {
+      return sendError(res, 422, 'outside_booking_window',
+        `Requests are allowed from ${bounds.minDate}${bounds.maxDate !== null ? ` to ${bounds.maxDate}` : ''}`);
     }
 
     // Dry-run conflict check — read-only, no advisory lock needed for a mere read.
-    const { loadConflictInputs } = await import('../services/scheduling');
     const inputs = await loadConflictInputs(pool, businessId, {
       professionalUserId,
       date,
@@ -501,6 +490,43 @@ export function mountAppointmentRoutes(
     return sendData(res, appt);
   }));
 
+  // Acknowledge (or re-flag) a turno that overlaps time-off. Staff-only; flips the stored bit the
+  // in_conflict predicate reads, so an ignored turno leaves the conflict list and the calendar ring.
+  app.post('/api/appointments/:id/ignore-conflict', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const user = (req as AuthedRequest).user!;
+    if (user.business_id == null) {
+      return sendError(res, 400, 'no_business', 'Business context required');
+    }
+    if (user.role === 'Client') {
+      return sendError(res, 403, 'forbidden', 'Clients may not manage conflicts');
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
+    }
+
+    const row = await loadAppointment(pool, id, user.business_id);
+    if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
+
+    const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
+    if (!authz.ok) {
+      await guards.audit(req, 'appointment_action_denied', 'denied', { reason: authz.code, entity_id: id });
+      return sendError(res, authz.status, authz.code, authz.message);
+    }
+
+    // Default to ignoring; an explicit `{ ignored: false }` re-flags it.
+    const ignored = req.body?.ignored !== false;
+
+    const appt = await withTransaction(pool, async (tx) => {
+      const updated = await setAppointmentConflictIgnored(tx, id, ignored);
+      await auditInTx(tx, user, ignored ? 'appointment_conflict_ignored' : 'appointment_conflict_reflagged', 'success', id);
+      return updated!;
+    });
+
+    return sendData(res, appt);
+  }));
+
   app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -561,9 +587,8 @@ export function mountAppointmentRoutes(
     return sendData(res, appt);
   }));
 
-  // Distinct client ids the caller has any appointment with, in their role scope. Backs the
-  // "clients with a prior relationship" list without shipping the whole appointment history to
-  // the browser. Registered before /:id so the literal path wins.
+  // Backs the "clients with a prior relationship" list without shipping the whole appointment
+  // history to the browser. Registered before /:id so the literal path wins.
   app.get('/api/appointments/related-clients', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
     if (user.business_id == null) {
@@ -670,15 +695,19 @@ export function mountAppointmentRoutes(
       state = String(req.query.state);
     }
 
+    const conflicting = String(req.query.conflicting) === 'true';
+
     const { rows, total } = await listAppointments(pool, {
       businessId,
       roleScope,
+      tz: BUSINESS_TZ,
       dateFrom,
       dateTo,
       professionalUserId,
       resourceId,
       clientUserId,
       state,
+      conflicting,
       limit,
       offset,
     });
