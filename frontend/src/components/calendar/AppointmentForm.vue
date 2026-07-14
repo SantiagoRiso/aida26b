@@ -19,8 +19,8 @@ import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
 import { useLabel } from '@/composables/useLabel';
-import type { TimeInterval } from '@shared/ssot/domain/scheduling';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TimeInterval } from '@shared/ssot/domain/availability';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 const props = defineProps<{
   // Presence switches the form to edit/reschedule mode.
@@ -285,7 +285,7 @@ function submit() {
 </script>
 
 <template>
-  <form class="flex flex-col gap-4" @submit.prevent="submit">
+  <form class="grid grid-cols-1 gap-4 sm:grid-cols-2" @submit.prevent="submit">
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-client">{{ t('calendar.clientLabel') }} *</label>
       <Selector
@@ -345,7 +345,7 @@ function submit() {
       </select>
     </div>
 
-    <div class="flex flex-col gap-1">
+    <div class="flex flex-col gap-1 sm:col-span-2">
       <label class="text-sm font-semibold" for="appt-date">{{ t('calendar.dateLabel') }} *</label>
       <div class="flex items-center gap-2">
         <button
@@ -370,13 +370,14 @@ function submit() {
       <FieldError :message="fieldErrors.date" />
     </div>
 
-    <label class="inline-flex items-center gap-2 self-start text-sm font-medium cursor-pointer">
+    <label class="inline-flex items-center gap-2 self-start text-sm font-medium cursor-pointer sm:col-span-2">
       <input v-model="sobreturno" type="checkbox" class="h-4 w-4 accent-accent" />
       {{ t('calendar.fineMode') }}
     </label>
 
     <SlotPicker
       v-if="!sobreturno"
+      class="sm:col-span-2"
       :professional-id="form.professional_user_id ? Number(form.professional_user_id) : null"
       :service-id="form.service_id ? Number(form.service_id) : null"
       :date="form.date || null"
@@ -385,7 +386,7 @@ function submit() {
       @slot-selected="handleSlotSelected"
     />
 
-    <div v-if="sobreturno" class="flex gap-3">
+    <div v-if="sobreturno" class="flex gap-3 sm:col-span-2">
       <div class="flex flex-col gap-1 flex-1">
         <label class="text-sm font-semibold" for="appt-start">{{ t('calendar.timeLabel') }} *</label>
         <TimeField id="appt-start" v-model="form.start" :invalid="!!fieldErrors.start" />
@@ -404,7 +405,7 @@ function submit() {
       </div>
     </div>
 
-    <div class="flex flex-col gap-1">
+    <div class="flex flex-col gap-1 sm:col-span-2">
       <label class="text-sm font-semibold" for="appt-name">{{ label({ es: 'Título', en: 'Title' }) }}</label>
       <input
         id="appt-name"
@@ -415,7 +416,7 @@ function submit() {
       />
     </div>
 
-    <div class="flex flex-col gap-1">
+    <div class="flex flex-col gap-1 sm:col-span-2">
       <label class="text-sm font-semibold" for="appt-desc">{{ label({ es: 'Descripción', en: 'Description' }) }}</label>
       <textarea
         id="appt-desc"
@@ -425,7 +426,7 @@ function submit() {
       />
     </div>
 
-    <div class="flex gap-2 pt-2">
+    <div class="flex gap-2 pt-2 sm:col-span-2">
       <AppButton type="submit" variant="primary" :loading="saving">
         {{ t('actions.save') }}
       </AppButton>

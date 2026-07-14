@@ -2,9 +2,10 @@
 import { ref, computed, onMounted } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { useToast } from '@/composables/useToast';
+import { useAuthStore } from '@/stores/auth';
 import { listRows } from '@/api/crud';
 import { listRelatedClientIds } from '@/api/appointments';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -14,6 +15,11 @@ import AppButton from '@/components/shared/AppButton.vue';
 
 const { label } = useLabel();
 const { success } = useToast();
+const auth = useAuthStore();
+
+// The "prior relationship" scoping is only meaningful for staff whose client list is a subset
+// (Professional/Receptionist): an Admin sees every client, all of them relevant.
+const isAdmin = computed(() => auth.user?.role === 'Admin');
 
 const clients = ref<TableRecordMap['clients'][]>([]);
 // Clients with a prior relationship = at least one appointment in the viewer-scoped list
@@ -28,7 +34,7 @@ const includeUnrelated = ref(false);
 const filtered = computed(() => {
   const q = nameQuery.value.trim().toLowerCase();
   return clients.value.filter((c) => {
-    if (!includeUnrelated.value && !relatedIds.value.has(String(c.id))) return false;
+    if (!isAdmin.value && !includeUnrelated.value && !relatedIds.value.has(String(c.id))) return false;
     if (q) {
       const matchesName = c.display_name.toLowerCase().includes(q);
       const matchesDni = (c.dni ?? '').toLowerCase().includes(q);
@@ -89,7 +95,7 @@ onMounted(load);
         :placeholder="label({ es: 'Buscar por nombre o DNI…', en: 'Search by name or DNI…' })"
         class="w-64 rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
       />
-      <label class="flex items-center gap-2 text-sm text-neutral">
+      <label v-if="!isAdmin" class="flex items-center gap-2 text-sm text-neutral">
         <input type="checkbox" v-model="includeUnrelated" class="accent-accent" />
         {{ label({ es: 'Incluir clientes sin relación previa', en: 'Include clients with no prior relationship' }) }}
       </label>
@@ -102,7 +108,7 @@ onMounted(load);
     <div v-else-if="filtered.length === 0">
       <EmptyState
         :heading="label({ es: 'No hay clientes para mostrar', en: 'No clients to show' })"
-        :body="includeUnrelated
+        :body="(includeUnrelated || isAdmin)
           ? label({ es: 'No hay resultados para la búsqueda.', en: 'No results for the search.' })
           : label({ es: 'No hay clientes con relación previa.', en: 'No clients with a prior relationship.' })"
       />
@@ -128,7 +134,7 @@ onMounted(load);
             <td class="px-4 py-3 font-medium">
               {{ c.display_name }}
               <span
-                v-if="!relatedIds.has(String(c.id))"
+                v-if="!isAdmin && !relatedIds.has(String(c.id))"
                 class="ml-2 rounded-full bg-border px-2 py-0.5 text-xs font-normal text-neutral"
               >
                 {{ label({ es: 'sin relación', en: 'no relationship' }) }}

@@ -13,10 +13,13 @@ import { isOpenAppointmentState } from '@shared/ssot/domain';
 import { useLedgerLabel } from '@/composables/useLedgerLabel';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
+import { useConflictOverride } from '@/composables/useConflictOverride';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
-import type { Role, TableRecordMap } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -39,6 +42,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { formatARS, formatDateTime } = useCurrency();
 const { label } = useLabel();
+const { stateLabel } = useStateLabel();
 const toast = useToast();
 const auth = useAuthStore();
 
@@ -60,13 +64,12 @@ const enableLoginSubmitting = ref(false);
 const enableLoginError = ref('');
 const enableLoginForm = reactive({ username: '', password: '' });
 
-const cancelId = ref<number | null>(null);
+const cancelId = ref<number | string | null>(null);
 const cancelConfirmOpen = ref(false);
 const deactivateConfirmOpen = ref(false);
 
-const conflictOpen = ref(false);
-const conflictVerdict = ref<ConflictVerdict | null>(null);
-const conflictRetryFn = ref<((override: boolean) => Promise<void>) | null>(null);
+const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverrideCancel } =
+  useConflictOverride();
 
 const role = computed(() => auth.user?.role as Role | undefined);
 const canCreateLedger = computed(() => !!role.value && roleAllowedFor(['Admin', 'Receptionist', 'Professional'], role.value));
@@ -99,8 +102,8 @@ const historyAppointments = computed(() =>
 
 const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
 
-const professionalName = (id: number) => professionalLabelFor(id) ?? `#${id}`;
-const serviceName = (id: number) => serviceLabelFor(id) ?? `#${id}`;
+const professionalName = (id: number | string) => professionalLabelFor(id) ?? `#${id}`;
+const serviceName = (id: number | string) => serviceLabelFor(id) ?? `#${id}`;
 
 async function loadProfile() {
   const res = await getRow('clients', clientId);
@@ -146,25 +149,10 @@ async function onBookSaved() {
 }
 
 function onFormConflict(verdict: ConflictVerdict, retryFn: (override: boolean) => Promise<void>) {
-  conflictVerdict.value = verdict;
-  conflictRetryFn.value = retryFn;
-  conflictOpen.value = true;
+  raiseConflict(verdict, retryFn);
 }
 
-async function onOverrideConfirm() {
-  conflictOpen.value = false;
-  if (conflictRetryFn.value) await conflictRetryFn.value(true);
-  conflictVerdict.value = null;
-  conflictRetryFn.value = null;
-}
-
-function onOverrideCancel() {
-  conflictOpen.value = false;
-  conflictVerdict.value = null;
-  conflictRetryFn.value = null;
-}
-
-function requestCancel(id: number) {
+function requestCancel(id: number | string) {
   cancelId.value = id;
   cancelConfirmOpen.value = true;
 }
@@ -316,7 +304,7 @@ onMounted(load);
               <div class="text-sm">
                 <span class="font-medium tabular-nums">{{ formatDateTime(appt.starts_at) }}</span>
                 <span class="text-neutral"> · {{ serviceName(appt.service_id) }} · {{ professionalName(appt.professional_user_id) }}</span>
-                <span class="ml-2 rounded-full bg-surface px-2 py-0.5 text-xs">{{ t(`status.${appt.state}`) }}</span>
+                <span class="ml-2 rounded-full bg-surface px-2 py-0.5 text-xs">{{ stateLabel(appt.state) }}</span>
               </div>
               <button
                 type="button"
@@ -360,7 +348,7 @@ onMounted(load);
                 <td class="px-4 py-3 tabular-nums text-neutral">{{ formatDateTime(appt.starts_at) }}</td>
                 <td class="px-4 py-3">{{ serviceName(appt.service_id) }}</td>
                 <td class="px-4 py-3">{{ professionalName(appt.professional_user_id) }}</td>
-                <td class="px-4 py-3">{{ t(`status.${appt.state}`) }}</td>
+                <td class="px-4 py-3">{{ stateLabel(appt.state) }}</td>
                 <td class="px-4 py-3 text-right tabular-nums">{{ formatARS(appt.price) }}</td>
               </tr>
             </tbody>
@@ -380,7 +368,7 @@ onMounted(load);
       <LedgerEntryForm :client-user-id="clientId" @saved="onEntrySaved" @cancelled="showEntryForm = false" />
     </DetailPanel>
 
-    <DetailPanel :open="showBookForm" :title="label({ es: 'Agendar turno', en: 'Book appointment' })" @close="showBookForm = false">
+    <DetailPanel :open="showBookForm" size="3xl" :title="label({ es: 'Agendar turno', en: 'Book appointment' })" @close="showBookForm = false">
       <AppointmentForm
         :prefill-client-id="clientId"
         @saved="onBookSaved"
