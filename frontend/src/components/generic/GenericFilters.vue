@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useLabel } from '@/composables/useLabel';
+import { i18n } from '@/i18n';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, ColumnDef } from '@shared/types/types';
+import type { ColumnDef } from '@shared/types/types';
+import type { TableKey } from '@shared/ssot/derived';
 import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{ tableKey: TableKey }>();
 const emit = defineEmits<{ change: [filters: Record<string, string>] }>();
 
 const { label } = useLabel();
+// Chrome literals below use the global i18n instance (not useI18n()) — mounted by many
+// consumers, not all of which register the i18n plugin in their tests.
 
 interface FilterEntry {
   field: string;
@@ -83,9 +87,9 @@ function onValueChange() {
       <select
         v-model="selectedField"
         class="rounded-md border border-border bg-card px-3 py-2 text-sm"
-        aria-label="Seleccionar columna"
+        :aria-label="i18n.global.t('generic.selectColumnAria')"
       >
-        <option value="">{{ label({ es: 'Agregar filtro…', en: 'Add filter…' }) }}</option>
+        <option value="">{{ i18n.global.t('generic.addFilterPlaceholder') }}</option>
         <option
           v-for="{ key, col } in filterableColumns"
           :key="key"
@@ -148,7 +152,7 @@ function onValueChange() {
           v-model="f.value"
           type="text"
           class="w-40 rounded border border-border px-2 py-1 text-sm"
-          :placeholder="label({ es: 'Filtrar…', en: 'Filter…' })"
+          :placeholder="i18n.global.t('generic.filterPlaceholder')"
           @input="onValueChange"
         />
       </template>

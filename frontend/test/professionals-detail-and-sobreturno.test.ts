@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { roleAllowedFor } from '@/router/access';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 
 // Mirrors ProfessionalDetail's action gating (#9): Admin/Receptionist manage any professional's
 // profile; a Professional may edit only their own; only an Admin can deactivate.

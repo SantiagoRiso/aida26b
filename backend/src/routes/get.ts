@@ -1,11 +1,9 @@
 import express from "express";
 import { Pool } from "pg";
 
-import { getEntityName } from "../helpers";
-
 import { buildListStatement, buildRowStatement, type ListScope } from "../db/generic";
 
-import { getPkFields } from "../../../shared/src/utils/utils";
+import { getPkFields, getEntityName } from "../../../shared/src/utils/utils";
 
 import { query as runQuery } from "../db/core";
 
@@ -16,13 +14,12 @@ import {
 } from "../status_messages";
 
 import { assertCrudAllowed } from "./crud-policy";
-import type { AuthUser } from "../auth";
+import { requireUser } from "./request-guards";
+import { parseListRequest } from "./list-request";
+import { isFilterParam, isReservedListParam } from "../../../shared/src/ssot/list-protocol";
 
-import type {
-  TableKey,
-  TableRecordMap,
-  SqlParam,
-} from "../../../shared/src/types/types";
+import type { TableKey, TableRecordMap } from "../../../shared/src/ssot/derived";
+import type { SqlParam } from "../db/core";
 import type { GenericRow } from "../../../shared/src/ssot/query-types";
 
 import {
@@ -30,20 +27,13 @@ import {
   sendErrorsIfInvalid,
 } from "../validation/validate";
 
-type AuthedRequest = express.Request & { user?: AuthUser };
-
 export async function getHandler(
   req: express.Request,
   res: express.Response,
   pool: Pool
 ) {
-  const user = (req as AuthedRequest).user;
-
-  // Fail closed: no authenticated user means no authority. A missing req.user must
-  // never resolve to a privileged identity.
-  if (!user) {
-    return sendError(res, 401, 'unauthorized', 'Authentication required');
-  }
+  const user = requireUser(req, res);
+  if (!user) return;
 
   const allowed = assertCrudAllowed(req.params.tableName, "read", user);
 
@@ -90,12 +80,7 @@ function isListRequest(query: express.Request["query"]): boolean {
   }
 
   return queryKeys.every(
-    (key) =>
-      key === "page" ||
-      key === "sort" ||
-      key === "dir" ||
-      key === "limit" ||
-      key.startsWith("filter_")
+    (key) => isReservedListParam(key) || isFilterParam(key)
   );
 }
 
@@ -107,7 +92,7 @@ async function getListOfTable(
   allowed: ListScope,
 ) {
   const { dataQuery, dataValues, countQuery, countValues, page, limit } =
-    buildListStatement(tableName, query, allowed);
+    buildListStatement(tableName, parseListRequest(query), allowed);
 
   const [dataRows, countRows] = await Promise.all([
     runQuery<GenericRow>(pool, dataQuery, dataValues),

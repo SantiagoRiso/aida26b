@@ -1,7 +1,6 @@
 import { query, queryOne } from './core';
-import type { Queryable } from './core';
+import type { Queryable, SqlParam } from './core';
 import { OPEN_APPOINTMENT_STATES } from '../../../shared/src/ssot/domain';
-import type { SqlParam } from '../../../shared/src/types/types';
 import type {
   ProfessionalOwnerRow,
   ResourceOwnerRow,
@@ -12,6 +11,34 @@ import type {
 
 // SQL list literal built from the shared open-states const (code-owned values, not user input).
 const OPEN_STATES_SQL = OPEN_APPOINTMENT_STATES.map((s) => `'${s}'`).join(', ');
+
+// Only open, future turnos not already acknowledged by staff are conflict-eligible. Shared by the
+// stored in_conflict flag and the warn-first preview count so the two can never disagree.
+const CONFLICT_ELIGIBLE_SQL = `a.state IN (${OPEN_STATES_SQL})
+    AND a.starts_at >= now()
+    AND a.conflict_ignored = false`;
+
+// End-exclusive wall-clock overlap between the turno and a [start, end) window. start/end are SQL
+// expressions (column refs or casted placeholders) so both conflict sites share one definition.
+function wallClockOverlapSql(tzParam: string, startExpr: string, endExpr: string): string {
+  return `((a.starts_at AT TIME ZONE ${tzParam})::time < ${endExpr}
+               AND (a.ends_at   AT TIME ZONE ${tzParam})::time > ${startExpr})`;
+}
+
+// A schedule_exceptions row's shape, independent of which owner column filters it (per-owner
+// exception lookup vs. the business-wide closure overlay share this projection).
+const EXCEPTION_PROJECTION = `is_unavailable,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time,
+            granularity_minutes`;
+
+// A business closure row's shape, shared by insert/update/list — the closure CRUD handlers never
+// touch owned (professional/resource) exception rows, only business_id IS NOT NULL ones.
+const CLOSURE_PROJECTION = `id,
+               to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
+               to_char(start_time, 'HH24:MI') AS start_time,
+               to_char(end_time,   'HH24:MI') AS end_time,
+               reason`;
 
 // The owner column is code-controlled ('professional_user_id' | 'resource_id'), never user input,
 // so interpolating it into these statements is injection-safe.
@@ -31,6 +58,15 @@ export function getResourceOwner(db: Queryable, id: number): Promise<ResourceOwn
     `SELECT name, business_id FROM resources WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
+}
+
+export async function resourceExistsInBusiness(db: Queryable, resourceId: number, businessId: number): Promise<boolean> {
+  const rows = await query(
+    db,
+    `SELECT id FROM resources WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
+    [resourceId, businessId],
+  );
+  return rows.length > 0;
 }
 
 // Blocks for a professional on a weekday that offer the given service, each tiled at that service's
@@ -141,10 +177,7 @@ export function getScheduleExceptions(
 ): Promise<ScheduleExceptionRow[]> {
   return query<ScheduleExceptionRow>(
     db,
-    `SELECT is_unavailable,
-            to_char(start_time, 'HH24:MI') AS start_time,
-            to_char(end_time,   'HH24:MI') AS end_time,
-            granularity_minutes
+    `SELECT ${EXCEPTION_PROJECTION}
        FROM schedule_exceptions
       WHERE ${ownerCol} = $1 AND exception_date = $2::date`,
     [ownerId, date],
@@ -161,10 +194,7 @@ export function getBusinessClosures(
 ): Promise<ScheduleExceptionRow[]> {
   return query<ScheduleExceptionRow>(
     db,
-    `SELECT is_unavailable,
-            to_char(start_time, 'HH24:MI') AS start_time,
-            to_char(end_time,   'HH24:MI') AS end_time,
-            granularity_minutes
+    `SELECT ${EXCEPTION_PROJECTION}
        FROM schedule_exceptions
       WHERE business_id = $1 AND exception_date = $2::date`,
     [businessId, date],
@@ -183,11 +213,7 @@ export function insertBusinessClosure(
     db,
     `INSERT INTO schedule_exceptions (business_id, exception_date, is_unavailable, start_time, end_time, reason)
      VALUES ($1, $2::date, true, $3::time, $4::time, $5)
-     RETURNING id,
-               to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
-               to_char(start_time, 'HH24:MI') AS start_time,
-               to_char(end_time,   'HH24:MI') AS end_time,
-               reason`,
+     RETURNING ${CLOSURE_PROJECTION}`,
     [businessId, data.exception_date, data.start_time, data.end_time, data.reason],
   );
 }
@@ -202,11 +228,7 @@ export function updateBusinessClosure(
     `UPDATE schedule_exceptions
         SET exception_date = $2::date, start_time = $3::time, end_time = $4::time, reason = $5
       WHERE id = $1 AND business_id IS NOT NULL
-      RETURNING id,
-                to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
-                to_char(start_time, 'HH24:MI') AS start_time,
-                to_char(end_time,   'HH24:MI') AS end_time,
-                reason`,
+      RETURNING ${CLOSURE_PROJECTION}`,
     [id, data.exception_date, data.start_time, data.end_time, data.reason],
   );
 }
@@ -214,11 +236,7 @@ export function updateBusinessClosure(
 export function listBusinessClosures(db: Queryable, businessId: number): Promise<BusinessClosureRow[]> {
   return query<BusinessClosureRow>(
     db,
-    `SELECT id,
-            to_char(exception_date, 'YYYY-MM-DD') AS exception_date,
-            to_char(start_time, 'HH24:MI') AS start_time,
-            to_char(end_time,   'HH24:MI') AS end_time,
-            reason
+    `SELECT ${CLOSURE_PROJECTION}
        FROM schedule_exceptions
       WHERE business_id = $1
       ORDER BY exception_date`,
@@ -248,9 +266,7 @@ export async function deleteBusinessClosure(db: Queryable, id: number): Promise<
 // placeholder. Resource-owned exceptions are intentionally excluded (rooms, not professional time).
 export function appointmentInConflictSql(tzParam: string): string {
   return `(
-    a.state IN (${OPEN_STATES_SQL})
-    AND a.starts_at >= now()
-    AND a.conflict_ignored = false
+    ${CONFLICT_ELIGIBLE_SQL}
     AND EXISTS (
       SELECT 1 FROM schedule_exceptions se
        WHERE se.is_unavailable = true
@@ -261,8 +277,7 @@ export function appointmentInConflictSql(tzParam: string): string {
          )
          AND (
               se.start_time IS NULL
-           OR ((a.starts_at AT TIME ZONE ${tzParam})::time < se.end_time
-               AND (a.ends_at   AT TIME ZONE ${tzParam})::time > se.start_time)
+           OR ${wallClockOverlapSql(tzParam, 'se.start_time', 'se.end_time')}
          )
     )
   )`;
@@ -293,8 +308,7 @@ export async function countAppointmentsHitByTimeOff(
     const pStart = `$${params.length}`;
     params.push(timeOff.end);
     const pEnd = `$${params.length}`;
-    overlapSql = `((a.starts_at AT TIME ZONE ${pTz})::time < ${pEnd}::time
-                  AND (a.ends_at AT TIME ZONE ${pTz})::time > ${pStart}::time)`;
+    overlapSql = wallClockOverlapSql(pTz, `${pStart}::time`, `${pEnd}::time`);
   }
 
   const rows = await query<{ n: string }>(
@@ -303,9 +317,7 @@ export async function countAppointmentsHitByTimeOff(
        FROM appointments a
        JOIN auth.users u ON u.id = a.professional_user_id
       WHERE u.business_id = ${pBiz}
-        AND a.state IN (${OPEN_STATES_SQL})
-        AND a.starts_at >= now()
-        AND a.conflict_ignored = false
+        AND ${CONFLICT_ELIGIBLE_SQL}
         AND (a.starts_at AT TIME ZONE ${pTz})::date = ${pDate}::date
         ${scopeSql}
         AND ${overlapSql}`,

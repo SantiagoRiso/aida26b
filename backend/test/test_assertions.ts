@@ -1,4 +1,4 @@
-import type { TableKey } from '../../shared/src/types/types';
+import type { TableKey } from '../../shared/src/ssot/derived';
 import { fetchFullTable, fetchById, insertRow, updateRow, deleteRow } from './test_helpers';
 import type { RowPayload } from './test_helpers';
 import assert from 'node:assert';

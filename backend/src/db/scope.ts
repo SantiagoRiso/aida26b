@@ -1,12 +1,6 @@
-import { tableOf } from '../../../shared/src/utils/utils';
-import type {
-  TableKey,
-  SqlParam,
-  BusinessJoinDescriptor,
-  OwnershipDescriptor,
-  GrantScopeDescriptor,
-  RoleDiscriminator,
-} from '../../../shared/src/types/types';
+import { tableOf, BUSINESS_ID_COLUMN } from '../../../shared/src/utils/utils';
+import type { TableKey } from '../../../shared/src/ssot/derived';
+import type { SqlParam } from './core';
 import type { AuthUser } from '../auth';
 import type { CrudOperation } from '../routes/crud-policy';
 
@@ -83,14 +77,14 @@ export function buildBusinessScope(
   const meta = tableOf(tableKey);
 
   if (meta.businessScoped) {
-    return { businessWhere: '"business_id" = ?', businessParams: [user.business_id] };
+    return { businessWhere: `"${BUSINESS_ID_COLUMN}" = ?`, businessParams: [user.business_id] };
   }
 
-  const join = meta.businessJoin as BusinessJoinDescriptor | undefined;
+  const join = meta.businessJoin;
   if (join && join.paths.length === 1) {
     const { parentTable, localFk, parentPk } = join.paths[0];
     return {
-      businessWhere: `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE business_id = ?)`,
+      businessWhere: `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE ${BUSINESS_ID_COLUMN} = ?)`,
       businessParams: [user.business_id],
     };
   }
@@ -98,7 +92,7 @@ export function buildBusinessScope(
   if (join && join.paths.length >= 2) {
     // Dual-owner tables (schedule_blocks, schedule_exceptions): either owner may satisfy the filter.
     const parts = join.paths.map(({ parentTable, localFk, parentPk }) =>
-      `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE business_id = ?)`,
+      `"${localFk}" IN (SELECT "${parentPk}" FROM ${parentTable} WHERE ${BUSINESS_ID_COLUMN} = ?)`,
     );
     return {
       businessWhere: `(${parts.join(' OR ')})`,
@@ -110,8 +104,7 @@ export function buildBusinessScope(
 }
 
 export function roleDiscriminatorFragment(table: TableKey): { sql: string; value: string } | null {
-  const meta = tableOf(table);
-  const disc = (meta as { roleDiscriminator?: RoleDiscriminator }).roleDiscriminator;
+  const disc = tableOf(table).roleDiscriminator;
   if (!disc) return null;
   return { sql: `"${disc.column}" = ?`, value: disc.value };
 }
@@ -125,9 +118,8 @@ export function buildOwnerScope(
   user: AuthUser,
   op: CrudOperation,
 ): { ownerWhere?: string; ownerParams?: SqlParam[] } {
-  const meta = tableOf(table);
-  if (!meta.ownership) return {};
-  const ownership = meta.ownership as OwnershipDescriptor;
+  const ownership = tableOf(table).ownership;
+  if (!ownership) return {};
   const opsMatch = !ownership.ops || ownership.ops.includes(op);
   if (user.role === ownership.role && opsMatch) {
     return { ownerWhere: `"${ownership.ownerColumn}" = ?`, ownerParams: [user.id] };
@@ -143,13 +135,13 @@ export function buildGrantScope(
   user: AuthUser,
 ): { grantWhere?: string; grantParams?: SqlParam[] } {
   const meta = tableOf(table);
-  const gs = meta.grantScope as GrantScopeDescriptor | undefined;
+  const gs = meta.grantScope;
   if (gs && user.role === gs.role && !Array.isArray(meta.pk)) {
     // Match the grant against the column that carries this table's professional owner. That is
     // the pk only when the pk IS the user id (professionals); on surrogate-pk owner tables
     // (schedule_blocks, …) it's the ownership column — matching against `id` there tests a row
     // id against a user id, never matches, and hides every granted row.
-    const ownerColumn = (meta.ownership as OwnershipDescriptor | undefined)?.ownerColumn ?? meta.pk;
+    const ownerColumn = meta.ownership?.ownerColumn ?? meta.pk;
     return {
       grantWhere: `"${ownerColumn}" IN (SELECT "${gs.grantRowColumn}" FROM ${gs.grantTable} WHERE "${gs.granteeColumn}" = ?)`,
       grantParams: [user.id],

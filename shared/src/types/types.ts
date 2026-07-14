@@ -1,11 +1,9 @@
-import { structure } from "../ssot/structure";
 import type { Role } from "./roles";
 
+type CrudOp = 'create' | 'read' | 'update' | 'delete';
+
 type RoleRequired = {
-  create?: Role[];
-  read?:   Role[];
-  update?: Role[];
-  delete?: Role[];
+  [K in CrudOp]?: Role[];
 };
 
 // Column that holds this row's owner user_id, and which role/operations get self-scoped to it.
@@ -15,7 +13,7 @@ type RoleRequired = {
 type OwnershipDescriptor = {
   ownerColumn: string;
   role: Role;
-  ops?: Array<'create' | 'read' | 'update' | 'delete'>;  // defaults to every op when omitted
+  ops?: CrudOp[];  // defaults to every op when omitted
 };
 
 // Rows visible/writable for this role are limited to those a grant row names —
@@ -54,9 +52,6 @@ type TypeMap = {
 };
 
 type MyTypeNames = keyof TypeMap;
-
-// What node-pg can serialize as a query parameter.
-type SqlParam = string | number | boolean | Date | null | SqlParam[];
 
 type ColumnValue = TypeMap[MyTypeNames] | null;
 
@@ -103,16 +98,13 @@ type ColumnDef = {
   sortable?: boolean;
   derivable?: {originTable: string, sqlGenerationStatement: string};
   foreignKey?: ForeignKeyDef;
-  referencesUserRole?: 'Professional' | 'Client';
+  referencesUserRole?: Extract<Role, 'Professional' | 'Client'>;
 }
 
 // Generic-CRUD operations a table exposes. Operations are enabled explicitly so route
 // builders never expose more than was declared.
 type CrudPolicy = {
-  create?: boolean;
-  read?: boolean;
-  update?: boolean;
-  delete?: boolean;
+  [K in CrudOp]?: boolean;
 };
 
 // Presence of this metadata turns the generic delete into an archive (set the deleted-at
@@ -168,7 +160,7 @@ type TableStructure = {
   // the synchronous scope engine can't express for a surrogate-pk owner table. Separate from the
   // schedulable-derived owner-scheduled tables (schedule_blocks/schedule_exceptions), which are
   // guarded on every write automatically.
-  professionalOwnerGuard?: { ops: Array<'create' | 'update' | 'delete'> }
+  professionalOwnerGuard?: { ops: Array<Extract<CrudOp, 'create' | 'update' | 'delete'>> }
   businessJoin?:  BusinessJoinDescriptor
   // When set, generic SQL targets this schema-qualified table instead of the SSOT key name.
   sqlTable?:          string
@@ -184,20 +176,4 @@ type InferType<FieldDefs extends Record<string, ColumnDef>> = {
   [K in keyof FieldDefs]: TypeMap[FieldDefs[K]['type']]
 }
 
-type TableKey = keyof typeof structure.tables;
-
-type TableRecordMap = {
-  [T in keyof typeof structure.tables]: InferType<(typeof structure.tables)[T]['columns']>
-};
-
-type RendererProps<K extends TableKey> = {
-  id: string;
-  fieldName: keyof TableRecordMap[K] & string;
-  column: ColumnDef;
-  record?: Partial<TableRecordMap[K]>;
-  isEdit?: boolean;
-};
-
-type RendererFunc = <K extends TableKey>(props: RendererProps<K>) => HTMLElement;
-
-export type {Role, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, TableKey, TableRecordMap, ForeignKeyDef, Language, LocalizedText, RendererProps, RendererFunc, SqlParam, ColumnValue, GrantScopeDescriptor};
+export type {CrudOp, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, ForeignKeyDef, Language, LocalizedText, ColumnValue, GrantScopeDescriptor};

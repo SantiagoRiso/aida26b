@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { createOwnerPool } from './db';
-import { hashPassword } from './auth';
+import { hashPassword, MIN_PASSWORD_LENGTH } from './auth';
 
 dotenv.config();
 
@@ -9,8 +9,8 @@ async function main() {
   const password = process.env.ADMIN_PASSWORD;
   const email = process.env.ADMIN_EMAIL?.trim() || null;
 
-  if (!username || !password || password.length < 8) {
-    throw new Error('ADMIN_USERNAME and ADMIN_PASSWORD with at least 8 characters are required');
+  if (!username || !password || password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`ADMIN_USERNAME and ADMIN_PASSWORD with at least ${MIN_PASSWORD_LENGTH} characters are required`);
   }
 
   // Owner role: the app role can't write config tables like businesses.

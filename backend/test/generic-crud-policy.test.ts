@@ -182,7 +182,7 @@ describe('ordinary configuration entities are allowed', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data)).toBe(true);
-    expect(res.body.meta).toMatchObject({ page: 1, limit: 20 });
+    expect(res.body.meta).toMatchObject({ page: 1, limit: 50 });
   });
 });
 

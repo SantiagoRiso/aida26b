@@ -226,10 +226,11 @@ describe('useAppointmentCalendar hides non-events', () => {
 
   function appt(id: number, state: string, starts = '2026-07-06T10:00:00Z', ends = '2026-07-06T10:30:00Z'): Appointment {
     return {
-      id, client_user_id: 1, professional_user_id: 1, resource_id: null, service_id: 1,
+      id: String(id), client_user_id: '1', professional_user_id: '1', resource_id: null, service_id: '1',
       starts_at: starts, duration_minutes: 30, ends_at: ends, state,
       name: null, description: null, price: '100.00',
       override_conflict: false, override_actor_id: null, staff_note: null, conflict_ignored: false,
+      created_at: starts, updated_at: starts,
     };
   }
 

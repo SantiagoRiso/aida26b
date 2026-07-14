@@ -1,5 +1,5 @@
 import type { Appointment } from '@/api/appointments';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 
 export const CURRENT_LEAD_MS = 5 * 60 * 1000;
 
@@ -37,5 +37,5 @@ export function showsCurrentCard(
 ): boolean {
   if (!user || user.role === 'Admin') return false;
   if (user.role === 'Receptionist') return true;
-  return user.role === 'Professional' && user.id === appt.professional_user_id;
+  return user.role === 'Professional' && String(user.id) === appt.professional_user_id;
 }

@@ -1,24 +1,23 @@
 import express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import type { AuthUser } from '../auth';
+import { type AuthedRequest } from '../session';
+import type { AuditWriter } from '../audit';
+import { requireBusinessContext } from './business-context';
 import {
-  resolveBooking,
   TERMINAL_STATES,
   APPOINTMENT_STATE_VALUES,
   assertValidTransition,
   canCancelAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
-import { BUSINESS_TZ, HHMM_RE, DATE_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
-import { httpError } from '../db/errors';
+import { BUSINESS_TZ, DATE_OR_ISO_RE } from '../time';
+import { httpError } from '../errors';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
-import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
-import { getBlockServiceForSlot } from '../db/scheduling';
-import { weekdayOf } from '../../../shared/src/ssot/domain';
+import { resolveBookingWindow, isOutsideBookingWindow } from '../services/scheduling';
 import {
   loadAppointment,
   getAppointmentWallClock,
@@ -33,23 +32,12 @@ import {
   listRelatedClientIds,
   type AppointmentRoleScope,
 } from '../db/appointments';
-import { resolveAndLoadService, saveWithConflictRecheck } from '../services/booking';
+import { resolveAndLoadService, runConflictDryRun, saveWithConflictRecheck } from '../services/booking';
 import { insertSessionChargeIfAbsent } from '../db/ledger';
 import { getCancellationCutoffHours } from '../db/businesses';
-import type { ColumnValue } from '../../../shared/src/types/types';
 import type { AppointmentRow } from '../../../shared/src/ssot/query-types';
-
-type AuthedRequest = Request & { user?: AuthUser };
-
-type AuditFn = (
-  req: Request,
-  eventType: string,
-  outcome: string,
-  details?: Record<string, ColumnValue>,
-) => Promise<void>;
-
-const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
-
+import { parsePagination } from './pagination';
+import { APPOINTMENT_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 const STAFF_ONLY_FIELDS = ['staff_note', 'override_actor_id'] as const;
 
@@ -62,15 +50,13 @@ function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, (typeof STA
 export function mountAppointmentRoutes(
   app: express.Application,
   pool: Pool,
-  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
+  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter },
 ) {
-  app.post('/api/appointments/request', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.request, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
     if (user.role !== 'Client') {
       return sendError(res, 403, 'forbidden', 'Only clients may use the request endpoint');
     }
@@ -97,7 +83,6 @@ export function mountAppointmentRoutes(
     } = resolved;
 
     // Client self-service is bounded by the effective booking window; staff paths stay exempt.
-    const { loadConflictInputs, resolveBookingWindow, isOutsideBookingWindow } = await import('../services/scheduling');
     const bounds = await resolveBookingWindow(pool, businessId, professionalUserId, serviceId);
     if (bounds && isOutsideBookingWindow(date, bounds)) {
       return sendError(res, 422, 'outside_booking_window',
@@ -105,26 +90,21 @@ export function mountAppointmentRoutes(
     }
 
     // Dry-run conflict check — read-only, no advisory lock needed for a mere read.
-    const inputs = await loadConflictInputs(pool, businessId, {
+    const dryRun = await runConflictDryRun(pool, businessId, {
       professionalUserId,
-      date,
       serviceId,
+      date,
+      start,
+      durationMinutes: effective_duration_minutes,
+      callerIsStaff: false,
     });
-    if ('error' in inputs) {
-      return sendError(res, inputs.error.status, inputs.error.code, inputs.error.message);
+    if (!dryRun.ok) {
+      return sendError(res, dryRun.status, dryRun.code, dryRun.message);
     }
 
-    const { evaluateConflicts } = await import('../../../shared/src/ssot/domain');
-    const end = addMinutes(start, effective_duration_minutes);
-    const verdict = evaluateConflicts({
-      proposed: { start, end, date },
-      callerIsStaff: false,
-      professional: { id: inputs.professional.id, name: inputs.professional.name, slots: inputs.professional.gridSlots, booked: inputs.professional.booked },
-    });
-
-    if (verdict.requires_override) {
+    if (dryRun.verdict.requires_override) {
       // Clients can never override.
-      return sendData(res, verdict);
+      return sendData(res, dryRun.verdict);
     }
 
     const appt = await withTransaction(pool, async (tx) => {
@@ -145,13 +125,11 @@ export function mountAppointmentRoutes(
     return sendData(res, stripStaffFields(appt), 201);
   }));
 
-  app.post('/api/appointments/schedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.schedule, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const body = req.body ?? {};
     const professionalUserId = Number(body.professional_user_id);
@@ -219,12 +197,10 @@ export function mountAppointmentRoutes(
     return sendData(res, outcome.result, 201);
   }));
 
-  app.post('/api/appointments/:id/approve', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.approve, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -280,12 +256,10 @@ export function mountAppointmentRoutes(
     return sendData(res, outcome.result);
   }));
 
-  app.post('/api/appointments/:id/reschedule', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.reschedule, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -336,42 +310,30 @@ export function mountAppointmentRoutes(
       ? Number(body.duration_minutes)
       : Number(row.duration_minutes);
 
-    const fields: Record<string, string> = {};
-    if (!DATE_RE.test(date)) fields.date = 'must be YYYY-MM-DD';
-    if (!HHMM_RE.test(start)) fields.start = 'must be HH:MM';
-    if (!Number.isInteger(durationMinutes) || durationMinutes <= 0)
-      fields.duration_minutes = 'must be a positive integer';
-    // Parity with create: an appointment starts and ends on the same day.
-    if (!fields.start && !fields.duration_minutes && crossesMidnight(start, durationMinutes)) {
-      fields.duration_minutes = 'start + duration must not cross midnight';
+    // Same pipeline as create: format checks, business-scoped service/resource/client (client
+    // comes from the row, never the body), effective price/duration. Route is staff-only by the
+    // authz above, so the requested duration may resolve as a sobreturno length.
+    const resolved = await resolveAndLoadService(
+      pool,
+      businessId,
+      {
+        professional_user_id: professionalUserId,
+        service_id: serviceId,
+        resource_id: resourceId,
+        client_user_id: Number(row.client_user_id),
+        date,
+        start,
+        duration_minutes: durationMinutes,
+      },
+      true,
+      'Invalid reschedule input',
+    );
+    if (!resolved.ok) {
+      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
-    if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid reschedule input', fields);
-    }
-
-    const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
-    if (serviceDefaults == null) {
-      return sendError(res, 404, 'not_found', 'Service not found in this business');
-    }
-
-    const clientUserId = Number(row.client_user_id);
-    let clientOverridePriceArs: string | null = null;
-    if (Number.isInteger(clientUserId) && clientUserId > 0) {
-      clientOverridePriceArs = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
-    }
-
-    const blockService = await getBlockServiceForSlot(pool, professionalUserId, serviceId, weekdayOf(date), start);
-    const { effective_price, effective_duration_minutes } = resolveBooking({
-      serviceDefaultPriceArs: serviceDefaults.default_price_ars,
-      serviceDefaultDurationMinutes: serviceDefaults.default_duration_minutes,
-      clientOverridePriceArs,
-      blockServicePriceArs: blockService?.price_ars ?? null,
-      blockServiceDurationMinutes: blockService?.duration_minutes ?? null,
-      sobreturnoDurationMinutes: durationMinutes,
-    });
+    const { effective_price, effective_duration_minutes, startsAt } = resolved;
 
     const override = req.body?.override === true;
-    const startsAt = buildStartsAt(date, start);
 
     const outcome = await saveWithConflictRecheck(
       pool,
@@ -399,12 +361,10 @@ export function mountAppointmentRoutes(
     return sendData(res, outcome.result);
   }));
 
-  app.post('/api/appointments/:id/transition', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.transition, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -492,11 +452,10 @@ export function mountAppointmentRoutes(
 
   // Acknowledge (or re-flag) a turno that overlaps time-off. Staff-only; flips the stored bit the
   // in_conflict predicate reads, so an ignored turno leaves the conflict list and the calendar ring.
-  app.post('/api/appointments/:id/ignore-conflict', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(APPOINTMENT_PATTERNS.ignoreConflict, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Clients may not manage conflicts');
     }
@@ -506,7 +465,7 @@ export function mountAppointmentRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
     }
 
-    const row = await loadAppointment(pool, id, user.business_id);
+    const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
 
     const authz = await assertAppointmentActionAllowed(pool, user, Number(row.professional_user_id));
@@ -527,12 +486,10 @@ export function mountAppointmentRoutes(
     return sendData(res, appt);
   }));
 
-  app.patch('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.patch(APPOINTMENT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -589,12 +546,10 @@ export function mountAppointmentRoutes(
 
   // Backs the "clients with a prior relationship" list without shipping the whole appointment
   // history to the browser. Registered before /:id so the literal path wins.
-  app.get('/api/appointments/related-clients', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(APPOINTMENT_PATTERNS.relatedClients, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Staff access required');
     }
@@ -608,12 +563,10 @@ export function mountAppointmentRoutes(
     return sendData(res, { client_user_ids: relatedIds });
   }));
 
-  app.get('/api/appointments/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(APPOINTMENT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     // Clients use /api/appointments (filtered list) + /api/availability.
     if (user.role === 'Client') {
@@ -636,16 +589,12 @@ export function mountAppointmentRoutes(
     return sendData(res, row);
   }));
 
-  app.get('/api/appointments', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(APPOINTMENT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'Business context required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const page = Math.max(Number(req.query.page) || 1, 1);
-    const offset = (page - 1) * limit;
+    const { limit, page, offset } = parsePagination(req.query);
 
     let roleScope: AppointmentRoleScope;
     if (user.role === 'Client') roleScope = { kind: 'client', userId: user.id };

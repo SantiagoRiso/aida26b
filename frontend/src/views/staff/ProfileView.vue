@@ -11,7 +11,8 @@ import FieldError from '@/components/shared/FieldError.vue';
 import PasswordInput from '@/components/shared/PasswordInput.vue';
 import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 import MyExceptionsSection from '@/components/settings/MyExceptionsSection.vue';
-import type { ColumnValue, TableRecordMap } from '@shared/types/types';
+import type { ColumnValue } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 const { label } = useLabel();
 const { success } = useToast();

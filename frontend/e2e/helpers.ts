@@ -1,18 +1,19 @@
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { DEMO_ACCOUNTS as DEMO_USERS, DEMO_PASSWORD } from '../../shared/src/dev-fixtures';
 
-// Demo/local-only credentials. These constants exist in one place so the demo seed
-// script (backend/src/seed-demo.ts) can align exact usernames here; keep them in sync.
+// Demo/local-only credentials, shared with the demo seed script (backend/src/seed-demo.ts) via
+// shared/src/dev-fixtures.ts so a renamed demo account can't silently break e2e logins.
 // These are never real secrets — they identify dev/demo accounts only.
 
 export const DEMO_ACCOUNTS = {
-  adminUser:           { username: 'demo_admin',         password: 'demo-pass-123', role: 'Admin' },
-  professionalUser:    { username: 'demo_pro',           password: 'demo-pass-123', role: 'Professional' },
-  receptionistWithGrant: { username: 'demo_recep',       password: 'demo-pass-123', role: 'Receptionist' },
-  client:              { username: 'demo_client',        password: 'demo-pass-123', role: 'Client' },
-  clientOverdue:       { username: 'demo_client_overdue', password: 'demo-pass-123', role: 'Client' },
+  adminUser:             { ...DEMO_USERS.adminUser, password: DEMO_PASSWORD },
+  professionalUser:      { ...DEMO_USERS.professionalUser, password: DEMO_PASSWORD },
+  receptionistWithGrant: { ...DEMO_USERS.receptionistWithGrant, password: DEMO_PASSWORD },
+  client:                { ...DEMO_USERS.client, password: DEMO_PASSWORD },
+  clientOverdue:         { ...DEMO_USERS.clientOverdue, password: DEMO_PASSWORD },
   // The ONLY seeded must_change_password account — consumed by forced-password-change.spec.ts only.
-  forcedResetUser:     { username: 'demo_reset',         password: 'demo-pass-123', role: 'Professional' },
+  forcedResetUser:       { ...DEMO_USERS.forcedResetUser, password: DEMO_PASSWORD },
 } as const;
 
 // Logs in via the real login screen, not the API directly.

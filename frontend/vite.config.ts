@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
+import { API_PREFIX } from '../shared/src/ssot/api-paths';
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
@@ -21,7 +22,7 @@ export default defineConfig({
     proxy: {
       // Dev-only: Express serves the API; Vite proxies /api so cookies stay same-site.
       // Target is the backend host — 'backend' inside Docker, localhost for bare-metal dev.
-      '/api': {
+      [API_PREFIX]: {
         target: process.env.API_PROXY_TARGET || 'http://localhost:3000',
         changeOrigin: true,
       },

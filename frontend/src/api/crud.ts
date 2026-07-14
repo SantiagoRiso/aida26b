@@ -1,6 +1,8 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
-import type { TableKey, TableRecordMap } from '@shared/types/types';
+import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
+import { filterParam } from '@shared/ssot/list-protocol';
+import { crudPath } from '@shared/ssot/api-paths';
 
 export interface ListParams {
   page?: number;
@@ -25,7 +27,7 @@ function buildQuery(params: ListParams): string {
   if (params.filters) {
     for (const [field, value] of Object.entries(params.filters)) {
       if (value !== '' && value !== undefined) {
-        parts.push(`filter_${encodeURIComponent(field)}=${encodeURIComponent(value)}`);
+        parts.push(`${encodeURIComponent(filterParam(field))}=${encodeURIComponent(value)}`);
       }
     }
   }
@@ -37,7 +39,7 @@ export function listRows<K extends TableKey>(
   table: K,
   params: ListParams = {},
 ): Promise<ApiResult<TableRecordMap[K][]>> {
-  return apiFetch<TableRecordMap[K][]>(`/${table}${buildQuery(params)}`);
+  return apiFetch<TableRecordMap[K][]>(`${crudPath(table)}${buildQuery(params)}`);
 }
 
 // Single-row read uses the `?id=` query convention (the generic GET route is /api/:table
@@ -46,14 +48,14 @@ export function getRow<K extends TableKey>(
   table: K,
   id: string | number,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(`/${table}?id=${encodeURIComponent(id)}`);
+  return apiFetch<TableRecordMap[K]>(`${crudPath(table)}?id=${encodeURIComponent(id)}`);
 }
 
 export function createRow<K extends TableKey>(
   table: K,
   body: Partial<TableRecordMap[K]>,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(`/${table}`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<TableRecordMap[K]>(crudPath(table), { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function updateRow<K extends TableKey>(
@@ -61,7 +63,7 @@ export function updateRow<K extends TableKey>(
   id: string | number,
   body: Partial<TableRecordMap[K]>,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(`/${table}/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'PUT', body: JSON.stringify(body) });
 }
 
 // The backend DELETE returns the removed (or soft-delete-archived) row via RETURNING *.
@@ -69,5 +71,5 @@ export function deleteRow<K extends TableKey>(
   table: K,
   id: string | number,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(`/${table}/${id}`, { method: 'DELETE' });
+  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'DELETE' });
 }

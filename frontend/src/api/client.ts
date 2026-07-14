@@ -1,13 +1,12 @@
 import { useUiStore } from '@/stores/ui';
+import { API_PREFIX } from '@shared/ssot/api-paths';
+import type { ApiEnvelope, ApiErrorEnvelope, ListMeta } from '@shared/ssot/envelope';
 
-// Every backend route speaks one response shape (status_messages.ts):
-//   { success, data, meta? } | { success:false, error:{ code, message, fields? } }
-type Envelope<T> =
-  | { success: true; data: T; meta?: { page: number; limit: number; total: number } }
-  | { success: false; error: { code: string; message: string; fields?: Record<string, string> } };
+// Every backend route speaks the one shared envelope (shared/src/ssot/envelope.ts).
+type Envelope<T> = ApiEnvelope<T> | ApiErrorEnvelope;
 
 export type ApiResult<T> =
-  | { ok: true; data: T; meta?: { page: number; limit: number; total: number } }
+  | { ok: true; data: T; meta?: ListMeta }
   | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> };
 
 export interface ApiFetchOptions {
@@ -30,7 +29,7 @@ export async function apiFetch<T>(
 
   // API responses carry live data and must never be served from the HTTP cache. A cached stale
   // response (e.g. an index.html served during a dev-proxy hiccup) otherwise poisons GETs.
-  const response = await fetch(`/api${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
+  const response = await fetch(`${API_PREFIX}${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
 
   if (response.status === 401) {
     if (authMode === 'authenticated') {

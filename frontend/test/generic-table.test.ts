@@ -8,7 +8,8 @@ import { en } from '@/i18n/en';
 import { useAuthStore } from '@/stores/auth';
 
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, ColumnDef } from '@shared/types/types';
+import type { ColumnDef } from '@shared/types/types';
+import type { TableKey } from '@shared/ssot/derived';
 
 // Mirrors crud.ts buildQuery so the query-string contract is asserted without apiFetch.
 function buildQuery(params: {

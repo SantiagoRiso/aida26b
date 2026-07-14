@@ -1,7 +1,8 @@
 import { ref, computed, watch } from 'vue';
 import { listRows } from '@/api/crud';
 import { useLabel } from '@/composables/useLabel';
-import type { ForeignKeyDef, TableKey } from '@shared/types/types';
+import type { ForeignKeyDef } from '@shared/types/types';
+import type { TableKey } from '@shared/ssot/derived';
 
 export interface SelectOption {
   value: string;

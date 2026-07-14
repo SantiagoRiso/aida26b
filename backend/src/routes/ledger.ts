@@ -1,9 +1,11 @@
 import express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import type { AuthUser } from '../auth';
+import { type AuthedRequest } from '../session';
+import type { AuditWriter } from '../audit';
+import { requireBusinessContext } from './business-context';
 import { LEDGER_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
 import {
   assertLedgerWriteAllowed,
@@ -11,23 +13,15 @@ import {
   auditInTx,
 } from './appointment-authz';
 import { withTransaction } from '../db/core';
-import { activeClientInBusiness } from '../db/users';
+import { findUser } from '../db/users';
 import {
   getAppointmentChargeAmount,
   insertLedgerEntry,
   getClientBalance,
   listClientLedger,
 } from '../db/ledger';
-import type { ColumnValue } from '../../../shared/src/types/types';
-
-type AuthedRequest = Request & { user?: AuthUser };
-
-type AuditFn = (
-  req: Request,
-  eventType: string,
-  outcome: string,
-  details?: Record<string, ColumnValue>,
-) => Promise<void>;
+import { parsePagination } from './pagination';
+import { LEDGER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 // Amount must be non-negative with at most two decimal places (mirrors amount_ars CHECK in DB).
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
@@ -38,16 +32,14 @@ const VALID_ENTRY_TYPES: Set<string> = new Set(LEDGER_ENTRY_TYPES.map((t) => t.v
 export function mountLedgerRoutes(
   app: express.Application,
   pool: Pool,
-  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn },
+  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter },
 ) {
   // The authz check runs inside the transaction so the grant check and INSERT are atomic.
-  app.post('/api/ledger', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(LEDGER_PATTERNS.create, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const fields: Record<string, string> = {};
 
@@ -74,7 +66,7 @@ export function mountLedgerRoutes(
       req.body.appointment_id != null ? Number(req.body.appointment_id) : null;
     const description: string | null = req.body.description ?? null;
 
-    if (!(await activeClientInBusiness(pool, clientUserId, businessId))) {
+    if (!(await findUser(pool, { id: clientUserId, businessId, role: 'Client', activeOnly: true }))) {
       return sendError(res, 404, 'not_found', 'Client not found in this business');
     }
 
@@ -132,7 +124,7 @@ export function mountLedgerRoutes(
   }));
 
   // Read authz runs on the pool — no write follows, so TOCTOU is not a concern here.
-  app.get('/api/clients/:id/balance', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(LEDGER_PATTERNS.clientBalance, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     const clientUserId = Number(req.params.id);
@@ -153,7 +145,7 @@ export function mountLedgerRoutes(
     });
   }));
 
-  app.get('/api/clients/:id/ledger', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(LEDGER_PATTERNS.clientLedger, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     const clientUserId = Number(req.params.id);
@@ -166,9 +158,7 @@ export function mountLedgerRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const page = Math.max(Number(req.query.page) || 1, 1);
-    const offset = (page - 1) * limit;
+    const { limit, page, offset } = parsePagination(req.query);
 
     const { rows, total } = await listClientLedger(pool, clientUserId, { limit, offset });
 

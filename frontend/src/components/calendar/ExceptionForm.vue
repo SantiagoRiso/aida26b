@@ -11,7 +11,8 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
-import type { ColumnValue, TableRecordMap } from '@shared/types/types';
+import type { ColumnValue } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 const props = defineProps<{
   prefillDate?: string;

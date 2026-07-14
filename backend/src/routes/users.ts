@@ -1,11 +1,14 @@
 import type express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import * as auth from '../auth';
 import { isRole } from '../../../shared/src/types/roles';
 import { guardRoute } from '../helpers';
 import { sendData, sendError } from '../status_messages';
-import { readPassword, type AuditWriter } from '../session';
+import { readPassword } from '../auth';
+import type { AuditWriter } from '../audit';
+import { type AuthedRequest } from '../session';
+import { requireBusinessContext } from './business-context';
 import { withTransaction } from '../db/core';
 import { DbError } from '../db/errors';
 import {
@@ -16,8 +19,7 @@ import {
   insertContactOnlyClient,
   enableClientLogin,
 } from '../db/users';
-
-type AuthedRequest = Request & { user?: auth.AuthUser };
+import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -42,7 +44,7 @@ export function mountUserAdminRoutes(
   // business_id comes from the caller's session; any body-supplied value is ignored.
   // Admins create any role; Professionals and Receptionists may only register Clients.
   app.post(
-    '/api/admin/users',
+    ADMIN_USER_PATTERNS.create,
     requireAuth,
     requirePasswordReady,
     guardRoute(async (req, res) => {
@@ -78,10 +80,8 @@ export function mountUserAdminRoutes(
       // Contact-only client (walk-in / phone booking): no username or password supplied.
       // Bookable immediately; login is enabled later via /enable-login.
       if (role === 'Client' && !username && !password) {
-        if (sessionUser.business_id == null) {
-          return sendError(res, 400, 'no_business', 'A business context is required to manage users');
-        }
-        const businessId = sessionUser.business_id;
+        const businessId = requireBusinessContext(req, res);
+        if (businessId == null) return;
 
         const contactDisplayName =
           typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
@@ -120,10 +120,8 @@ export function mountUserAdminRoutes(
 
       // A null business_id means "see/act across all businesses"; stamping it onto a new
       // user would mint a cross-tenant account. User creation requires a concrete business.
-      if (sessionUser.business_id == null) {
-        return sendError(res, 400, 'no_business', 'A business context is required to manage users');
-      }
-      const businessId = sessionUser.business_id;
+      const businessId = requireBusinessContext(req, res);
+      if (businessId == null) return;
       const email = emailRaw ?? `${username}@noemail.local`;
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
@@ -158,7 +156,7 @@ export function mountUserAdminRoutes(
 
   // Role is immutable — change requires deactivate + recreate.
   app.post(
-    '/api/admin/users/:id/deactivate',
+    ADMIN_USER_PATTERNS.deactivate,
     requireAuth,
     requirePasswordReady,
     requireAdmin,
@@ -170,9 +168,8 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id is required');
       }
 
-      if (sessionUser.business_id == null) {
-        return sendError(res, 400, 'no_business', 'A business context is required to manage users');
-      }
+      const businessId = requireBusinessContext(req, res);
+      if (businessId == null) return;
 
       // An admin deactivating themselves would lock the business out of its own admin surface.
       if (userId === sessionUser.id) {
@@ -181,7 +178,7 @@ export function mountUserAdminRoutes(
 
       const deactivated = await deactivateUser(pool, {
         userId,
-        businessId: sessionUser.business_id,
+        businessId,
         actorId: sessionUser.id,
       });
 
@@ -198,7 +195,7 @@ export function mountUserAdminRoutes(
   );
 
   app.post(
-    '/api/admin/users/:id/reset-password',
+    ADMIN_USER_PATTERNS.resetPassword,
     requireAuth,
     requirePasswordReady,
     requireAdmin,
@@ -211,9 +208,8 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id and password are required');
       }
 
-      if (sessionUser.business_id == null) {
-        return sendError(res, 400, 'no_business', 'A business context is required to manage users');
-      }
+      const businessId = requireBusinessContext(req, res);
+      if (businessId == null) return;
 
       // A self-reset forces must_change_password on the admin and kills their sessions,
       // locking them out; admins change their own password via /auth/change-password.
@@ -227,7 +223,7 @@ export function mountUserAdminRoutes(
       // users' passwords, never another business's accounts.
       const reset = await resetUserPassword(pool, {
         userId,
-        businessId: sessionUser.business_id,
+        businessId,
         passwordHash,
         passwordSalt,
       });
@@ -247,7 +243,7 @@ export function mountUserAdminRoutes(
   // "Enable login" turns a contact-only client (username IS NULL) into a client who can log
   // in. Same authz as creating a Client: Admin, or Professional/Receptionist for their own business.
   app.post(
-    '/api/admin/users/:id/enable-login',
+    ADMIN_USER_PATTERNS.enableLogin,
     requireAuth,
     requirePasswordReady,
     guardRoute(async (req, res) => {
@@ -268,16 +264,15 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required');
       }
 
-      if (sessionUser.business_id == null) {
-        return sendError(res, 400, 'no_business', 'A business context is required to manage users');
-      }
+      const businessId = requireBusinessContext(req, res);
+      if (businessId == null) return;
 
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
       try {
         const enabled = await enableClientLogin(pool, {
           userId,
-          businessId: sessionUser.business_id,
+          businessId,
           username,
           passwordHash,
           passwordSalt,

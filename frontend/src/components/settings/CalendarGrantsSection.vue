@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { listGrants, listGrantableStaff, createGrant, revokeGrant } from '@/api/grants';
 import type { CalendarGrant, GrantableStaff } from '@/api/grants';
@@ -11,8 +11,8 @@ import Selector from '@/components/shared/Selector.vue';
 
 const props = defineProps<{ professionalUserId: number | null }>();
 
-const { t } = useI18n();
 const { label } = useLabel();
+const { roleLabel } = useStateLabel();
 const { success, error } = useToast();
 
 const staff = ref<GrantableStaff[]>([]);
@@ -108,7 +108,7 @@ async function revoke(id: string) {
         >
           <span class="flex items-center gap-2 text-sm">
             <span class="font-medium">{{ g.grantee_username }}</span>
-            <span class="rounded bg-surface px-2 py-0.5 text-xs text-neutral">{{ t(`roles.${g.grantee_role}`) }}</span>
+            <span class="rounded bg-surface px-2 py-0.5 text-xs text-neutral">{{ roleLabel(g.grantee_role) }}</span>
           </span>
           <AppButton
             variant="destructive"

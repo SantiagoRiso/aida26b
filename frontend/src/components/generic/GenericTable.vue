@@ -3,10 +3,12 @@ import { ref, computed, watch, useSlots } from 'vue';
 import type { Ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
+import { i18n } from '@/i18n';
 import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, TableRecordMap, ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
+import type { ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
+import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -15,8 +17,8 @@ import Pagination from '@/components/generic/Pagination.vue';
 
 const props = defineProps<{
   tableKey: K;
-  // The table's own title is a page-level heading; suppress it when embedded under an outer heading.
   hideTitle?: boolean;
+  hideFilters?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -211,7 +213,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
       </div>
     </div>
 
-    <GenericFilters :table-key="tableKey" @change="onFiltersChange" />
+    <GenericFilters v-if="!hideFilters" :table-key="tableKey" @change="onFiltersChange" />
 
     <div class="overflow-x-auto rounded-lg border border-border">
       <table class="w-full text-sm">
@@ -230,7 +232,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
               </span>
             </th>
             <th v-if="hasActionsColumn" class="px-4 py-3 font-semibold text-right">
-              {{ label({ es: 'Acciones', en: 'Actions' }) }}
+              {{ i18n.global.t('generic.actionsColumn') }}
             </th>
           </tr>
         </thead>
@@ -271,7 +273,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
                   class="mr-2 text-accent hover:underline text-xs"
                   @click.stop="emit('edit', row)"
                 >
-                  {{ label({ es: 'Editar', en: 'Edit' }) }}
+                  {{ i18n.global.t('actions.edit') }}
                 </button>
               </td>
             </tr>

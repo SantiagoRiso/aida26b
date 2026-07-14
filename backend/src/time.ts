@@ -5,6 +5,7 @@ export const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
 
 export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
 export function addMinutes(hhmm: string, minutes: number): string {
   const [h, m] = hhmm.split(':').map(Number);

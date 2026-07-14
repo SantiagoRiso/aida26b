@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
 import { AUDIT_OUTCOMES } from '@shared/ssot/domain';
+import { structure } from '@shared/ssot/structure';
+import type { TableStructure } from '@shared/types/types';
+import type { TableKey } from '@shared/ssot/derived';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
 import { useAuthStore } from '@/stores/auth';
@@ -34,14 +37,23 @@ const filterDateFrom = ref('');
 const filterDateTo = ref('');
 const filterOutcome = ref('');
 
-const ENTITY_TYPES = [
-  { value: '', label: { es: 'Todos los tipos', en: 'All types' } },
-  { value: 'appointments', label: { es: 'Turnos', en: 'Appointments' } },
-  { value: 'ledger_entries', label: { es: 'Cuenta corriente', en: 'Ledger' } },
-  { value: 'auth.users', label: { es: 'Usuarios', en: 'Users' } },
-  { value: 'businesses', label: { es: 'Negocio', en: 'Business' } },
-  { value: 'permissions', label: { es: 'Permisos', en: 'Permissions' } },
+// Labels restate SSOT table titles rather than repeating them — the filter value (what the
+// backend expects in entity_type) stays independent of the SSOT table key used for display.
+const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
+  { value: '' },
+  { value: 'appointments', tableKey: 'appointments' },
+  { value: 'ledger_entries', tableKey: 'ledger_entries' },
+  { value: 'auth.users', tableKey: 'users' },
+  { value: 'businesses', tableKey: 'businesses' },
+  { value: 'permissions', tableKey: 'calendar_grants' },
 ];
+
+function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
+  if (!opt.tableKey) return label({ es: 'Todos los tipos', en: 'All types' });
+  // Widened to TableStructure: indexing by the generic TableKey union loses the per-table
+  // literal type, which makes the optional `title` member inaccessible (mirrors GenericTable.vue).
+  return label((structure.tables[opt.tableKey] as TableStructure).title);
+}
 
 const OUTCOMES = [
   { value: '', label: { es: 'Todos', en: 'All' } },
@@ -115,7 +127,7 @@ if (isAdmin.value) {
             :key="opt.value"
             :value="opt.value"
           >
-            {{ label(opt.label) }}
+            {{ entityTypeLabel(opt) }}
           </option>
         </select>
 

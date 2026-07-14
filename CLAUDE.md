@@ -58,7 +58,7 @@ handlers.**
 
 ## SSoT `structure` engine
 
-`shared/src/ssot/structure.ts` (15 tables in `shared/src/ssot/domain/*`, migration-dependency
+`shared/src/ssot/structure.ts` (16 tables in `shared/src/ssot/domain/*`, migration-dependency
 order) drives every generic route, validator, and renderer. **A table's shape, permissions, and
 scoping come from its descriptor — change those in `domain/*.ts`, don't special-case a table
 inside the generic engine.** (Editing the engine itself is normal when you're changing behavior

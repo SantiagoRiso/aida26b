@@ -27,7 +27,7 @@ const { label } = useLabel();
 
 const entryType = ref('');
 const amountArs = ref('');
-const appointmentId = ref<number | null>(null);
+const appointmentId = ref<string | null>(null);
 const description = ref('');
 const loading = ref(false);
 const fieldErrors = ref<Record<string, string>>({});

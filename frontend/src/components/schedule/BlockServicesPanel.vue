@@ -5,7 +5,8 @@ import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import FieldError from '@/components/shared/FieldError.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
-import type { ColumnValue, TableRecordMap } from '@shared/types/types';
+import type { ColumnValue } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 // blockMinutes is the block's live length (end − start, from the editor's unsaved textboxes) so the
 // slot-fit warning reacts as the times are edited.

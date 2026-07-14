@@ -90,7 +90,7 @@ function handleCancel() {
               </ul>
 
               <p v-if="!description.canOverride" class="text-sm text-neutral italic">
-                Este conflicto no puede ser forzado.
+                {{ t('conflicts.cannotOverride') }}
               </p>
             </div>
 

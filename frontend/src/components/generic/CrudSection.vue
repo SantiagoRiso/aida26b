@@ -1,12 +1,14 @@
 <script setup lang="ts" generic="K extends TableKey">
 import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
+import { i18n } from '@/i18n';
 import { deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, TableRecordMap, TableStructure, LocalizedText, ColumnValue } from '@shared/types/types';
+import type { TableStructure, LocalizedText, ColumnValue } from '@shared/types/types';
+import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -19,6 +21,7 @@ const props = defineProps<{
   deleteLabel: LocalizedText;
   deleteBody: LocalizedText;
   hideTitle?: boolean;
+  hideFilters?: boolean;
 }>();
 
 const { label } = useLabel();
@@ -84,7 +87,7 @@ async function confirmDelete() {
 
 <template>
   <div>
-    <GenericTable :key="reloadKey" :table-key="tableKey" :hide-title="hideTitle" @create="onCreate" @edit="onEdit" />
+    <GenericTable :key="reloadKey" :table-key="tableKey" :hide-title="hideTitle" :hide-filters="hideFilters" @create="onCreate" @edit="onEdit" />
 
     <DetailPanel :open="panelOpen" :title="label(panelTitle)" @close="panelOpen = false">
       <GenericForm
@@ -105,7 +108,7 @@ async function confirmDelete() {
       :open="confirmOpen"
       :title="label(deleteLabel)"
       :body="label(deleteBody)"
-      :confirm-label="label({ es: 'Eliminar', en: 'Delete' })"
+      :confirm-label="i18n.global.t('actions.delete')"
       :destructive="true"
       @confirm="confirmDelete"
       @cancel="confirmOpen = false"

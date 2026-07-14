@@ -2,16 +2,20 @@ import type { SoftDeletePolicy, SchedulableCapability, TableStructure, Localized
 import { ROLES, type Role } from '../../types/roles';
 import { pkColumn, businessIdColumn } from './business';
 
-const softDelete: SoftDeletePolicy = {
+export const softDelete: SoftDeletePolicy = {
   deletedAtColumn: 'deleted_at',
   deletedByColumn: 'deleted_by_user_id',
 };
 
+// Same shape everywhere a user-facing email column appears (users.email, clients.email).
+export const EMAIL_PATTERN = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
+export const EMAIL_PATTERN_MESSAGE = 'must be a valid email address';
+
 // Role choices for the users.role column and any UI role picker. The set comes from the single
 // ROLES source; Record<Role,…> forces a label for every role, so adding one is an edit in
 // roles.ts plus its label here (nowhere else).
-const ROLE_LABELS: Record<Role, LocalizedText> = {
-  Admin: { es: 'Admin', en: 'Admin' },
+export const ROLE_LABELS: Record<Role, LocalizedText> = {
+  Admin: { es: 'Administrador', en: 'Admin' },
   Professional: { es: 'Profesional', en: 'Professional' },
   Receptionist: { es: 'Recepcionista', en: 'Receptionist' },
   Client: { es: 'Cliente', en: 'Client' },
@@ -66,8 +70,8 @@ export const peopleTables = {
         input: 'email',
         validator: {
           required: true,
-          pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
-          patternMessage: 'must be a valid email address',
+          pattern: EMAIL_PATTERN,
+          patternMessage: EMAIL_PATTERN_MESSAGE,
         },
         filterable: true,
         sortable: true,
@@ -159,8 +163,8 @@ export const peopleTables = {
         input: 'email',
         validator: {
           nullable: true,
-          pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',
-          patternMessage: 'must be a valid email address',
+          pattern: EMAIL_PATTERN,
+          patternMessage: EMAIL_PATTERN_MESSAGE,
         },
         filterable: true,
         sortable: true,

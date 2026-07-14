@@ -71,7 +71,7 @@ function kindClasses(kind: Toast['kind']): string {
         <button
           type="button"
           class="ml-4 flex-shrink-0 rounded opacity-70 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          :aria-label="`Cerrar notificación`"
+          :aria-label="t('toast.close')"
           @click="dismiss(toast.id)"
         >
           ×

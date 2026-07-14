@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeServiceSlots, computeFreeWindows } from '../../shared/src/ssot/domain/scheduling';
+import { computeServiceSlots, computeFreeWindows } from '../../shared/src/ssot/domain/availability';
 
 describe('computeServiceSlots', () => {
   it('tiles a block by the service duration, not a fixed grid', () => {

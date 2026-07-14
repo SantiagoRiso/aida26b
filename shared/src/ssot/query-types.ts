@@ -1,8 +1,16 @@
 import type { ColumnValue } from '../types/types';
+import type { BookedAppointment } from './domain/conflict';
 
 // Result shapes that are not full-table records (projections and joins). One home for the
 // vocabulary; per-domain db modules import their return types from here. Rows stay snake_case
 // to match the wire contract the routes already emit.
+
+// JSON wire view of a DB-result row: res.json() turns Date into an ISO string; everything else
+// (BIGINT/NUMERIC strings, numbers, booleans, null) crosses unchanged. Frontend api modules
+// consume Wire<Row> so the row vocabulary lives only here.
+export type Wire<T> = {
+  [K in keyof T]: T[K] extends Date ? string : T[K] extends Date | null ? string | null : T[K];
+};
 
 // calendar_grants as returned by the grant endpoints, enriched with the grantee's and
 // professional's names so the UI can render a grant list without a second lookup.
@@ -34,8 +42,8 @@ export type CalendarGrantCreatedRow = {
   created_at: string;
 };
 
-export type ActiveProfessionalRow = { user_id: string; business_id: string | null };
-export type ActiveUserRow = { id: string; role: string; business_id: string | null };
+// The user-probe row (findUser): existence checks null-test it; grants read role/business_id.
+export type UserProbeRow = { id: string; role: string; business_id: string | null };
 
 // The caller's own profile fields (self-service read/write), never another user's.
 export interface SelfProfileRow {
@@ -125,13 +133,10 @@ export interface BusinessClosureRow {
   reason: string | null;
 }
 
-// An open appointment projected to wall-clock HH:MM for conflict evaluation.
-export type BookedAppointmentRow = {
-  id: string;
-  start: string;
-  end: string;
-  state: 'scheduled' | 'requested';
-};
+// An open appointment projected to wall-clock HH:MM for conflict evaluation. Same shape as
+// the aggregator's BookedAppointment except the id: the wire carries the BIGINT as a string;
+// the loader converts to number at the domain boundary.
+export type BookedAppointmentRow = Omit<BookedAppointment, 'id'> & { id: string };
 
 // businesses config surface exposed by the settings endpoints.
 export type BusinessSettingsRow = {

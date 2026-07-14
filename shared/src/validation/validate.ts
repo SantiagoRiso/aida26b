@@ -113,8 +113,9 @@ function editableColumns(table: TableKey): string[] {
 
 // Columns a client may set when updating: the creatable set minus columns frozen after create.
 // readonlyOnEdit marks identity-ish fields (e.g. a link table's FK pair) — settable at create,
-// immutable thereafter (reassignment is remove + add, not an update).
-function updatableColumns(table: TableKey): string[] {
+// immutable thereafter (reassignment is remove + add, not an update). Exported so the UPDATE
+// statement builder consumes the same set validateForUpdate accepts — the two can't drift.
+export function updatableColumns(table: TableKey): string[] {
   return Object.entries(structure.tables[table].columns as Record<string, ColumnDef>)
     .filter(([, col]) => col.editable !== false && !col.readonlyOnEdit)
     .map(([key]) => key);

@@ -2,19 +2,23 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import { useCurrency } from '@/composables/useCurrency';
 import { useToast } from '@/composables/useToast';
+import { useConflictOverride } from '@/composables/useConflictOverride';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
-import { getRow, listRows } from '@/api/crud';
+import { getRow } from '@/api/crud';
 import { getBalance } from '@/api/ledger';
 import { getAvailability } from '@/api/scheduling';
 import { listAppointments, approveAppointment, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
-import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
-import type { TableRecordMap } from '@shared/types/types';
+import { toMinutes } from '@shared/ssot/domain/availability';
+import { nextDay } from '@/composables/scheduleExceptions';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
-import { mergeIntervals, complementIntervals } from '@/composables/calendarGrid';
+import { fetchProfessionalBlocks } from '@/composables/useProfessionalBlocks';
+import type { ProfessionalBlock } from '@/composables/useProfessionalBlocks';
+import { dayISO, bookedIntervalsByDate, availabilityWashEvents, pastWashEvent, slotOutlineEventsForDay } from '@/composables/availabilityShading';
 import type { AuthUser } from '@/stores/auth';
 import type { EventContentArg, EventInput } from '@fullcalendar/core';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -31,6 +35,7 @@ import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
 // who may see which requests.
 const { t, locale } = useI18n();
 const { label } = useLabel();
+const { stateLabel } = useStateLabel();
 const { formatDateTime, formatARS } = useCurrency();
 const toast = useToast();
 
@@ -88,12 +93,7 @@ const dayAppts = ref<Appointment[]>([]);
 // That day's free windows + working blocks, to reproduce the main calendar's availability
 // background (off-hours hatch, occupied/requested washes, free-slot outlines) around the request.
 const dayFreeSlots = ref<{ start: number; end: number }[]>([]);
-const dayBlocks = ref<{ weekday: string; start: number; end: number; slotMinutes: number }[]>([]);
-
-const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-const DAY_END_MINUTES = 24 * 60;
-function toMinutes(hhmm: string): number { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
-function toHHMM(min: number): string { const p = (n: number) => String(n).padStart(2, '0'); return `${p(Math.floor(min / 60))}:${p(min % 60)}`; }
+const dayBlocks = ref<ProfessionalBlock[]>([]);
 
 const dayHeading = computed(() => {
   const appt = detailAppt.value;
@@ -103,12 +103,6 @@ const dayHeading = computed(() => {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${weekday} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
 });
-
-function dayAfter(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
 
 async function openDetail(appt: Appointment) {
   detailAppt.value = appt;
@@ -120,26 +114,23 @@ async function openDetail(appt: Appointment) {
   dayFreeSlots.value = [];
   dayBlocks.value = [];
   const cid = appt.client_user_id;
-  const pid = String(appt.professional_user_id);
   loadingDetail.value = true;
   const day = appt.starts_at.slice(0, 10);
   // Ledger reads are allowed for anyone who can see the request (the request itself is the
   // relationship). The appointment history is the caller's own scoped view of this client.
   // The professional's availability + working blocks drive the day calendar's background shading.
-  const [prof, bal, appts, proDay, avail, blocksRes, offersRes, servicesRes] = await Promise.all([
+  const [prof, bal, appts, proDay, avail, blocks] = await Promise.all([
     cid != null ? getRow('clients', cid) : Promise.resolve(null),
     cid != null ? getBalance(cid) : Promise.resolve(null),
     cid != null ? listAppointments({ client_user_id: cid, limit: 500 }) : Promise.resolve(null),
     listAppointments({
       professional_user_id: appt.professional_user_id,
       date_from: day,
-      date_to: dayAfter(day),
+      date_to: nextDay(day),
       limit: 200,
     }),
-    getAvailability(`prof:${pid}`, day),
-    listRows('schedule_blocks', { filters: { professional_user_id: pid }, limit: 500 }),
-    listRows('schedule_block_services', { filters: { professional_user_id: pid }, limit: 500 }),
-    listRows('services', { limit: 500 }),
+    getAvailability(`prof:${appt.professional_user_id}`, day),
+    fetchProfessionalBlocks(appt.professional_user_id),
   ]);
   if (prof && prof.ok) clientProfile.value = prof.data;
   clientBalance.value = bal && bal.ok ? bal.data.balance_ars : null;
@@ -148,27 +139,7 @@ async function openDetail(appt: Appointment) {
   dayFreeSlots.value = avail.ok
     ? avail.data.slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) }))
     : [];
-  // A block tiles by its (first offered) service's effective duration — the per-block override,
-  // else the service default. 30 min when unknown. Mirrors the staff calendar's slot sizing.
-  const serviceDefault = new Map<string, number>();
-  if (servicesRes.ok) for (const s of servicesRes.data) serviceDefault.set(String(s.id), Number(s.default_duration_minutes));
-  const blockSlot = new Map<string, number>();
-  if (offersRes.ok) for (const o of offersRes.data) {
-    const key = String(o.schedule_block_id);
-    if (blockSlot.has(key)) continue;
-    const dur = o.duration_minutes != null ? Number(o.duration_minutes) : serviceDefault.get(String(o.service_id));
-    if (dur && dur > 0) blockSlot.set(key, dur);
-  }
-  dayBlocks.value = blocksRes.ok
-    ? blocksRes.data
-        .filter((r) => r.resource_id == null)
-        .map((r) => ({
-          weekday: String(r.weekday),
-          start: toMinutes(r.start_time.slice(0, 5)),
-          end: toMinutes(r.end_time.slice(0, 5)),
-          slotMinutes: blockSlot.get(String(r.id)) ?? 30,
-        }))
-    : [];
+  dayBlocks.value = blocks;
   loadingDetail.value = false;
 }
 
@@ -195,50 +166,25 @@ const dayBgEvents = computed<EventInput[]>(() => {
   const appt = detailAppt.value;
   if (!appt) return [];
   const day = appt.starts_at.slice(0, 10);
-  const out: EventInput[] = [];
-  const push = (s: number, e: number, cls: string) => {
-    if (e > s) out.push({ start: `${day}T${toHHMM(s)}:00`, end: `${day}T${toHHMM(e)}:00`, display: 'background', classNames: [cls] });
-  };
 
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  // A fully past day can't be booked — grey the whole column and skip the availability shading.
-  if (day < today) { push(0, DAY_END_MINUTES, 'fc-slot-past'); return out; }
+  const today = dayISO(now, 0);
+  // Past time reads plain grey; here "past" transitions at the exact current minute (this view has
+  // no slot lattice to floor to).
   const floor = day === today ? now.getHours() * 60 + now.getMinutes() : 0;
-  if (floor > 0) push(0, floor, 'fc-slot-past');
+  const past = pastWashEvent(day, today, floor);
+  const out: EventInput[] = past ? [past] : [];
+  // A fully past day can't be booked — grey the whole column and skip the availability shading.
+  if (day < today) return out;
 
-  const VOID = new Set<string>(VOID_APPOINTMENT_STATES);
-  const occupied: { start: number; end: number }[] = [];
-  const requested: { start: number; end: number }[] = [];
-  for (const a of dayAppts.value) {
-    if (VOID.has(a.state)) continue;
-    const s = new Date(a.starts_at);
-    const e = new Date(a.ends_at);
-    const start = s.getHours() * 60 + s.getMinutes();
-    let end = e.getHours() * 60 + e.getMinutes();
-    if (end <= start) end = DAY_END_MINUTES;
-    (a.state === 'requested' ? requested : occupied).push({ start, end });
-  }
+  const booked = bookedIntervalsByDate(dayAppts.value).get(day) ?? { occupied: [], requested: [] };
+  out.push(...availabilityWashEvents(day, dayFreeSlots.value, booked, floor));
 
-  const clip = (iv: { start: number; end: number }) => ({ start: Math.max(iv.start, floor), end: iv.end });
-  for (const iv of mergeIntervals(occupied.map(clip))) push(iv.start, iv.end, 'fc-slot-occupied');
-  for (const iv of mergeIntervals(requested.map(clip))) push(iv.start, iv.end, 'fc-slot-requested-bg');
-  // Never-available time (off-hours / day off) — neither free nor booked — is the grey hatch.
-  const working = mergeIntervals([...dayFreeSlots.value, ...occupied, ...requested]);
-  for (const g of complementIntervals(working, floor, DAY_END_MINUTES)) push(g.start, g.end, 'fc-res-closed');
-
-  // A dotted outline per free, bookable schedule slot (each block tiled by its own slot size).
-  const wk = WEEKDAY_KEYS[new Date(`${day}T00:00:00`).getDay()];
-  const booked = [...occupied, ...requested];
-  for (const b of dayBlocks.value) {
-    if (b.weekday !== wk) continue;
-    for (let s = b.start; s + b.slotMinutes <= b.end; s += b.slotMinutes) {
-      if (s < floor) continue;
-      if (booked.some((k) => s < k.end && k.start < s + b.slotMinutes)) continue;
-      push(s, s + b.slotMinutes, 'fc-slot-outline');
-    }
-  }
+  // A dotted outline per free, bookable schedule slot: not yet elapsed, not overlapping anything
+  // booked or requested.
+  const taken = [...booked.occupied, ...booked.requested];
+  out.push(...slotOutlineEventsForDay(day, dayBlocks.value,
+    (s, e) => s >= floor && !taken.some((k) => s < k.end && k.start < e)));
   return out;
 });
 
@@ -284,9 +230,8 @@ const completedCount = computed(() => clientAppts.value.filter((a) => a.state ==
 
 // Approve routes through the conflict-aware endpoint: a full slot warns first (override)
 // instead of silently failing — same warn-then-confirm flow as the calendar.
-const conflictVerdict = ref<ConflictVerdict | null>(null);
-const conflictOpen = ref(false);
-const conflictRetryFn = ref<((override: boolean) => Promise<void>) | null>(null);
+const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverrideCancel } =
+  useConflictOverride();
 
 async function approve(appt: Appointment, override = false) {
   acting.value = true;
@@ -298,27 +243,12 @@ async function approve(appt: Appointment, override = false) {
   }
   const payload = result.data;
   if (!payload.saved) {
-    conflictVerdict.value = payload.verdict;
-    conflictRetryFn.value = (ov) => approve(appt, ov);
-    conflictOpen.value = true;
+    raiseConflict(payload.verdict, (ov) => approve(appt, ov));
     return;
   }
   toast.success('requestApproved');
   closeDetail();
   await load();
-}
-
-function onOverrideConfirm() {
-  conflictOpen.value = false;
-  const retry = conflictRetryFn.value;
-  conflictVerdict.value = null;
-  conflictRetryFn.value = null;
-  if (retry) void retry(true);
-}
-function onOverrideCancel() {
-  conflictOpen.value = false;
-  conflictVerdict.value = null;
-  conflictRetryFn.value = null;
 }
 
 const rejectTarget = ref<Appointment | null>(null);
@@ -473,7 +403,7 @@ async function confirmReject() {
               >
                 <span class="tabular-nums text-neutral">{{ formatDateTime(a.starts_at) }}</span>
                 <span class="flex-1 truncate">{{ serviceName(a) }} · {{ professionalName(a) }}</span>
-                <span class="rounded-full bg-surface px-2 py-0.5 text-xs">{{ t(`status.${a.state}`) }}</span>
+                <span class="rounded-full bg-surface px-2 py-0.5 text-xs">{{ stateLabel(a.state) }}</span>
               </li>
             </ul>
           </section>

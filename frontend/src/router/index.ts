@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { roleAllowedFor } from './access';

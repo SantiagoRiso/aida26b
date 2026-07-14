@@ -1,122 +1,77 @@
 import express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
 import { guardRoute } from '../helpers';
-import type { AuthUser } from '../auth';
-import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
-import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
-import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
-import { getBlockServiceForSlot, countAppointmentsHitByTimeOff } from '../db/scheduling';
+import { type AuthedRequest } from '../session';
+import type { AuditWriter } from '../audit';
+import { requireBusinessContext } from './business-context';
+import { countAppointmentsHitByTimeOff } from '../db/scheduling';
 import { assertOwnScheduleAllowed } from './crud-policy';
-import { BUSINESS_TZ, DATE_RE, HHMM_RE, addMinutes, crossesMidnight } from '../time';
+import { BUSINESS_TZ, DATE_RE } from '../time';
 import {
   loadOwnerState,
-  loadConflictInputs,
-  toAggregatorOwner,
   resolveBookingWindow,
   isOutsideBookingWindow,
+  parseTimeOffRange,
 } from '../services/scheduling';
-import type { ColumnValue } from '../../../shared/src/types/types';
-
-type AuthedRequest = Request & { user?: AuthUser };
-
-type AuditFn = (
-  req: Request,
-  eventType: string,
-  outcome: string,
-  details?: Record<string, ColumnValue>
-) => Promise<void>;
+import { resolveAndLoadService, runConflictDryRun } from '../services/booking';
+import { SCHEDULING_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 export function mountSchedulingRoutes(
   app: express.Application,
   pool: Pool,
-  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
+  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter }
 ) {
   // Advisory dry-run. REPORT-ONLY — never writes; appointments stay SELECT-only.
-  app.post('/api/conflict-check', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(SCHEDULING_PATTERNS.conflictCheck, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required to check conflicts');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const body = req.body ?? {};
-    const professionalUserId = Number(body.professional_user_id);
-    const resourceId =
-      body.resource_id == null || body.resource_id === '' ? undefined : Number(body.resource_id);
-    const serviceId = Number(body.service_id);
-    const date = typeof body.date === 'string' ? body.date : '';
-    const start = typeof body.start === 'string' ? body.start : '';
-    const durationMinutes = Number(body.duration_minutes);
     const excludeAppointmentId =
       body.excludeAppointmentId == null ? undefined : Number(body.excludeAppointmentId);
 
-    const fields: Record<string, string> = {};
-    if (!Number.isInteger(professionalUserId) || professionalUserId <= 0) fields.professional_user_id = 'required';
-    if (resourceId !== undefined && (!Number.isInteger(resourceId) || resourceId <= 0)) fields.resource_id = 'must be a valid id';
-    if (!Number.isInteger(serviceId) || serviceId <= 0) fields.service_id = 'required';
-    if (!DATE_RE.test(date)) fields.date = 'must be YYYY-MM-DD';
-    if (!HHMM_RE.test(start)) fields.start = 'must be HH:MM';
-    if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) fields.duration_minutes = 'must be a positive integer';
-    if (!fields.start && !fields.duration_minutes && crossesMidnight(start, durationMinutes)) {
-      fields.duration_minutes = 'start + duration must not cross midnight';
-    }
-    if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid conflict-check input', fields);
+    // A Client caller prices as themself when the body names no client; staff may name one.
+    if (body.client_user_id == null && user.role === 'Client') {
+      body.client_user_id = user.id;
     }
 
-    const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
-    if (serviceDefaults == null) {
-      return sendError(res, 404, 'not_found', 'Service not found in this business');
-    }
-
-    // Per-client override, when the client is known (Client caller = self; staff may name one).
-    // Business-scope the client too, so a body-supplied cross-tenant client id can't surface a price.
-    const clientUserId =
-      body.client_user_id != null ? Number(body.client_user_id) : user.role === 'Client' ? user.id : null;
-    let overridePrice: string | null = null;
-    if (clientUserId != null && Number.isInteger(clientUserId)) {
-      overridePrice = await getClientOverridePrice(pool, clientUserId, professionalUserId, serviceId, businessId);
-    }
-
-    // Resolve price/duration BEFORE the conflict so the proposed interval and the service-sized grid
-    // agree (a client's echoed body duration never wins; staff may set a sobreturno length).
+    // Price/duration resolve BEFORE the conflict so the proposed interval and the service-sized
+    // grid agree (a client's echoed body duration never wins; staff may set a sobreturno length).
     const callerIsStaff = user.role !== 'Client';
-    const blockService = await getBlockServiceForSlot(pool, professionalUserId, serviceId, weekdayOf(date), start);
-    const { effective_price, effective_duration_minutes } = resolveBooking({
-      serviceDefaultPriceArs: serviceDefaults.default_price_ars,
-      serviceDefaultDurationMinutes: serviceDefaults.default_duration_minutes,
-      clientOverridePriceArs: overridePrice,
-      blockServicePriceArs: blockService?.price_ars ?? null,
-      blockServiceDurationMinutes: blockService?.duration_minutes ?? null,
-      sobreturnoDurationMinutes: callerIsStaff ? durationMinutes : undefined,
-    });
-
-    const inputs = await loadConflictInputs(pool, businessId, { professionalUserId, resourceId, date, serviceId });
-    if ('error' in inputs) {
-      return sendError(res, inputs.error.status, inputs.error.code, inputs.error.message);
+    const resolved = await resolveAndLoadService(pool, businessId, body, callerIsStaff, 'Invalid conflict-check input');
+    if (!resolved.ok) {
+      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
     }
 
-    const end = addMinutes(start, effective_duration_minutes);
-    const verdict: ConflictVerdict = evaluateConflicts({
-      proposed: { start, end, date },
+    const dryRun = await runConflictDryRun(pool, businessId, {
+      professionalUserId: resolved.professionalUserId,
+      resourceId: resolved.resourceId,
+      serviceId: resolved.serviceId,
+      date: resolved.date,
+      start: resolved.start,
+      durationMinutes: resolved.effective_duration_minutes,
       callerIsStaff,
       excludeAppointmentId,
-      professional: toAggregatorOwner(inputs.professional),
-      resource: inputs.resource ? toAggregatorOwner(inputs.resource) : undefined,
     });
+    if (!dryRun.ok) {
+      return sendError(res, dryRun.status, dryRun.code, dryRun.message);
+    }
 
-    return sendData(res, { ...verdict, effective_price, effective_duration_minutes });
+    return sendData(res, {
+      ...dryRun.verdict,
+      effective_price: resolved.effective_price,
+      effective_duration_minutes: resolved.effective_duration_minutes,
+    });
   }));
 
   // Discrete free slots for one owner on one date. owner = prof:<id> | res:<id>.
-  app.get('/api/availability', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(SCHEDULING_PATTERNS.availability, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required to read availability');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const ownerToken = typeof req.query.owner === 'string' ? req.query.owner : '';
     const date = typeof req.query.date === 'string' ? req.query.date : '';
@@ -158,11 +113,9 @@ export function mountSchedulingRoutes(
 
   // Concrete booking-window bounds for one (professional, service), so the client UI can clamp the
   // date picker and disable the next-day arrow past the window. Staff paths ignore it.
-  app.get('/api/booking-window', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
+  app.get(SCHEDULING_PATTERNS.bookingWindow, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
     const professionalId = Number(req.query.professional);
     const serviceId = Number(req.query.service);
     const fields: Record<string, string> = {};
@@ -172,7 +125,7 @@ export function mountSchedulingRoutes(
       return sendError(res, 422, 'invalid_request', 'Invalid booking-window query', fields);
     }
 
-    const bounds = await resolveBookingWindow(pool, user.business_id, professionalId, serviceId);
+    const bounds = await resolveBookingWindow(pool, businessId, professionalId, serviceId);
     if (!bounds) return sendError(res, 404, 'not_found', 'Professional not found in this business');
     return sendData(res, { min_date: bounds.minDate, max_date: bounds.maxDate });
   }));
@@ -181,33 +134,20 @@ export function mountSchedulingRoutes(
   // the warn-then-confirm dialog before adding a personal exception or a business closure. Naming a
   // professional_user_id previews a personal exception (gated like editing that schedule);
   // omitting it previews a whole-business closure (Admin only, mirroring the closures route).
-  app.post('/api/time-off/conflict-preview', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(SCHEDULING_PATTERNS.timeOffConflictPreview, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
-    const businessId = user.business_id;
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const body = req.body ?? {};
-    const date = typeof body.date === 'string' ? body.date : '';
-    if (!DATE_RE.test(date)) {
-      return sendError(res, 422, 'invalid_request', 'date must be YYYY-MM-DD');
+    const parsed = parseTimeOffRange(
+      { date: body.date, start: body.start, end: body.end },
+      { status: 422, message: 'date must be YYYY-MM-DD' },
+    );
+    if (!parsed.ok) {
+      return sendError(res, parsed.status, parsed.code, parsed.message);
     }
-
-    // Both-or-neither endpoints; absent ⇒ a full-day block.
-    const start = body.start == null || body.start === '' ? null : String(body.start);
-    const end = body.end == null || body.end === '' ? null : String(body.end);
-    if ((start == null) !== (end == null)) {
-      return sendError(res, 422, 'invalid_request', 'A time range needs both a start and an end');
-    }
-    if (start != null && end != null) {
-      if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
-        return sendError(res, 422, 'invalid_request', 'Times must be HH:MM');
-      }
-      if (end <= start) {
-        return sendError(res, 422, 'invalid_request', 'The end time must be after the start time');
-      }
-    }
+    const { date, start, end } = parsed;
 
     let scope: { kind: 'business' } | { kind: 'professional'; professionalUserId: number };
     const hasProf = body.professional_user_id != null && body.professional_user_id !== '';

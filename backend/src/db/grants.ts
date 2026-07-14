@@ -1,5 +1,4 @@
-import type { Pool, PoolClient } from 'pg';
-import { query, queryOne } from './core';
+import { query, queryOne, type Queryable } from './core';
 import type {
   CalendarGrantRow,
   CalendarGrantCreatedRow,
@@ -11,7 +10,7 @@ import type {
 // Every grant-based authorization check routes through here so a change to the grant model is a
 // single edit rather than a hunt across the appointment/ledger/schedule routes.
 
-type Queryable = Pool | PoolClient;
+export const GRANTABLE_STAFF_ROLES = ['Receptionist', 'Professional'] as const;
 
 export async function hasCalendarGrant(
   db: Queryable,
@@ -108,8 +107,8 @@ export function listGrantableStaff(db: Queryable, businessId: number): Promise<G
        FROM auth.users_directory
       WHERE business_id = $1
         AND is_active = true
-        AND role IN ('Receptionist', 'Professional')
+        AND role = ANY($2)
       ORDER BY display_name NULLS LAST, username`,
-    [businessId],
+    [businessId, [...GRANTABLE_STAFF_ROLES]],
   );
 }

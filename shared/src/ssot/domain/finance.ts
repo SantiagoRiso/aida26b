@@ -1,5 +1,6 @@
 import type { TableStructure } from '../../types/types';
 import { pkColumn } from './business';
+import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
 
 // Each entry's sign drives the balance: debits increase the client's debt, credits reduce it.
 // Balance = Σ(debits) − Σ(credits) — the one place the debit/credit split is declared.
@@ -28,7 +29,7 @@ export const financeTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
       },
       appointment_id: {
         type: 'string',
@@ -53,8 +54,8 @@ export const financeTables = {
         label: { es: 'Monto (ARS)', en: 'Amount (ARS)' },
         validator: {
           required: true,
-          pattern: '^\\d+(\\.\\d{1,2})?$',
-          patternMessage: 'must be a non-negative amount',
+          pattern: AMOUNT_PATTERN,
+          patternMessage: AMOUNT_PATTERN_MESSAGE,
         },
         filterable: false,
         sortable: true,

@@ -17,9 +17,14 @@ function envApp() {
 }
 
 // Superuser: harness-only. Creates/drops the test DB and runs migrations (owner/superuser DDL like
-// ALTER DEFAULT PRIVILEGES). Never handed to the app.
+// ALTER DEFAULT PRIVILEGES). Never handed to the app. POSTGRES_SUPERUSER/POSTGRES_SUPERPASS are
+// the names used by .env.example and docker-compose.yml.
 function envSuper() {
-  return { ...connBase, user: process.env.DB_SUPERUSER, password: process.env.DB_SUPERPASSWORD };
+  return {
+    ...connBase,
+    user: process.env.POSTGRES_SUPERUSER,
+    password: process.env.POSTGRES_SUPERPASS,
+  };
 }
 
 export async function resetTestDb(): Promise<void> {

@@ -1,18 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import type { Response } from 'express';
 import { sendList, sendData, sendError } from '../src/status_messages';
-import type { ListMeta } from '../src/status_messages';
-import { assertCrudAllowed, getCrudPolicy } from '../src/routes/crud-policy';
+import type { ApiEnvelope, ApiErrorEnvelope } from '../../shared/src/ssot/envelope';
+import { assertCrudAllowed, resolveCrudAccess } from '../src/routes/crud-policy';
+import type { CrudOperation } from '../src/routes/crud-policy';
 import { sendErrorsIfInvalid, validateFullObject } from '../src/validation/validate';
 import type { AuthUser } from '../src/auth';
-import type { TableKey } from '../../shared/src/types/types';
+import type { TableKey } from '../../shared/src/ssot/derived';
 
-type Envelope = {
-  success: boolean;
-  data?: Record<string, string> | Record<string, string>[];
-  meta?: ListMeta;
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
+// The wire shape under test IS the shared definition — asserting through it means the
+// helpers and this test can only ever agree on one contract.
+type Envelope = ApiEnvelope<Record<string, string> | Record<string, string>[]> | ApiErrorEnvelope;
 
 function fakeRes() {
   const res = {
@@ -87,7 +85,7 @@ describe('generic CRUD policy gate', () => {
     const check = assertCrudAllowed('clients', 'read', adminUser);
     expect(check.ok).toBe(true);
     if (check.ok) expect(check.table).toBe('clients');
-    expect(getCrudPolicy('clients')).toBeTruthy();
+    expect(resolveCrudAccess('clients', 'read')).toEqual({ allowed: true });
   });
 
   it('rejects unknown entities as not_found', () => {
@@ -96,21 +94,28 @@ describe('generic CRUD policy gate', () => {
   });
 
   it('hides protected entities behind not_found (no generic reads/writes)', () => {
+    const ops: CrudOperation[] = ['create', 'read', 'update', 'delete'];
     for (const t of ['appointments', 'ledger_entries', 'audit_events', 'calendar_grants'] as TableKey[]) {
       const check = assertCrudAllowed(t, 'read', adminUser);
       expect(check, t).toMatchObject({ ok: false, status: 404, code: 'not_found' });
-      expect(getCrudPolicy(t), t).toBeNull();
+      for (const op of ops) {
+        expect(resolveCrudAccess(t, op), `${t} ${op}`).toEqual({ allowed: false, reason: 'hidden' });
+      }
     }
   });
 
   // users carves out a narrow read-only exception (admin Usuarios screen) — writes stay
-  // 404'd like every other protected entity.
+  // 404'd like every other protected entity. The exception is per-op: excepting one op must
+  // never make the others reachable.
   it('users stays protected for writes but allows reads for an authorized Admin', () => {
     expect(assertCrudAllowed('users', 'create', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
     expect(assertCrudAllowed('users', 'update', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
     expect(assertCrudAllowed('users', 'delete', adminUser)).toMatchObject({ ok: false, status: 404, code: 'not_found' });
     expect(assertCrudAllowed('users', 'read', adminUser).ok).toBe(true);
-    expect(getCrudPolicy('users')?.read).toBe(true);
+    expect(resolveCrudAccess('users', 'read')).toEqual({ allowed: true });
+    for (const op of ['create', 'update', 'delete'] as CrudOperation[]) {
+      expect(resolveCrudAccess('users', op), op).toEqual({ allowed: false, reason: 'hidden' });
+    }
   });
 
   it('rejects operations the entity does not expose', () => {
@@ -118,6 +123,8 @@ describe('generic CRUD policy gate', () => {
       ok: false,
       status: 405,
     });
+    // A declared entity reports the missing op (405), never hides itself like a protected table.
+    expect(resolveCrudAccess('client_professional_services', 'delete')).toEqual({ allowed: false, reason: 'op_disabled' });
     expect(assertCrudAllowed('schedule_exceptions', 'delete', adminUser).ok).toBe(true);
   });
 });
@@ -130,10 +137,11 @@ describe('validation adapter', () => {
     const stopped = sendErrorsIfInvalid(res as unknown as Response, result);
     expect(stopped).toBe(true);
     expect(res.statusCode).toBe(400);
-    expect(res.body?.success).toBe(false);
-    expect(res.body?.error?.code).toBe('validation_error');
-    expect(res.body?.error?.fields).toBeTypeOf('object');
-    expect(res.body?.error?.fields?.display_name).toMatch(/required/);
+    const body = res.body;
+    if (!body || body.success) throw new Error('expected the error envelope');
+    expect(body.error.code).toBe('validation_error');
+    expect(body.error.fields).toBeTypeOf('object');
+    expect(body.error.fields?.display_name).toMatch(/required/);
   });
 
   it('does not respond when input is valid', () => {

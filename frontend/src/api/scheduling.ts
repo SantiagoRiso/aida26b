@@ -1,13 +1,17 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import type { TimeInterval } from '@shared/ssot/domain/scheduling';
+import type { TimeInterval } from '@shared/ssot/domain/availability';
+import { schedulingPaths } from '@shared/ssot/api-paths';
+
+// Row-sourced ids arrive as strings (BIGINT wire), picker-sourced as numbers; the server accepts both.
+type Id = number | string;
 
 export interface ConflictCheckBody {
-  professional_user_id: number;
-  resource_id?: number;
-  service_id: number;
-  client_user_id?: number;
+  professional_user_id: Id;
+  resource_id?: Id;
+  service_id: Id;
+  client_user_id?: Id;
   date: string;
   start: string;
   // Caller MUST supply duration_minutes — the endpoint does not derive it from the service.
@@ -22,7 +26,7 @@ export interface ConflictCheckResult extends ConflictVerdict {
 export async function checkConflict(
   body: ConflictCheckBody,
 ): Promise<ApiResult<ConflictCheckResult>> {
-  return apiFetch<ConflictCheckResult>('/conflict-check', {
+  return apiFetch<ConflictCheckResult>(schedulingPaths.conflictCheck(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -45,11 +49,11 @@ export interface BookingWindowResult {
 // Concrete booking-window bounds for one (professional, service), so the portal can clamp the date
 // picker. Client-facing; staff callers may ignore the window.
 export async function getBookingWindow(
-  professional: number,
-  service: number,
+  professional: Id,
+  service: Id,
 ): Promise<ApiResult<BookingWindowResult>> {
   const params = new URLSearchParams({ professional: String(professional), service: String(service) });
-  return apiFetch<BookingWindowResult>(`/booking-window?${params.toString()}`);
+  return apiFetch<BookingWindowResult>(`${schedulingPaths.bookingWindow()}?${params.toString()}`);
 }
 
 // How many open, future turnos a not-yet-saved time-off would put in conflict — powers the
@@ -59,13 +63,13 @@ export interface TimeOffPreviewBody {
   date: string;
   start?: string | null;
   end?: string | null;
-  professional_user_id?: number;
+  professional_user_id?: Id;
 }
 
 export async function previewTimeOffConflicts(
   body: TimeOffPreviewBody,
 ): Promise<ApiResult<{ count: number }>> {
-  return apiFetch<{ count: number }>('/time-off/conflict-preview', {
+  return apiFetch<{ count: number }>(schedulingPaths.timeOffConflictPreview(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -76,11 +80,11 @@ export async function previewTimeOffConflicts(
 export async function getAvailability(
   owner: string,
   date: string,
-  service?: number,  // required by the API for a professional owner (slots are service-sized)
-  exclude?: number,
+  service?: Id,  // required by the API for a professional owner (slots are service-sized)
+  exclude?: Id,
 ): Promise<ApiResult<AvailabilityResult>> {
   const params = new URLSearchParams({ owner, date });
   if (service !== undefined) params.set('service', String(service));
   if (exclude !== undefined) params.set('exclude', String(exclude));
-  return apiFetch<AvailabilityResult>(`/availability?${params.toString()}`);
+  return apiFetch<AvailabilityResult>(`${schedulingPaths.availability()}?${params.toString()}`);
 }

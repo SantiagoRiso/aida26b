@@ -1,7 +1,6 @@
 import { query } from './core';
-import type { Queryable } from './core';
+import type { Queryable, SqlParam } from './core';
 import type { AuditEventRow } from '../../../shared/src/ssot/query-types';
-import type { SqlParam } from '../../../shared/src/types/types';
 
 // ip is null for in-transaction writes (auditInTx) that don't carry a request.
 export async function insertAuditEvent(

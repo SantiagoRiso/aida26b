@@ -1,31 +1,30 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import { getPkFields, isOwnerScheduledTable, getScheduleOwnerForeignKeys, professionalOwnerGuardedOn, ownerHasResourceColumn } from '../../../shared/src/utils/utils';
-
 import {
+  getPkFields,
+  isScheduleGuarded,
+  getScheduleOwnerForeignKeys,
+  ownerHasResourceColumn,
   getEntityName,
   getNotDerivableFields,
-  getServerDerivedFields,
-} from '../helpers';
+} from '../../../shared/src/utils/utils';
 
 import { query as runQuery } from '../db/core';
 import { getScheduleOwnerRow } from '../db/scheduling';
 import { buildUpdateStatement } from '../db/generic';
 import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
-import { type AuthedRequest } from '../session';
+import { requireUser, rejectServerDerivedFields } from './request-guards';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
-import { tableOf } from '../../../shared/src/utils/utils';
-import type { ColumnDef, ColumnValue } from '../../../shared/src/types/types';
+import type { ColumnValue } from '../../../shared/src/types/types';
 import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
-import type { SqlParam } from '../db/core';
-import { structure } from '../../../shared/src/ssot/structure';
 
 import {
   validateForUpdate,
   validateOnlyPk,
   sendErrorsIfInvalid,
+  updatableColumns,
 } from '../validation/validate';
 
 // clients/professionals are logical views over auth.users. Even if the SSOT ever marks one
@@ -47,13 +46,8 @@ export async function putHandler(
   res: express.Response,
   pool: Pool
 ) {
-  const user = (req as AuthedRequest).user;
-
-  // Fail closed: no authenticated user means no authority. A missing req.user must
-  // never resolve to a privileged identity.
-  if (!user) {
-    return sendError(res, 401, 'unauthorized', 'Authentication required');
-  }
+  const user = requireUser(req, res);
+  if (!user) return;
 
   const allowed = assertCrudAllowed(req.params.tableName, 'update', user);
 
@@ -63,20 +57,10 @@ export async function putHandler(
 
   const tableName = allowed.table;
   const entityName = getEntityName(tableName);
-  const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
+  const physicalTable = allowed.sqlTable;
 
-  const serverDerived = new Set(getServerDerivedFields(tableName));
-  const illegalFields = Object.keys(req.body as Partial<TableRecordMap[TableKey]>).filter(
-    (k) => serverDerived.has(k),
-  );
-  if (illegalFields.length > 0) {
-    return sendError(
-      res,
-      422,
-      'server_derived_field',
-      'These fields are set by the server and must not be supplied by the client',
-      Object.fromEntries(illegalFields.map((f) => [f, 'must not be supplied'])),
-    );
+  if (rejectServerDerivedFields(res, tableName, req.body)) {
+    return;
   }
 
   const validatedBody = validateForUpdate(tableName, req.body);
@@ -100,7 +84,7 @@ export async function putHandler(
 
   // Own+Admin+granted enforcement for schedule tables — owner is read from the existing
   // row (authoritative), so a caller cannot edit a peer's row by omitting the owner in the body.
-  if (isOwnerScheduledTable(tableName) || professionalOwnerGuardedOn(tableName, 'update')) {
+  if (isScheduleGuarded(tableName, 'update')) {
     const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0], ownerHasResourceColumn(tableName));
     if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);
@@ -136,15 +120,13 @@ export async function putHandler(
     return sendError(res, refCheck.status, refCheck.code, refCheck.message, refCheck.fields);
   }
 
-  const columns = structure.tables[tableName].columns as Record<string, ColumnDef>;
+  // The SET list is the same set validateForUpdate accepts (one shared derivation), so a stray
+  // value can never reach the UPDATE — minus the pk and the auth.users defense-in-depth columns.
+  const updatable = new Set(updatableColumns(tableName));
   const fieldsToUpdate = getNotDerivableFields(tableName).filter(
     (fieldName) =>
       !pkFields.includes(fieldName) &&
-      // Read-only through generic PUT: editable:false (never writable) or readonlyOnEdit (frozen
-      // after create). validateForUpdate already rejects these from the body; keep them out of the
-      // SET list too so a stray value can never reach the UPDATE.
-      columns[fieldName]?.editable !== false &&
-      !columns[fieldName]?.readonlyOnEdit &&
+      updatable.has(fieldName) &&
       !(physicalTable === 'auth.users' && AUTH_USERS_PROTECTED.has(fieldName)),
   );
 

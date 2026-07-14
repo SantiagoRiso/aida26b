@@ -7,10 +7,12 @@ import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
-import type { Role, TableRecordMap } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import { isOpenAppointmentState } from '@shared/ssot/domain';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -28,6 +30,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { formatDateTime } = useCurrency();
 const { label } = useLabel();
+const { stateLabel } = useStateLabel();
 const toast = useToast();
 const auth = useAuthStore();
 
@@ -65,8 +68,8 @@ const UPCOMING_LIMIT = 8;
 const visibleUpcoming = computed(() => upcoming.value.slice(0, UPCOMING_LIMIT));
 const extraUpcoming = computed(() => Math.max(0, upcoming.value.length - UPCOMING_LIMIT));
 
-const clientName = (id: number) => clientLabelFor(id) ?? `#${id}`;
-const serviceName = (id: number) => serviceNames.value.get(String(id)) ?? `#${id}`;
+const clientName = (id: number | string) => clientLabelFor(id) ?? `#${id}`;
+const serviceName = (id: number | string) => serviceNames.value.get(String(id)) ?? `#${id}`;
 
 async function loadProfile() {
   const res = await getRow('professionals', professionalId);
@@ -172,8 +175,8 @@ onMounted(load);
               <li v-for="appt in visibleUpcoming" :key="appt.id" class="px-4 py-3 text-sm">
                 <span class="font-medium tabular-nums">{{ formatDateTime(appt.starts_at) }}</span>
                 <span class="text-neutral"> · {{ serviceName(appt.service_id) }}</span>
-                <span v-if="appt.client_user_id" class="text-neutral"> · {{ clientName(appt.client_user_id) }}</span>
-                <span class="ml-2 rounded-full bg-surface px-2 py-0.5 text-xs">{{ t(`status.${appt.state}`) }}</span>
+                <span class="text-neutral"> · {{ clientName(appt.client_user_id) }}</span>
+                <span class="ml-2 rounded-full bg-surface px-2 py-0.5 text-xs">{{ stateLabel(appt.state) }}</span>
               </li>
             </ul>
             <p v-if="extraUpcoming > 0" class="mt-2 text-xs text-neutral">

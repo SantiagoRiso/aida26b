@@ -5,7 +5,7 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
-import type { TableKey } from '@shared/types/types';
+import type { TableKey } from '@shared/ssot/derived';
 
 vi.mock('@/api/crud', () => ({
   createRow: vi.fn().mockResolvedValue({ ok: true, data: { id: '99', name: 'Test' } }),

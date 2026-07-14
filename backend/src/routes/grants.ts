@@ -1,36 +1,29 @@
 import express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import type { AuthUser } from '../auth';
-import type { ColumnValue } from '../../../shared/src/types/types';
-import { findActiveProfessional, findActiveUser } from '../db/users';
+import { type AuthedRequest } from '../session';
+import type { AuditWriter } from '../audit';
+import { requireBusinessContext, belongsToBusiness } from './business-context';
+import { findUser } from '../db/users';
 import {
   insertCalendarGrant,
   findGrantWithBusiness,
   deleteCalendarGrant,
   listCalendarGrants,
   listGrantableStaff,
+  GRANTABLE_STAFF_ROLES,
 } from '../db/grants';
-
-type AuthedRequest = Request & { user?: AuthUser };
-
-// Audit function signature — passed in to avoid a circular import on server.ts.
-type AuditFn = (
-  req: Request,
-  eventType: string,
-  outcome: string,
-  details?: Record<string, ColumnValue>
-) => Promise<void>;
+import { GRANT_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 export function mountGrantRoutes(
   app: express.Application,
   pool: Pool,
-  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
+  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter }
 ) {
   // Binary grant creation: presence of a row = access. No permission columns.
-  app.post('/api/calendar-grants', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(GRANT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
@@ -39,10 +32,8 @@ export function mountGrantRoutes(
     }
 
     // Grants are tenant-bound; a super-admin (null business) has no business context.
-    if (user.business_id == null) {
-      await guards.audit(req, 'grant_denied', 'denied', { reason: 'no_business' });
-      return sendError(res, 400, 'no_business', 'A business context is required to manage calendar grants');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const professionalUserId = req.body.professional_user_id;
     const granteeUserId = req.body.grantee_user_id;
@@ -56,16 +47,16 @@ export function mountGrantRoutes(
       return sendError(res, 403, 'forbidden', 'Professional may only manage their own calendar grants');
     }
 
-    const pro = await findActiveProfessional(pool, professionalUserId);
-    if (!pro || pro.business_id == null || Number(pro.business_id) !== user.business_id) {
+    const pro = await findUser(pool, { id: professionalUserId, role: 'Professional', activeOnly: true });
+    if (!belongsToBusiness(pro, businessId)) {
       return sendError(res, 404, 'not_found', 'Professional not found in this business');
     }
 
-    const grantee = await findActiveUser(pool, granteeUserId);
-    if (!grantee || grantee.business_id == null || Number(grantee.business_id) !== user.business_id) {
+    const grantee = await findUser(pool, { id: granteeUserId, activeOnly: true });
+    if (!belongsToBusiness(grantee, businessId)) {
       return sendError(res, 422, 'invalid_request', 'Grantee not found in this business');
     }
-    if (grantee.role !== 'Receptionist' && grantee.role !== 'Professional') {
+    if (!(GRANTABLE_STAFF_ROLES as readonly string[]).includes(grantee.role)) {
       return sendError(res, 422, 'invalid_request', 'Grantee must be staff (Receptionist or Professional)');
     }
 
@@ -84,7 +75,7 @@ export function mountGrantRoutes(
   }));
 
   // Revoke = delete the row; no soft-delete for grants.
-  app.delete('/api/calendar-grants/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.delete(GRANT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
@@ -93,10 +84,8 @@ export function mountGrantRoutes(
     }
 
     // Grants are tenant-bound; a super-admin (null business) has no business context.
-    if (user.business_id == null) {
-      await guards.audit(req, 'grant_denied', 'denied', { reason: 'no_business' });
-      return sendError(res, 400, 'no_business', 'A business context is required to manage calendar grants');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const grantId = Number(req.params.id);
     if (!Number.isInteger(grantId) || grantId <= 0) {
@@ -104,12 +93,7 @@ export function mountGrantRoutes(
     }
 
     const grant = await findGrantWithBusiness(pool, grantId);
-    if (!grant) {
-      return sendError(res, 404, 'not_found', 'Grant not found');
-    }
-
-    // Cross-business grants are invisible — return 404, not 403, to avoid leaking existence.
-    if (grant.business_id == null || Number(grant.business_id) !== user.business_id) {
+    if (!belongsToBusiness(grant, businessId)) {
       return sendError(res, 404, 'not_found', 'Grant not found');
     }
 
@@ -130,7 +114,7 @@ export function mountGrantRoutes(
   }));
 
   // Static path registered ahead of any /:id route so it can never be captured as a param.
-  app.get('/api/calendar-grants/grantable-staff', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(GRANT_PATTERNS.grantableStaff, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     // Only those who can create grants need this list: Admin (any) or a Professional (own calendar).
@@ -138,25 +122,23 @@ export function mountGrantRoutes(
       return sendError(res, 403, 'forbidden', 'Insufficient role');
     }
     // Grants are tenant-bound; a super-admin (null business) has no business context.
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
-    const staff = await listGrantableStaff(pool, user.business_id);
+    const staff = await listGrantableStaff(pool, businessId);
 
     return sendList(res, staff, { page: 1, limit: staff.length, total: staff.length });
   }));
 
-  app.get('/api/calendar-grants', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(GRANT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     // Staff-internal data: clients have no business seeing who can manage which calendar.
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Staff access required');
     }
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const onlyProfessionalId =
       user.role === 'Professional'
@@ -166,7 +148,7 @@ export function mountGrantRoutes(
           : undefined;
 
     const grants = await listCalendarGrants(pool, {
-      businessId: user.business_id,
+      businessId,
       onlyProfessionalId,
     });
 

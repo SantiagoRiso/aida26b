@@ -6,7 +6,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { hashPassword } from '../src/auth';
 import type { Pool } from 'pg';
-import type { TableRecordMap } from '../../shared/src/types/types';
+import type { TableRecordMap } from '../../shared/src/ssot/derived';
 
 let testPool: Pool;
 

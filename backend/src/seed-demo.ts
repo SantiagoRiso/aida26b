@@ -1,8 +1,20 @@
-import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import { createOwnerPool } from './db';
-import { hashPassword } from './auth';
-import type { SqlParam } from '../../shared/src/types/types';
+import { BUSINESS_TZ } from './time';
+import { DEMO_ACCOUNTS, DEMO_PASSWORD, DEMO_SERVICE_NAMES } from '../../shared/src/dev-fixtures';
+import { weekdayOf, toMinutes, toHHMM } from '../../shared/src/ssot/domain/availability';
+import {
+  type PoolLike,
+  pickId,
+  upsertBusiness,
+  upsertUser,
+  upsertService,
+  upsertResource,
+  upsertBlock,
+  upsertClientPrice,
+  upsertProfessionalService,
+  upsertScheduleException,
+} from './seed-lib';
 
 dotenv.config();
 
@@ -10,18 +22,16 @@ dotenv.config();
 // Passwords are stored hashed; the plaintext only appears here as demo tooling.
 
 const BUSINESS_NAME = 'Consultorio BsAs Demo';
-const TIMEZONE = 'America/Argentina/Buenos_Aires';
-const DEMO_PASSWORD = 'demo-pass-123';
 
 // Service catalog for the demo clinic. Durations/prices are the service defaults; a schedule block
 // may override either per offered service (see the split-schedule professional below).
 type ServiceKey = 'sesion' | 'nutricion' | 'kineso' | 'medico';
 
 const SERVICE_DEFS: Record<ServiceKey, { name: string; duration: number; price: string }> = {
-  sesion:    { name: 'Sesión de Psicología Infantil', duration: 50, price: '8000.00' },
-  nutricion: { name: 'Consulta nutricional',          duration: 40, price: '7000.00' },
-  kineso:    { name: 'Sesión de kinesiología',        duration: 60, price: '9000.00' },
-  medico:    { name: 'Consulta médica',               duration: 30, price: '5000.00' },
+  sesion:    { name: DEMO_SERVICE_NAMES.sesion,    duration: 50, price: '8000.00' },
+  nutricion: { name: DEMO_SERVICE_NAMES.nutricion, duration: 40, price: '7000.00' },
+  kineso:    { name: DEMO_SERVICE_NAMES.kineso,    duration: 60, price: '9000.00' },
+  medico:    { name: DEMO_SERVICE_NAMES.medico,    duration: 30, price: '5000.00' },
 };
 
 // A working block: a weekday time range and the services bookable in it. offers[0] is the primary
@@ -105,57 +115,46 @@ function effPrice(o: BlockOffer): string {
 const SEED_START = '2026-07-06'; // Monday of the demo "current" week
 const SEED_DAYS = 45;
 
-const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-
 function seedDays(): { date: string; key: string }[] {
   const [y, m, d] = SEED_START.split('-').map(Number);
   const out: { date: string; key: string }[] = [];
   for (let i = 0; i < SEED_DAYS; i++) {
     const dt = new Date(y, m - 1, d + i);
-    out.push({
-      date: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
-      key: WEEKDAY_KEYS[dt.getDay()],
-    });
+    const date = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    out.push({ date, key: weekdayOf(date) });
   }
   return out;
-}
-
-function hmToMin(hm: string): number {
-  const [h, m] = hm.split(':').map(Number);
-  return h * 60 + m;
-}
-function minToHm(min: number): string {
-  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
 // Fixed slot starts for a range, stepping by a slot duration (mirrors the availability engine).
 function slotStartTimes(start: string, end: string, durationMinutes: number): string[] {
   const out: string[] = [];
-  const endMin = hmToMin(end);
-  for (let t = hmToMin(start); t + durationMinutes <= endMin; t += durationMinutes) {
-    out.push(minToHm(t));
+  const endMin = toMinutes(end);
+  for (let t = toMinutes(start); t + durationMinutes <= endMin; t += durationMinutes) {
+    out.push(toHHMM(t));
   }
   return out;
 }
 
 // All professional + resource usernames/emails live here so the README and helpers.ts
-// can align exact usernames without inspecting the DB.
+// can align exact usernames without inspecting the DB. Usernames also referenced by e2e
+// (frontend/e2e/helpers.ts) come from the shared DEMO_ACCOUNTS fixture, not a local literal.
 const STAFF_USERS = [
-  { username: 'demo_admin',  email: 'admin@demo.test',   role: 'Admin',        displayName: 'Admin Demo',             bio: null,                phone: null },
-  { username: 'demo_pro',    email: 'pro@demo.test',     role: 'Professional', displayName: 'Dra. Marge Bouvier',     bio: 'Psicóloga clínica', phone: null },
+  { username: DEMO_ACCOUNTS.adminUser.username,        email: 'admin@demo.test',   role: 'Admin',        displayName: 'Admin Demo',             bio: null,                phone: null },
+  { username: DEMO_ACCOUNTS.professionalUser.username, email: 'pro@demo.test',     role: 'Professional', displayName: 'Dra. Marge Bouvier',     bio: 'Psicóloga clínica', phone: null },
   { username: 'demo_pro2',   email: 'pro2@demo.test',    role: 'Professional', displayName: 'Dr. Ned Flanders',       bio: 'Psicólogo infantil', phone: null },
   { username: 'demo_pro3',   email: 'pro3@demo.test',    role: 'Professional', displayName: 'Dra. Lisa Simpson',      bio: 'Nutricionista',     phone: null },
   { username: 'demo_pro4',   email: 'pro4@demo.test',    role: 'Professional', displayName: 'Dr. Nick Riviera',       bio: 'Kinesiólogo',       phone: null },
   { username: 'demo_pro5',   email: 'pro5@demo.test',    role: 'Professional', displayName: 'Dra. Edna Krabappel',    bio: 'Psicóloga cognitiva', phone: null },
   { username: 'demo_pro6',   email: 'pro6@demo.test',    role: 'Professional', displayName: 'Dr. Julius Hibbert',     bio: 'Médico clínico',    phone: null },
-  { username: 'demo_reset',  email: 'reset@demo.test',   role: 'Professional', displayName: 'Dr. Arnie Pye',          bio: 'Psicólogo en capacitación', phone: null },
-  { username: 'demo_recep',  email: 'recep@demo.test',   role: 'Receptionist', displayName: 'Recepcionista Demo',     bio: null,                phone: null },
+  { username: DEMO_ACCOUNTS.forcedResetUser.username,   email: 'reset@demo.test',  role: 'Professional', displayName: 'Dr. Arnie Pye',          bio: 'Psicólogo en capacitación', phone: null },
+  { username: DEMO_ACCOUNTS.receptionistWithGrant.username, email: 'recep@demo.test', role: 'Receptionist', displayName: 'Recepcionista Demo',  bio: null,                phone: null },
   { username: 'demo_recep2', email: 'recep2@demo.test',  role: 'Receptionist', displayName: 'Barney Gumble',          bio: null,                phone: null },
 ] as const;
 
 const CLIENT_USERS = [
-  { username: 'demo_client',         email: 'client@demo.test',        displayName: 'Homero Simpson',      phone: '1144440000', notes: null },
-  { username: 'demo_client_overdue', email: 'overdue@demo.test',       displayName: 'Bart Simpson',        phone: '1144440001', notes: 'Tiene saldo pendiente' },
+  { username: DEMO_ACCOUNTS.client.username,        email: 'client@demo.test',   displayName: 'Homero Simpson',      phone: '1144440000', notes: null },
+  { username: DEMO_ACCOUNTS.clientOverdue.username,  email: 'overdue@demo.test',  displayName: 'Bart Simpson',        phone: '1144440001', notes: 'Tiene saldo pendiente' },
   { username: 'demo_client2',        email: 'client2@demo.test',       displayName: 'Marge Simpson',       phone: '1144440002', notes: null },
   { username: 'demo_client3',        email: 'client3@demo.test',       displayName: 'Apu Nahasapeemapetilon', phone: '1144440003', notes: null },
   { username: 'demo_client4',        email: 'client4@demo.test',       displayName: 'Lenny Leonard',       phone: '1144440004', notes: null },
@@ -199,122 +198,6 @@ const CLIENT_USERS = [
 const NO_RELATION_TO_MARGE_USERNAMES: readonly string[] = [
   'demo_client31', 'demo_client32', 'demo_client33', 'demo_client34',
 ];
-
-type PoolLike = Pick<Pool, 'query'>;
-
-async function pickId(pool: PoolLike, sql: string, params: SqlParam[]): Promise<string | null> {
-  const r = await pool.query<{ id: string }>(sql, params);
-  return r.rows[0]?.id ?? null;
-}
-
-async function upsertBusiness(pool: PoolLike): Promise<string> {
-  const existing = await pickId(pool, `SELECT id FROM businesses ORDER BY id LIMIT 1`, []);
-  if (existing) return existing;
-  return (await pickId(
-    pool,
-    `INSERT INTO businesses (name, timezone, currency_code) VALUES ($1, $2, 'ARS') RETURNING id`,
-    [BUSINESS_NAME, TIMEZONE],
-  ))!;
-}
-
-async function upsertUser(
-  pool: PoolLike,
-  businessId: string,
-  opts: {
-    username: string;
-    email: string;
-    role: string;
-    displayName: string;
-    bio?: string | null;
-    phone?: string | null;
-    dni?: string | null;
-    notes?: string | null;
-    mustChangePassword?: boolean;
-  },
-): Promise<string> {
-  const { passwordHash, passwordSalt } = await hashPassword(DEMO_PASSWORD);
-  const r = await pool.query<{ id: string }>(
-    `INSERT INTO auth.users
-       (username, email, display_name, phone, dni, bio, notes,
-        password_hash, password_salt, role, business_id, is_active, must_change_password)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12)
-     ON CONFLICT (username) DO UPDATE
-       SET email               = EXCLUDED.email,
-           display_name        = EXCLUDED.display_name,
-           phone               = EXCLUDED.phone,
-           dni                 = EXCLUDED.dni,
-           bio                 = EXCLUDED.bio,
-           notes               = EXCLUDED.notes,
-           role                = EXCLUDED.role,
-           business_id         = EXCLUDED.business_id,
-           must_change_password = EXCLUDED.must_change_password,
-           updated_at          = now()
-     RETURNING id`,
-    [
-      opts.username, opts.email, opts.displayName,
-      opts.phone ?? null, opts.dni ?? null, opts.bio ?? null, opts.notes ?? null,
-      passwordHash, passwordSalt, opts.role, businessId,
-      opts.mustChangePassword ?? false,
-    ],
-  );
-  return r.rows[0].id;
-}
-
-async function upsertService(
-  pool: PoolLike,
-  businessId: string,
-  name: string,
-  durationMinutes: number,
-  priceArs: string,
-): Promise<string> {
-  const existing = await pickId(pool, `SELECT id FROM services WHERE business_id = $1 AND name = $2`, [businessId, name]);
-  if (existing) return existing;
-  return (await pickId(
-    pool,
-    `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
-     VALUES ($1, $2, $3, $4) RETURNING id`,
-    [businessId, name, durationMinutes, priceArs],
-  ))!;
-}
-
-async function upsertResource(
-  pool: PoolLike,
-  businessId: string,
-  name: string,
-): Promise<string> {
-  const existing = await pickId(pool, `SELECT id FROM resources WHERE business_id = $1 AND name = $2`, [businessId, name]);
-  if (existing) return existing;
-  return (await pickId(
-    pool,
-    `INSERT INTO resources (business_id, name) VALUES ($1, $2) RETURNING id`,
-    [businessId, name],
-  ))!;
-}
-
-// Idempotent block insert keyed by (owner, weekday, start). Returns the block id so its offered
-// services can be attached.
-async function upsertBlock(
-  pool: PoolLike,
-  owner: { professionalUserId?: string; resourceId?: string },
-  weekday: string,
-  start: string,
-  end: string,
-): Promise<string> {
-  const col = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
-  const id  = owner.professionalUserId ?? owner.resourceId ?? null;
-  const existing = await pickId(
-    pool,
-    `SELECT id FROM schedule_blocks WHERE ${col} = $1 AND weekday = $2 AND start_time = $3::time`,
-    [id, weekday, start],
-  );
-  if (existing) return existing;
-  return (await pickId(
-    pool,
-    `INSERT INTO schedule_blocks (${col}, weekday, start_time, end_time)
-     VALUES ($1, $2, $3::time, $4::time) RETURNING id`,
-    [id, weekday, start, end],
-  ))!;
-}
 
 async function upsertBlockService(
   pool: PoolLike,
@@ -382,42 +265,6 @@ async function setServiceBookingWindow(
   );
 }
 
-async function upsertScheduleException(
-  pool: PoolLike,
-  owner: { professionalUserId?: string; resourceId?: string },
-  date: string,
-  opts: { isUnavailable: boolean; reason?: string; startTime?: string; endTime?: string; granularityMinutes?: number },
-): Promise<void> {
-  const col = owner.professionalUserId ? 'professional_user_id' : 'resource_id';
-  const id  = owner.professionalUserId ?? owner.resourceId ?? null;
-  const existing = await pickId(
-    pool,
-    `SELECT id FROM schedule_exceptions WHERE ${col} = $1 AND exception_date = $2`,
-    [id, date],
-  );
-  if (existing) return;
-  await pool.query(
-    `INSERT INTO schedule_exceptions (${col}, exception_date, is_unavailable, reason, start_time, end_time, granularity_minutes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, date, opts.isUnavailable, opts.reason ?? null, opts.startTime ?? null, opts.endTime ?? null, opts.granularityMinutes ?? null],
-  );
-}
-
-async function upsertClientPrice(
-  pool: PoolLike,
-  clientUserId: string,
-  professionalUserId: string,
-  serviceId: string,
-  priceArs: string,
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO client_professional_services (client_user_id, professional_user_id, service_id, price_ars)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (client_user_id, professional_user_id, service_id) DO NOTHING`,
-    [clientUserId, professionalUserId, serviceId, priceArs],
-  );
-}
-
 async function upsertGrant(
   pool: PoolLike,
   professionalUserId: string,
@@ -427,18 +274,6 @@ async function upsertGrant(
     `INSERT INTO calendar_grants (professional_user_id, grantee_user_id)
      VALUES ($1, $2) ON CONFLICT (professional_user_id, grantee_user_id) DO NOTHING`,
     [professionalUserId, granteeUserId],
-  );
-}
-
-async function upsertProfessionalService(
-  pool: PoolLike,
-  professionalUserId: string,
-  serviceId: string,
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO professional_services (professional_user_id, service_id)
-     VALUES ($1, $2) ON CONFLICT (professional_user_id, service_id) DO NOTHING`,
-    [professionalUserId, serviceId],
   );
 }
 
@@ -629,18 +464,18 @@ async function guardedAuditInsert(
 }
 
 export async function seedDemo(pool: PoolLike): Promise<void> {
-  const businessId = await upsertBusiness(pool);
+  const businessId = await upsertBusiness(pool, BUSINESS_NAME, BUSINESS_TZ);
 
   const uids: Record<string, string> = {};
   for (const u of STAFF_USERS) {
-    uids[u.username] = await upsertUser(pool, businessId, {
+    uids[u.username] = await upsertUser(pool, businessId, DEMO_PASSWORD, {
       ...u,
-      mustChangePassword: u.username === 'demo_reset',
+      mustChangePassword: u.username === DEMO_ACCOUNTS.forcedResetUser.username,
     });
   }
 
   for (const c of CLIENT_USERS) {
-    uids[c.username] = await upsertUser(pool, businessId, {
+    uids[c.username] = await upsertUser(pool, businessId, DEMO_PASSWORD, {
       ...c,
       role: 'Client',
       // Distinct 8-digit demo DNIs derived from the phone tail, so client search by DNI is testable.

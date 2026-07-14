@@ -12,7 +12,8 @@ import { useScheduleTemplate } from '@/composables/useScheduleTemplate';
 import { useTimegridGeometry } from '@/composables/useTimegridGeometry';
 import { useTemplateBlockDrag } from '@/composables/useTemplateBlockDrag';
 import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type TemplateBlock, type WeekdayTimes } from '@/composables/scheduleTemplateGrid';
-import type { ColumnValue, TableRecordMap } from '@shared/types/types';
+import type { ColumnValue } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 const props = defineProps<{ owner: { kind: 'professional' | 'resource'; id: number } }>();
 

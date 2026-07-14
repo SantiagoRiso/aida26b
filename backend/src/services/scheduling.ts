@@ -19,8 +19,40 @@ import {
   getEffectiveBookingWindow,
   acquireOwnerLock,
 } from '../db/scheduling';
-import { BUSINESS_TZ, addMinutes, addDaysISO } from '../time';
-import { httpError } from '../db/errors';
+import { BUSINESS_TZ, DATE_RE, HHMM_RE, addMinutes, addDaysISO } from '../time';
+import { httpError } from '../errors';
+import { belongsToBusiness } from '../routes/business-context';
+
+export type TimeOffRangeParse =
+  | { ok: true; date: string; start: string | null; end: string | null }
+  | { ok: false; status: number; code: string; message: string };
+
+// Shared validation for time-off inputs (business closures and conflict previews): a valid date,
+// both-or-neither endpoints (absent ⇒ a full-day block), HH:MM shape, end after start — the same
+// rules the DB CHECK enforces, surfaced as friendly errors. The date error is caller-supplied
+// because the two surfaces name the field differently.
+export function parseTimeOffRange(
+  raw: { date: unknown; start: unknown; end: unknown },
+  dateError: { status: number; message: string },
+): TimeOffRangeParse {
+  if (typeof raw.date !== 'string' || !DATE_RE.test(raw.date)) {
+    return { ok: false, status: dateError.status, code: 'invalid_request', message: dateError.message };
+  }
+  const start = raw.start == null || raw.start === '' ? null : String(raw.start);
+  const end = raw.end == null || raw.end === '' ? null : String(raw.end);
+  if ((start == null) !== (end == null)) {
+    return { ok: false, status: 422, code: 'invalid_request', message: 'A time range needs both a start and an end' };
+  }
+  if (start != null && end != null) {
+    if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
+      return { ok: false, status: 422, code: 'invalid_request', message: 'Times must be HH:MM' };
+    }
+    if (end <= start) {
+      return { ok: false, status: 422, code: 'invalid_request', message: 'The end time must be after the start time' };
+    }
+  }
+  return { ok: true, date: raw.date, start, end };
+}
 
 // Resources offer no services, so their blocks are bare windows; tile them at a fixed display
 // granularity for the availability overlay. Conflict detection for a resource is containment-only
@@ -84,7 +116,7 @@ export async function loadOwnerState(
   let freeWindows: { start: string; end: string }[] | null = null;
   if (ref.kind === 'professional') {
     const row = await getProfessionalOwner(q, ref.id);
-    if (!row || row.business_id == null || Number(row.business_id) !== businessId) return null;
+    if (!belongsToBusiness(row, businessId)) return null;
     name = row.display_name;
     if (opts.serviceId) {
       // Each block's slot size is the service's effective duration inside that block (resolved in SQL).
@@ -96,7 +128,7 @@ export async function loadOwnerState(
     }
   } else {
     const row = await getResourceOwner(q, ref.id);
-    if (!row || row.business_id == null || Number(row.business_id) !== businessId) return null;
+    if (!belongsToBusiness(row, businessId)) return null;
     name = row.name;
     const rows = await getResourceBlocks(q, ref.id, weekday);
     serviceBlocks = rows.map((b) => ({ start: b.start, end: b.end, slot_minutes: RESOURCE_SLOT_MINUTES }));

@@ -1,13 +1,14 @@
 import express from 'express';
-
-export type ListMeta = { page: number; limit: number; total: number };
+import type { ApiEnvelope, ApiError, ApiErrorEnvelope, ListMeta } from '../../shared/src/ssot/envelope';
 
 export function sendList<T>(res: express.Response, data: T[], meta: ListMeta) {
-  return res.status(200).json({ success: true, data, meta });
+  const payload: ApiEnvelope<T[]> = { success: true, data, meta };
+  return res.status(200).json(payload);
 }
 
 export function sendData<T>(res: express.Response, data: T, status: number = 200) {
-  return res.status(status).json({ success: true, data });
+  const payload: ApiEnvelope<T> = { success: true, data };
+  return res.status(status).json(payload);
 }
 
 export function sendError(
@@ -17,7 +18,8 @@ export function sendError(
   message: string,
   fields?: Record<string, string>,
 ) {
-  const error: { code: string; message: string; fields?: Record<string, string> } = { code, message };
+  const error: ApiError = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
-  return res.status(status).json({ success: false, error });
+  const payload: ApiErrorEnvelope = { success: false, error };
+  return res.status(status).json(payload);
 }

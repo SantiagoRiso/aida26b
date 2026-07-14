@@ -1,35 +1,32 @@
 import { query, queryOne } from './core';
-import type { Queryable } from './core';
-import type { ActiveProfessionalRow, ActiveUserRow, SelfProfileRow } from '../../../shared/src/ssot/query-types';
-import type { SqlParam } from '../../../shared/src/types/types';
+import type { Queryable, SqlParam } from './core';
+import type { Role } from '../../../shared/src/types/roles';
+import type { UserProbeRow, SelfProfileRow } from '../../../shared/src/ssot/query-types';
 
-export function findActiveProfessional(db: Queryable, userId: number | string): Promise<ActiveProfessionalRow | null> {
-  return queryOne<ActiveProfessionalRow>(
+// The one "does this user exist" probe: optionally narrowed by role, tenant, and activity.
+// Booking/ledger tenant guards pass activeOnly (a deactivated client books like an unknown one);
+// history/read guards omit it — deactivation never hides what already happened. Returns the row
+// (grants need business_id/role); existence-only callers just null-check.
+export function findUser(
+  db: Queryable,
+  opts: { id: number | string; businessId?: number; role?: Role; activeOnly?: boolean },
+): Promise<UserProbeRow | null> {
+  const conditions = ['id = $1'];
+  const params: SqlParam[] = [opts.id];
+  if (opts.role !== undefined) {
+    params.push(opts.role);
+    conditions.push(`role = $${params.length}`);
+  }
+  if (opts.businessId !== undefined) {
+    params.push(opts.businessId);
+    conditions.push(`business_id = $${params.length}`);
+  }
+  if (opts.activeOnly) conditions.push('is_active = true');
+  return queryOne<UserProbeRow>(
     db,
-    `SELECT id AS user_id, business_id
-       FROM auth.users
-      WHERE id = $1 AND role = 'Professional' AND is_active = true`,
-    [userId],
+    `SELECT id, role, business_id FROM auth.users WHERE ${conditions.join(' AND ')}`,
+    params,
   );
-}
-
-// Any active user, with role — used to validate a grant's grantee.
-export function findActiveUser(db: Queryable, userId: number | string): Promise<ActiveUserRow | null> {
-  return queryOne<ActiveUserRow>(
-    db,
-    `SELECT id, role, business_id FROM auth.users WHERE id = $1 AND is_active = true`,
-    [userId],
-  );
-}
-
-// True when an active Client with this id exists in the business — the ledger's tenant guard.
-export async function activeClientInBusiness(db: Queryable, clientUserId: number, businessId: number): Promise<boolean> {
-  const rows = await query(
-    db,
-    `SELECT id FROM auth.users WHERE id = $1 AND role = 'Client' AND business_id = $2 AND is_active = true`,
-    [clientUserId, businessId],
-  );
-  return rows.length > 0;
 }
 
 // The business a user belongs to (used by the audit writer to scope events). Null when unresolved.

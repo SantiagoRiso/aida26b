@@ -11,6 +11,7 @@ import CrudSection from '@/components/generic/CrudSection.vue';
 import ResourcesSection from '@/components/settings/ResourcesSection.vue';
 import BusinessClosuresSection from '@/components/settings/BusinessClosuresSection.vue';
 import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
+import ProfessionalServicesSection from '@/components/settings/ProfessionalServicesSection.vue';
 import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 
 const { t } = useI18n();
@@ -20,7 +21,7 @@ const { label } = useLabel();
 
 const businessId = computed(() => auth.user?.business_id);
 
-const grantProfessionalId = ref<number | null>(null);
+const staffProfessionalId = ref<number | null>(null);
 
 const cutoffHours = ref<number | null>(null);
 const minDays = ref<number | null>(null);
@@ -117,14 +118,23 @@ async function saveSettings() {
       </section>
 
       <section class="rounded-lg border border-border bg-card p-5 space-y-4">
-        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Permisos de calendario', en: 'Calendar permissions' }) }}</h2>
-        <ProfessionalPicker v-model="grantProfessionalId" />
-        <CalendarGrantsSection :professional-user-id="grantProfessionalId" />
+        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Administración de Staff', en: 'Staff administration' }) }}</h2>
+        <ProfessionalPicker v-model="staffProfessionalId" />
+        <div class="space-y-6">
+          <div class="space-y-3">
+            <h3 class="text-sm font-semibold text-heading">{{ label({ es: 'Permisos de calendario', en: 'Calendar permissions' }) }}</h3>
+            <CalendarGrantsSection :professional-user-id="staffProfessionalId" />
+          </div>
+          <div class="space-y-3">
+            <h3 class="text-sm font-semibold text-heading">{{ label({ es: 'Servicios ofrecidos', en: 'Offered services' }) }}</h3>
+            <ProfessionalServicesSection :professional-user-id="staffProfessionalId" />
+          </div>
+        </div>
       </section>
 
       <section class="rounded-lg border border-border bg-card p-5 space-y-4">
         <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Salas', en: 'Rooms' }) }}</h2>
-        <ResourcesSection :hide-title="true" />
+        <ResourcesSection />
       </section>
 
       <section class="rounded-lg border border-border bg-card p-5 space-y-4">
@@ -137,23 +147,10 @@ async function saveSettings() {
         <CrudSection
           table-key="services"
           :hide-title="true"
+          :hide-filters="true"
           :panel-title="{ es: 'Servicio', en: 'Service' }"
           :delete-label="{ es: 'Eliminar servicio', en: 'Delete service' }"
           :delete-body="{ es: 'Esta acción no se puede deshacer.', en: 'This action cannot be undone.' }"
-        />
-      </section>
-
-      <section class="rounded-lg border border-border bg-card p-5 space-y-4 lg:col-span-2">
-        <h2 class="text-lg font-semibold text-heading">{{ label({ es: 'Servicios por profesional', en: 'Service bindings' }) }}</h2>
-        <p class="text-sm text-neutral">
-          {{ label({ es: 'Servicios que ofrece cada profesional.', en: 'Services each professional offers.' }) }}
-        </p>
-        <CrudSection
-          table-key="professional_services"
-          :hide-title="true"
-          :panel-title="{ es: 'Servicio del profesional', en: 'Professional Service' }"
-          :delete-label="{ es: 'Eliminar vínculo', en: 'Remove binding' }"
-          :delete-body="{ es: 'Se quitará este servicio del profesional.', en: 'This service will be removed from the professional.' }"
         />
       </section>
     </div>

@@ -52,16 +52,6 @@ export async function granteeCanActOnAppointment(
   return rows[0].allowed;
 }
 
-// A user with this id exists in the business (admin ledger-read tenant bound).
-export async function userExistsInBusiness(db: Queryable, userId: number, businessId: number): Promise<boolean> {
-  const rows = await query(
-    db,
-    `SELECT 1 FROM auth.users WHERE id = $1 AND business_id = $2`,
-    [userId, businessId],
-  );
-  return rows.length > 0;
-}
-
 // A professional has any appointment with this client (ledger read).
 export async function professionalHasClient(db: Queryable, clientUserId: number, professionalUserId: number): Promise<boolean> {
   const rows = await query<{ allowed: boolean }>(

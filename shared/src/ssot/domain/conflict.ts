@@ -1,5 +1,6 @@
-import { detectOverlap } from './scheduling';
-import type { TimeInterval } from './scheduling';
+import { detectOverlap, toMinutes, mergeIntervals } from './availability';
+import type { TimeInterval } from './availability';
+import { OPEN_APPOINTMENT_STATES } from './appointment-lifecycle';
 
 // Language-neutral conflict classes. The frontend localizes from `type` + `entity`; the API
 // never builds a display string.
@@ -28,7 +29,7 @@ export type BookedAppointment = {
   id: number;
   start: string;
   end: string;
-  state: 'scheduled' | 'requested';
+  state: (typeof OPEN_APPOINTMENT_STATES)[number];
 };
 
 export type ConflictOwner = {
@@ -39,32 +40,16 @@ export type ConflictOwner = {
   booked: BookedAppointment[];
 };
 
-function toMin(hhmm: string): number {
-  const [h, m] = hhmm.split(':');
-  return Number(h) * 60 + Number(m);
-}
-
-function mergeMinutes(intervals: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> {
-  const sorted = [...intervals].filter((i) => i.end > i.start).sort((a, b) => a.start - b.start);
-  const out: Array<{ start: number; end: number }> = [];
-  for (const cur of sorted) {
-    const last = out[out.length - 1];
-    if (last && cur.start <= last.end) last.end = Math.max(last.end, cur.end);
-    else out.push({ ...cur });
-  }
-  return out;
-}
-
 // Whole-appointment containment: the proposed range must sit inside a single available window.
 function containedInGrid(pStart: number, pEnd: number, slots: TimeInterval[]): boolean {
-  const merged = mergeMinutes(slots.map((s) => ({ start: toMin(s.start), end: toMin(s.end) })));
+  const merged = mergeIntervals(slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })));
   return merged.some((iv) => iv.start <= pStart && pEnd <= iv.end);
 }
 
 // A normal booking must equal one whole grid slot (start AND length). Off-grid ⇒ slot_alignment,
 // the class staff override as a sobreturno.
 function matchesGridSlot(pStart: number, pEnd: number, slots: TimeInterval[]): boolean {
-  return slots.some((s) => toMin(s.start) === pStart && toMin(s.end) === pEnd);
+  return slots.some((s) => toMinutes(s.start) === pStart && toMinutes(s.end) === pEnd);
 }
 
 // Pure conflict aggregator. Overlap classes come from `booked` (scheduled ⇒ *_overlap, requested ⇒
@@ -77,8 +62,8 @@ export function evaluateConflicts(input: {
   resource?: ConflictOwner;
 }): ConflictVerdict {
   const { proposed, callerIsStaff, excludeAppointmentId, professional, resource } = input;
-  const pStart = toMin(proposed.start);
-  const pEnd = toMin(proposed.end);
+  const pStart = toMinutes(proposed.start);
+  const pEnd = toMinutes(proposed.end);
   const conflicts: Conflict[] = [];
 
   const evalOwner = (owner: ConflictOwner, kind: 'professional' | 'resource', checkAlignment: boolean) => {
@@ -89,7 +74,7 @@ export function evaluateConflicts(input: {
       if (
         detectOverlap(
           { startsAt: pStart, endsAt: pEnd },
-          { startsAt: toMin(b.start), endsAt: toMin(b.end) },
+          { startsAt: toMinutes(b.start), endsAt: toMinutes(b.end) },
         )
       ) {
         conflicts.push({

@@ -1,20 +1,17 @@
 import type { ConflictVerdict, Conflict } from '@shared/ssot/domain/conflict';
+import { i18n } from '@/i18n';
 
 // The API never builds a display string; localization is the frontend's responsibility.
+// Uses the global i18n instance (not useI18n()) — this composable is invoked directly in
+// tests and outside component setup, where the composition-mode composable isn't available.
 
-const CONFLICT_MESSAGES: Record<string, (entity: string, start: string, end: string) => string> = {
-  professional_overlap: (entity, start, end) =>
-    `Este horario se superpone con otro turno de ${entity} (${start}–${end}).`,
-  resource_overlap: (entity, start, end) =>
-    `La sala "${entity}" ya está ocupada en ese horario (${start}–${end}).`,
-  professional_availability: (entity) =>
-    `${entity} no tiene disponibilidad en este horario.`,
-  resource_availability: (entity) =>
-    `La sala "${entity}" no está disponible en este horario.`,
-  requested_block: (entity, start, end) =>
-    `Hay una solicitud pendiente de ${entity} en ese horario (${start}–${end}).`,
-  slot_alignment: (entity) =>
-    `El horario no se alinea con los bloques de disponibilidad de ${entity}.`,
+const CONFLICT_KEYS: Record<string, string> = {
+  professional_overlap: 'conflicts.professionalOverlap',
+  resource_overlap: 'conflicts.resourceOverlap',
+  professional_availability: 'conflicts.professionalAvailability',
+  resource_availability: 'conflicts.resourceAvailability',
+  requested_block: 'conflicts.requestedBlock',
+  slot_alignment: 'conflicts.slotAlignment',
 };
 
 export interface ConflictDescription {
@@ -24,9 +21,9 @@ export interface ConflictDescription {
 
 export function useConflictVerdict() {
   function describeConflict(c: Conflict): string {
-    const fn = CONFLICT_MESSAGES[c.type];
-    if (!fn) return `Conflicto: ${c.type} en ${c.entity.name}`;
-    return fn(c.entity.name, c.range.start, c.range.end);
+    const key = CONFLICT_KEYS[c.type];
+    if (!key) return i18n.global.t('conflicts.fallback', { type: c.type, entity: c.entity.name });
+    return i18n.global.t(key, { entity: c.entity.name, start: c.range.start, end: c.range.end });
   }
 
   function describe(verdict: ConflictVerdict): ConflictDescription {

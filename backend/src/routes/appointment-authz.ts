@@ -3,13 +3,14 @@ import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import { hasCalendarGrant } from '../db/grants';
 import { insertAuditEvent } from '../db/audit';
+import { NO_BUSINESS_CODE, NO_BUSINESS_MESSAGE } from './business-context';
 import {
   professionalHasClientAppointment,
   granteeCanActOnAppointment,
-  userExistsInBusiness,
   professionalHasClient,
   granteeReadsClientLedger,
 } from '../db/authz';
+import { findUser } from '../db/users';
 
 export type AuthzResult =
   | { ok: true }
@@ -49,7 +50,7 @@ export async function assertAppointmentActionAllowed(
     return { ok: false, status: 403, code: 'forbidden', message: 'Clients cannot perform staff actions' };
   }
   if (user.business_id == null) {
-    return { ok: false, status: 400, code: 'no_business', message: 'Business context required' };
+    return { ok: false, status: 400, code: NO_BUSINESS_CODE, message: NO_BUSINESS_MESSAGE };
   }
   if (user.role === 'Admin') return { ok: true };
   if (user.role === 'Professional') {
@@ -76,7 +77,7 @@ export async function assertLedgerWriteAllowed(
     return { ok: false, status: 403, code: 'forbidden', message: 'Clients cannot create ledger entries' };
   }
   if (user.business_id == null) {
-    return { ok: false, status: 400, code: 'no_business', message: 'Business context required' };
+    return { ok: false, status: 400, code: NO_BUSINESS_CODE, message: NO_BUSINESS_MESSAGE };
   }
 
   if (user.role === 'Admin') return { ok: true };
@@ -113,12 +114,13 @@ export async function assertLedgerReadAllowed(
       : { ok: false, status: 403, code: 'forbidden', message: 'Clients may only read their own ledger' };
   }
   if (user.business_id == null) {
-    return { ok: false, status: 400, code: 'no_business', message: 'Business context required' };
+    return { ok: false, status: 400, code: NO_BUSINESS_CODE, message: NO_BUSINESS_MESSAGE };
   }
   if (user.role === 'Admin') {
     // Admin scope is business-bounded — a client in another tenant is not readable.
-    const allowed = await userExistsInBusiness(db, clientUserId, user.business_id);
-    return allowed
+    // No activeOnly: a deactivated client's ledger history stays readable.
+    const allowed = await findUser(db, { id: clientUserId, businessId: user.business_id });
+    return allowed != null
       ? { ok: true }
       : { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
   }

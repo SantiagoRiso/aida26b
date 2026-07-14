@@ -8,6 +8,9 @@ import {
   getCrudPolicy,
   getSoftDeletePolicy,
   isOwnerScheduledTable,
+  getProfessionalScheduleOwnerFk,
+  getResourceScheduleOwnerFk,
+  ownerHasResourceColumn,
 } from '../../shared/src/utils/utils';
 import {
   computeServiceSlots,
@@ -142,6 +145,19 @@ describe('professionals and resources are independent, each schedulable', () => 
     expect(getSchedulable('resources')?.ownerForeignKey).toBe('resource_id');
     expect(getSchedulable('professionals')?.displayField).toBe('display_name');
     expect(getSchedulable('resources')?.displayField).toBe('name');
+  });
+
+  // The guard splits owner kinds by whether the schedulable's rows are role-discriminated users.
+  // These names must keep matching the migration's column names (drift guard).
+  it('kind-split owner FK accessors classify professionals as user-owned, resources as not', () => {
+    expect(getProfessionalScheduleOwnerFk()).toBe('professional_user_id');
+    expect(getResourceScheduleOwnerFk()).toBe('resource_id');
+  });
+
+  it('ownerHasResourceColumn: dual-owner schedule tables carry the resource FK, professional-only tables do not', () => {
+    expect(ownerHasResourceColumn('schedule_blocks')).toBe(true);
+    expect(ownerHasResourceColumn('schedule_exceptions')).toBe(true);
+    expect(ownerHasResourceColumn('professional_services')).toBe(false);
   });
 });
 

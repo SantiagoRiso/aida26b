@@ -8,11 +8,12 @@ import type { Appointment } from '@/api/appointments';
 import { listRows } from '@/api/crud';
 import { getMySettings } from '@/api/business';
 import { canCancelAppointment, DEFAULT_CANCELLATION_CUTOFF_HOURS, isOpenAppointmentState } from '@shared/ssot/domain';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import type { EventClickArg } from '@fullcalendar/core';
 import { PlusIcon } from '@heroicons/vue/24/outline';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
+import { useStateLabel } from '@/composables/useStateLabel';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
 import RequestFlow from '@/components/portal/RequestFlow.vue';
@@ -23,6 +24,7 @@ import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 
 const { t } = useI18n();
+const { stateLabel } = useStateLabel();
 const auth = useAuthStore();
 const ui = useUiStore();
 const { formatDateTime, formatARS } = useCurrency();
@@ -71,13 +73,13 @@ onMounted(async () => {
   if (svcRes.ok) services.value = svcRes.data;
 });
 function professionalFor(appt: Appointment): TableRecordMap['professionals'] | null {
-  return professionals.value.find((p) => String(p.id) === String(appt.professional_user_id)) ?? null;
+  return professionals.value.find((p) => p.id === appt.professional_user_id) ?? null;
 }
 function professionalNameFor(appt: Appointment): string | null {
   return professionalFor(appt)?.display_name ?? null;
 }
 function serviceNameFor(appt: Appointment): string | null {
-  return services.value.find((s) => String(s.id) === String(appt.service_id))?.name ?? null;
+  return services.value.find((s) => s.id === appt.service_id)?.name ?? null;
 }
 
 // Clicking a calendar event opens a read-only detail (clients can't edit/drag/resize).
@@ -101,7 +103,7 @@ const { calendarOptions } = useAppointmentCalendar(
   {
     fallbackTitle: professionalNameFor,
     tooltip: (appt) =>
-      [professionalNameFor(appt), t(`status.${appt.state}`)].filter(Boolean).join(' · '),
+      [professionalNameFor(appt), stateLabel(appt.state)].filter(Boolean).join(' · '),
   },
 );
 

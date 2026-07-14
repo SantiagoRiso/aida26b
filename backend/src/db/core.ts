@@ -1,8 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
 import { types } from 'pg';
 import { structure } from '../../../shared/src/ssot/structure';
-import type { TableKey, TableRecordMap, ColumnDef, SqlParam } from '../../../shared/src/types/types';
+import type { ColumnDef } from '../../../shared/src/types/types';
+import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
 import { DbError } from './errors';
+
+// What node-pg can serialize as a query parameter.
+export type SqlParam = string | number | boolean | Date | null | SqlParam[];
 
 // pg parses DATE (OID 1082) into a JS Date, which serialises to an ISO timestamp with a trailing Z
 // on the wire — shifting the calendar day under any non-UTC client and breaking bare-'YYYY-MM-DD'

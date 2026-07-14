@@ -1,12 +1,8 @@
 import express from 'express';
 import { Pool } from 'pg';
 
-import type { TableKey, TableRecordMap } from '../../../shared/src/types/types';
-import { getPkFields, isOwnerScheduledTable, professionalOwnerGuardedOn, ownerHasResourceColumn } from '../../../shared/src/utils/utils';
-
-import {
-  getEntityName,
-} from '../helpers';
+import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
+import { getPkFields, isScheduleGuarded, ownerHasResourceColumn, getEntityName } from '../../../shared/src/utils/utils';
 
 import { buildDeleteStatement } from '../db/generic';
 
@@ -14,7 +10,7 @@ import { query as runQuery } from '../db/core';
 import { getScheduleOwnerRow } from '../db/scheduling';
 import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed } from './crud-policy';
-import type { AuthUser } from '../auth';
+import { requireUser } from './request-guards';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
 
 import {
@@ -22,20 +18,13 @@ import {
   sendErrorsIfInvalid,
 } from '../validation/validate';
 
-type AuthedRequest = express.Request & { user?: AuthUser };
-
 export async function deleteHandler(
   req: express.Request,
   res: express.Response,
   pool: Pool
 ) {
-  const user = (req as AuthedRequest).user;
-
-  // Fail closed: no authenticated user means no authority. A missing req.user must
-  // never resolve to a privileged identity.
-  if (!user) {
-    return sendError(res, 401, 'unauthorized', 'Authentication required');
-  }
+  const user = requireUser(req, res);
+  if (!user) return;
 
   const allowed = assertCrudAllowed(req.params.tableName, 'delete', user);
 
@@ -45,7 +34,7 @@ export async function deleteHandler(
 
   const tableName = allowed.table;
   const entityName = getEntityName(tableName);
-  const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
+  const physicalTable = allowed.sqlTable;
 
   // The id arrives as a path segment (/api/:tableName/:id), not a query param — matches
   // how the frontend's crud.ts calls DELETE and how generic entities only ever expose a single pk.
@@ -61,7 +50,7 @@ export async function deleteHandler(
   );
 
   // Own+Admin+granted enforcement for schedule tables — owner read from the existing row.
-  if (isOwnerScheduledTable(tableName) || professionalOwnerGuardedOn(tableName, 'delete')) {
+  if (isScheduleGuarded(tableName, 'delete')) {
     const existingRow = await getScheduleOwnerRow(pool, physicalTable, pkValues[0], ownerHasResourceColumn(tableName));
     if (!existingRow) {
       return sendError(res, 404, 'not_found', `${entityName} not found`);
@@ -78,19 +67,15 @@ export async function deleteHandler(
     pkFields,
     pkValues,
     allowed,
-    user?.id ?? null,
+    user.id,
   );
 
-  try {
-    const rows = await runQuery<GenericRow>(pool, text, values);
+  // Constraint violations (unique, FK) propagate to guardRoute's central SQLSTATE mapping.
+  const rows = await runQuery<GenericRow>(pool, text, values);
 
-    if (rows.length === 0) {
-      return sendError(res, 404, 'not_found', `${entityName} not found`);
-    }
-
-    return sendData(res, rows[0], 200);
-  } catch (err) {
-    console.error(`Error deleting ${entityName}:`, err);
-    return sendError(res, 500, 'internal_error', 'Internal server error');
+  if (rows.length === 0) {
+    return sendError(res, 404, 'not_found', `${entityName} not found`);
   }
+
+  return sendData(res, rows[0], 200);
 }

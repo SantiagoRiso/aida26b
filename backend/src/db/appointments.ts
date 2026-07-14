@@ -1,27 +1,8 @@
 import { query, queryOne } from './core';
-import type { Queryable } from './core';
+import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
 import { appointmentInConflictSql } from './scheduling';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
-import type { SqlParam } from '../../../shared/src/types/types';
-
-export async function resourceExistsInBusiness(db: Queryable, resourceId: number, businessId: number): Promise<boolean> {
-  const rows = await query(
-    db,
-    `SELECT id FROM resources WHERE id = $1 AND business_id = $2 AND deleted_at IS NULL`,
-    [resourceId, businessId],
-  );
-  return rows.length > 0;
-}
-
-export async function clientExistsInBusiness(db: Queryable, clientUserId: number, businessId: number): Promise<boolean> {
-  const rows = await query(
-    db,
-    `SELECT id FROM auth.users WHERE id = $1 AND role = 'Client' AND business_id = $2`,
-    [clientUserId, businessId],
-  );
-  return rows.length > 0;
-}
 
 // Null when absent or cross-tenant — both surface as 404 to hide existence.
 export function loadAppointment(db: Queryable, id: number, businessId: number): Promise<AppointmentRow | null> {

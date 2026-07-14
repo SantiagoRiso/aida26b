@@ -7,7 +7,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountLedgerRoutes } from '../src/routes/ledger';
 import type { AuthUser } from '../src/auth';
-import type { TableRecordMap } from '../../shared/src/types/types';
+import type { TableRecordMap } from '../../shared/src/ssot/derived';
 
 let pool: Pool;
 let server: http.Server;

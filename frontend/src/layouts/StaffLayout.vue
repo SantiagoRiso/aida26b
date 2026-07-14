@@ -4,8 +4,10 @@ import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 import { ArrowRightOnRectangleIcon } from '@heroicons/vue/24/outline';
 import SidebarNav from '@/components/staff/SidebarNav.vue';
+import { useStateLabel } from '@/composables/useStateLabel';
 
 const { t } = useI18n();
+const { roleLabel } = useStateLabel();
 const auth = useAuthStore();
 const router = useRouter();
 
@@ -28,7 +30,7 @@ async function logout() {
       <div class="border-t border-border p-4">
         <div class="mb-2 truncate text-sm text-neutral">
           {{ auth.user?.username }}
-          <span v-if="auth.user" class="ml-1 text-xs">({{ t(`roles.${auth.user.role}`) }})</span>
+          <span v-if="auth.user" class="ml-1 text-xs">({{ roleLabel(auth.user.role) }})</span>
         </div>
         <button
           type="button"

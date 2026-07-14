@@ -1,12 +1,14 @@
 <script setup lang="ts" generic="K extends TableKey">
 import { ref, computed, reactive } from 'vue';
 import { useLabel } from '@/composables/useLabel';
+import { i18n } from '@/i18n';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { validateField, validateFullObject } from '@shared/validation/validate';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
-import type { TableKey, TableRecordMap, ColumnDef, ColumnValue } from '@shared/types/types';
+import type { ColumnDef, ColumnValue } from '@shared/types/types';
+import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import DateField from '@/components/shared/DateField.vue';
@@ -227,10 +229,10 @@ async function onSubmit() {
 
     <div class="flex justify-end gap-3 pt-2">
       <AppButton variant="neutral" type="button" @click="emit('cancel')">
-        {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+        {{ i18n.global.t('actions.cancel') }}
       </AppButton>
       <AppButton type="submit" :loading="submitting">
-        {{ label({ es: 'Guardar', en: 'Save' }) }}
+        {{ i18n.global.t('actions.save') }}
       </AppButton>
     </div>
   </form>

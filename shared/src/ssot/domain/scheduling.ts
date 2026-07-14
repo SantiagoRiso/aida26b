@@ -1,70 +1,8 @@
 import type { TableStructure } from '../../types/types';
 import { pkColumn } from './business';
-
-// States from which no further transition is permitted; price captured at booking is frozen here.
-export const TERMINAL_STATES = new Set(['completed', 'canceled', 'no_show', 'rejected']);
-
-export const TRANSITION_MAP: Record<string, readonly string[]> = {
-  requested: ['scheduled', 'rejected', 'canceled'],
-  scheduled: ['completed', 'canceled', 'no_show'],
-};
-
-// Used by route handlers (422) and the frontend (hide illegal actions).
-export function assertValidTransition(
-  from: string,
-  to: string,
-): { ok: true } | { ok: false; message: string } {
-  const allowed = TRANSITION_MAP[from];
-  if (!allowed) {
-    return { ok: false, message: `State '${from}' is terminal; no transitions allowed` };
-  }
-  if (!allowed.includes(to)) {
-    return { ok: false, message: `Transition '${from}' → '${to}' is not allowed` };
-  }
-  return { ok: true };
-}
-
-// Still-actionable states: a pending or upcoming turno (not yet resolved). The one source for the
-// "open" set — read as a function in app logic and as a SQL list in availability/conflict queries.
-export const OPEN_APPOINTMENT_STATES = ['requested', 'scheduled'] as const;
-
-export function isOpenAppointmentState(state: string): boolean {
-  return (OPEN_APPOINTMENT_STATES as readonly string[]).includes(state);
-}
-
-// States that void a turno — never real service history. Excluded from the calendar and from
-// relationship / billing-eligibility checks. The one source both sides read that pair from.
-export const VOID_APPOINTMENT_STATES = ['canceled', 'rejected'] as const;
-
-// Business default cancellation window when a business has none set.
-export const DEFAULT_CANCELLATION_CUTOFF_HOURS = 24;
-
-// Whether a client may cancel: a requested turno can be withdrawn anytime; a scheduled one only
-// until `cutoffHours` before it starts; any other state, never. The authoritative gate (backend
-// transition guard) and the portal's button state read this one rule so they cannot disagree.
-export function canCancelAppointment(
-  state: string,
-  startsAtIso: string,
-  cutoffHours: number,
-  nowMs: number,
-): boolean {
-  if (state === 'requested') return true;
-  if (state !== 'scheduled') return false;
-  const hoursUntil = (new Date(startsAtIso).getTime() - nowMs) / 3_600_000;
-  return hoursUntil > cutoffHours;
-}
-
-const APPOINTMENT_STATES = [
-  { value: 'requested', label: { es: 'Solicitado', en: 'Requested' } },
-  { value: 'scheduled', label: { es: 'Agendado', en: 'Scheduled' } },
-  { value: 'completed', label: { es: 'Completado', en: 'Completed' } },
-  { value: 'canceled', label: { es: 'Cancelado', en: 'Canceled' } },
-  { value: 'no_show', label: { es: 'No asistió', en: 'No Show' } },
-  { value: 'rejected', label: { es: 'Rechazado', en: 'Rejected' } },
-] as const;
-
-// Valid nodes of the appointment state machine — the SSOT set for validating a state filter/value.
-export const APPOINTMENT_STATE_VALUES = new Set<string>(APPOINTMENT_STATES.map((s) => s.value));
+import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
+import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, WEEKDAY_OPTIONS } from './availability';
+import { APPOINTMENT_STATES } from './appointment-lifecycle';
 
 export const schedulingTables = {
   // One working block for exactly one owner (professional XOR resource, DB-enforced). Several
@@ -80,7 +18,7 @@ export const schedulingTables = {
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
       },
       resource_id: {
@@ -99,27 +37,19 @@ export const schedulingTables = {
         validator: { required: true },
         filterable: true,
         sortable: true,
-        options: [
-          { value: 'mon', label: { es: 'Lunes', en: 'Monday' } },
-          { value: 'tue', label: { es: 'Martes', en: 'Tuesday' } },
-          { value: 'wed', label: { es: 'Miércoles', en: 'Wednesday' } },
-          { value: 'thu', label: { es: 'Jueves', en: 'Thursday' } },
-          { value: 'fri', label: { es: 'Viernes', en: 'Friday' } },
-          { value: 'sat', label: { es: 'Sábado', en: 'Saturday' } },
-          { value: 'sun', label: { es: 'Domingo', en: 'Sunday' } },
-        ],
+        options: WEEKDAY_OPTIONS,
       },
       start_time: {
         type: 'string',
         label: { es: 'Hora inicio', en: 'Start Time' },
-        validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
+        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
         filterable: false,
         sortable: true,
       },
       end_time: {
         type: 'string',
         label: { es: 'Hora fin', en: 'End Time' },
-        validator: { required: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
+        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
         filterable: false,
         sortable: false,
       },
@@ -164,7 +94,7 @@ export const schedulingTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
       },
       schedule_block_id: {
@@ -196,7 +126,7 @@ export const schedulingTables = {
       price_ars: {
         type: 'string',
         label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
-        validator: { nullable: true, pattern: '^\\d+(\\.\\d{1,2})?$', patternMessage: 'must be a non-negative amount' },
+        validator: { nullable: true, pattern: AMOUNT_PATTERN, patternMessage: AMOUNT_PATTERN_MESSAGE },
         filterable: false,
         sortable: true,
       },
@@ -234,7 +164,7 @@ export const schedulingTables = {
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
       },
       resource_id: {
@@ -277,14 +207,14 @@ export const schedulingTables = {
       start_time: {
         type: 'string',
         label: { es: 'Hora inicio', en: 'Start Time' },
-        validator: { nullable: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
+        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
         filterable: false,
         sortable: false,
       },
       end_time: {
         type: 'string',
         label: { es: 'Hora fin', en: 'End Time' },
-        validator: { nullable: true, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$', patternMessage: 'must be HH:MM' },
+        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
         filterable: false,
         sortable: false,
       },
@@ -338,7 +268,7 @@ export const schedulingTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
       },
       professional_user_id: {
         type: 'string',
@@ -347,7 +277,7 @@ export const schedulingTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
       },
       resource_id: {
         type: 'string',
@@ -419,8 +349,8 @@ export const schedulingTables = {
         label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
         validator: {
           required: true,
-          pattern: '^\\d+(\\.\\d{1,2})?$',
-          patternMessage: 'must be a non-negative amount',
+          pattern: AMOUNT_PATTERN,
+          patternMessage: AMOUNT_PATTERN_MESSAGE,
         },
         filterable: false,
         sortable: true,
@@ -472,7 +402,7 @@ export const schedulingTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
       },
       grantee_user_id: {
         type: 'string',
@@ -493,151 +423,3 @@ export const schedulingTables = {
     },
   } satisfies TableStructure,
 };
-
-export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-export type Weekday = (typeof WEEKDAYS)[number];
-
-// 'HH:MM' 24h, end-exclusive. granularity_minutes is an optional per-interval slot size
-// some callers carry; free-window callers omit it.
-export type TimeInterval = { start: string; end: string; granularity_minutes?: number };
-
-export type ScheduleExceptionInput = {
-  is_unavailable: boolean;
-  start_time?: string | null;
-  end_time?: string | null;
-  // Slot size for a changed-hours "available" exception; null for full-day/blocked.
-  granularity_minutes?: number | null;
-};
-
-type MinuteInterval = { start: number; end: number };
-
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':');
-  return Number(h) * 60 + Number(m);
-}
-
-function toHHMM(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-function mergeIntervals(intervals: MinuteInterval[]): MinuteInterval[] {
-  const sorted = [...intervals].filter((i) => i.end > i.start).sort((a, b) => a.start - b.start);
-  const out: MinuteInterval[] = [];
-  for (const cur of sorted) {
-    const last = out[out.length - 1];
-    if (last && cur.start <= last.end) {
-      last.end = Math.max(last.end, cur.end);
-    } else {
-      out.push({ ...cur });
-    }
-  }
-  return out;
-}
-
-function subtractIntervals(base: MinuteInterval[], blocks: MinuteInterval[]): MinuteInterval[] {
-  const merged = mergeIntervals(blocks);
-  let current = mergeIntervals(base);
-  for (const block of merged) {
-    const next: MinuteInterval[] = [];
-    for (const iv of current) {
-      if (block.end <= iv.start || block.start >= iv.end) {
-        next.push(iv);
-        continue;
-      }
-      if (block.start > iv.start) next.push({ start: iv.start, end: block.start });
-      if (block.end < iv.end) next.push({ start: block.end, end: iv.end });
-    }
-    current = next;
-  }
-  return current;
-}
-
-export function weekdayOf(date: string): Weekday {
-  const [y, m, d] = date.split('-').map(Number);
-  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
-}
-
-export function detectOverlap(
-  a: { startsAt: number; endsAt: number },
-  b: { startsAt: number; endsAt: number },
-): boolean {
-  return a.startsAt < b.endsAt && b.startsAt < a.endsAt;
-}
-
-// A working block already resolved for one chosen service: slot_minutes is that service's
-// effective duration inside this block (per-block override else the service default). The
-// caller resolves slot_minutes; this function only tiles.
-export type ServiceBlock = { start: string; end: string; slot_minutes: number };
-
-// Working windows for one date after exceptions: blocks ∪ extra-hours − blocked-hours, merged.
-// Empty on a full-day off. The service-independent base the slot tiler and the free-window view
-// both build on.
-function availableMinuteWindows(
-  blocks: { start: string; end: string }[],
-  exceptions: ScheduleExceptionInput[],
-): MinuteInterval[] {
-  if (exceptions.some((e) => e.is_unavailable && !e.start_time && !e.end_time)) return [];
-  const base = mergeIntervals(blocks.map((b) => ({ start: toMinutes(b.start), end: toMinutes(b.end) })));
-  const additions: MinuteInterval[] = [];
-  const blockOffs: MinuteInterval[] = [];
-  for (const e of exceptions) {
-    if (!e.start_time || !e.end_time) continue;
-    const iv = { start: toMinutes(e.start_time), end: toMinutes(e.end_time) };
-    if (iv.end <= iv.start) continue;
-    (e.is_unavailable ? blockOffs : additions).push(iv);
-  }
-  return subtractIntervals(mergeIntervals([...base, ...additions]), blockOffs);
-}
-
-// Service-independent free windows for one owner on one date: the working windows (blocks ±
-// exceptions) with booked spans removed, as contiguous intervals — NOT tiled into service-sized
-// slots. Feeds the staff calendar's availability shading and snap lattice, which have no chosen
-// service (a professional's schedule is service-agnostic; slot sizing only matters for booking).
-export function computeFreeWindows(input: {
-  blocks: { start: string; end: string }[];
-  exceptions?: ScheduleExceptionInput[];
-  booked?: TimeInterval[];
-}): TimeInterval[] {
-  const { blocks, exceptions = [], booked = [] } = input;
-  const available = availableMinuteWindows(blocks, exceptions);
-  const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
-  return subtractIntervals(available, bookedMin).map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
-}
-
-// Service-driven slots for one owner on one date: each block chopped into back-to-back slots of
-// its own slot_minutes (measured from block start), kept only when the slot lies fully inside the
-// available window (blocks ± exceptions) and overlaps no booked interval. End-exclusive. The slot
-// size comes from the chosen service, not a fixed per-block grid.
-export function computeServiceSlots(input: {
-  blocks: ServiceBlock[];
-  exceptions?: ScheduleExceptionInput[];
-  booked?: TimeInterval[];
-}): TimeInterval[] {
-  const { blocks, exceptions = [], booked = [] } = input;
-  const available = availableMinuteWindows(blocks, exceptions);
-  if (available.length === 0) return [];
-
-  const bookedMin = booked.map((iv) => ({ start: toMinutes(iv.start), end: toMinutes(iv.end) }));
-  const seen = new Set<string>();
-  const slots: MinuteInterval[] = [];
-  for (const b of blocks) {
-    const gran = b.slot_minutes;
-    if (!Number.isInteger(gran) || gran <= 0) continue;
-    for (let s = toMinutes(b.start); s + gran <= toMinutes(b.end); s += gran) {
-      const slot = { start: s, end: s + gran };
-      if (!available.some((iv) => iv.start <= slot.start && slot.end <= iv.end)) continue;
-      const clash = bookedMin.some((k) =>
-        detectOverlap({ startsAt: slot.start, endsAt: slot.end }, { startsAt: k.start, endsAt: k.end }),
-      );
-      if (clash) continue;
-      const key = `${slot.start}-${slot.end}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      slots.push(slot);
-    }
-  }
-  slots.sort((a, b) => a.start - b.start);
-  return slots.map((iv) => ({ start: toHHMM(iv.start), end: toHHMM(iv.end) }));
-}

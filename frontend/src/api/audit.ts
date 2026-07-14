@@ -1,19 +1,9 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
-import type { ColumnValue } from '@shared/types/types';
+import type { AuditEventRow, Wire } from '@shared/ssot/query-types';
+import { auditPaths } from '@shared/ssot/api-paths';
 
-export interface AuditEvent {
-  id: number;
-  actor_user_id: number | null;
-  event_type: string;
-  entity_type: string;
-  entity_id: number | null;
-  outcome: string;
-  ip: string | null;
-  // Mirrors the backend audit row's details JSONB (column-value payloads).
-  details: Record<string, ColumnValue> | null;
-  created_at: string;
-}
+export type AuditEvent = Wire<AuditEventRow>;
 
 export interface AuditFilters {
   entity_type?: string;
@@ -39,5 +29,5 @@ export function listAudit(
   if (page > 1) params.set('page', String(page));
   params.set('limit', String(limit));
   const qs = params.toString();
-  return apiFetch<AuditEvent[]>(`/audit${qs ? `?${qs}` : ''}`);
+  return apiFetch<AuditEvent[]>(`${auditPaths.list()}${qs ? `?${qs}` : ''}`);
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import { setActivePinia, createPinia } from 'pinia';
 import { roleAllowedFor, canAccessRoute } from '@/router/access';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 
 function makeAuthStore(user: { role: Role; must_change_password: boolean } | null = null) {
   return { user };

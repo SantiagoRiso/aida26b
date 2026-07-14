@@ -5,7 +5,7 @@ import { useLabel } from '@/composables/useLabel';
 import { createUser, deactivateUser, resetPassword } from '@/api/admin-users';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import { ROLE_OPTIONS } from '@shared/ssot/domain';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';

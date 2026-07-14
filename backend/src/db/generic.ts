@@ -1,7 +1,15 @@
-import type express from 'express';
-import type { TableKey, SqlParam, ColumnDef } from '../../../shared/src/types/types';
-import { getSoftDeletePolicy, getPkFields } from '../../../shared/src/utils/utils';
-import { getFilterableColumns, getSortableColumns, getReferencedRelations, getDerivableFields } from '../helpers';
+import type { ColumnDef } from '../../../shared/src/types/types';
+import type { TableKey } from '../../../shared/src/ssot/derived';
+import type { ListRequestSpec } from '../../../shared/src/ssot/list-protocol';
+import type { SqlParam } from './core';
+import {
+  getSoftDeletePolicy,
+  getPkFields,
+  getFilterableColumns,
+  getSortableColumns,
+  getReferencedRelations,
+  getDerivableFields,
+} from '../../../shared/src/utils/utils';
 import { buildScopeConditions, type ScopeConditionsInput } from './scope';
 
 export function softDeleteClause(table: TableKey): string {
@@ -31,8 +39,8 @@ export function formatTableColumnsForQuery(fieldsNames: string[], from = 1): str
 export type ListScope = ScopeConditionsInput & { sqlTable: string };
 
 function buildListQueryInternal(
-  tableNameOrCTE: string,
-  query: express.Request["query"],
+  baseQuery: string,
+  spec: ListRequestSpec,
   filterConfig: Record<string, ColumnDef>,
   defaultSort: string | string[],
   sortableColumns: string[],
@@ -45,30 +53,15 @@ function buildListQueryInternal(
   const values: SqlParam[] = [...scopeValues];
   let paramIndex = scopeValues.length + 1;
 
-  for (const [key, rawValue] of Object.entries(query)) {
-    if (!key.startsWith("filter_") || rawValue == null || rawValue === "") {
-      continue;
-    }
-
-    const fieldName = key.slice(7);
+  for (const { field: fieldName, values: filterValues } of spec.filters) {
     const config = filterConfig[fieldName];
 
+    // Fields the descriptor doesn't declare filterable are silently ignored.
     if (!config) {
       continue;
     }
 
-    const vals = Array.isArray(rawValue) ? rawValue : [rawValue];
-
-    for (const v of vals) {
-      const strVal = String(v);
-
-      if (!strVal) {
-        continue;
-      }
-
-      const negated = strVal.startsWith("!");
-      const actualVal = negated ? strVal.slice(1) : strVal;
-
+    for (const { negated, value: actualVal } of filterValues) {
       // A foreign-key column holds an opaque id, never free text — match it exactly.
       // Substring (ILIKE) matching an id would let `1` also match `10`, `21`, …
       if (config.foreignKey || config.options) {
@@ -161,19 +154,11 @@ function buildListQueryInternal(
     ? defaultSort
     : [defaultSort];
 
-  const requestedSort = Array.isArray(query.sort)
-    ? query.sort[0]
-    : query.sort;
-
-  const requestedDir = Array.isArray(query.dir)
-    ? query.dir[0]
-    : query.dir;
-
-  const sortDir = requestedDir === "desc" ? "DESC" : "ASC";
+  const sortDir = spec.dir === "desc" ? "DESC" : "ASC";
 
   const sortCol =
-    typeof requestedSort === "string" && sortableColumns.includes(requestedSort)
-      ? requestedSort
+    spec.sort !== undefined && sortableColumns.includes(spec.sort)
+      ? spec.sort
       : undefined;
 
   const orderColumns = sortCol
@@ -185,28 +170,10 @@ function buildListQueryInternal(
   const orderClause =
     orderColumns.length > 0 ? `ORDER BY ${orderColumns.join(", ")}` : "";
 
-  const requestedPage = Array.isArray(query.page)
-    ? query.page[0]
-    : query.page;
-
-  const page = Math.max(
-    1,
-    Math.min(parseInt(String(requestedPage || "1"), 10) || 1, 1000)
-  );
-
-  const requestedLimit = Array.isArray(query.limit)
-    ? query.limit[0]
-    : query.limit;
-
-  const limit = Math.max(
-    1,
-    Math.min(parseInt(String(requestedLimit || "20"), 10) || 20, 500)
-  );
+  const { page, limit } = spec;
   const offset = (page - 1) * limit;
 
-  const fromClause = tableNameOrCTE.includes(" ")
-    ? `FROM (${tableNameOrCTE}) AS base`
-    : `FROM ${tableNameOrCTE}`;
+  const fromClause = `FROM (${baseQuery}) AS base`;
 
   const dataQuery = `
     SELECT *
@@ -287,10 +254,12 @@ function getSelectStatement(tableName: TableKey): string {
   return `SELECT ${selectFields.join(", ")}`;
 }
 
-function getBaseSelectQuery(tableName: TableKey, sqlTableOverride?: string): string {
+// The single read projection (columns, derivable expressions, referenced-table JOINs,
+// soft-delete filter). Both the list and single-row paths select from this, so their
+// row shape can never diverge.
+function getBaseSelectQuery(tableName: TableKey, physicalTable: string): string {
   const referencedRelations = getReferencedRelations(tableName);
   const softDelete = softDeleteClause(tableName);
-  const physicalTable = sqlTableOverride ?? tableName;
 
   if (referencedRelations.length > 0) {
     const alias = sqlAlias(tableName);
@@ -310,15 +279,15 @@ function getBaseSelectQuery(tableName: TableKey, sqlTableOverride?: string): str
 
 export function buildListStatement(
   tableName: TableKey,
-  query: express.Request["query"],
+  spec: ListRequestSpec,
   allowed: ListScope,
 ): { dataQuery: string; dataValues: SqlParam[]; countQuery: string; countValues: SqlParam[]; page: number; limit: number } {
   const defaultSort = getPkFields(tableName);
   const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, 1);
 
   return buildListQueryInternal(
-    getBaseSelectQuery(tableName, allowed.sqlTable !== tableName ? allowed.sqlTable : undefined),
-    query,
+    getBaseSelectQuery(tableName, allowed.sqlTable),
+    spec,
     getFilterableColumns(tableName),
     defaultSort,
     getSortableColumns(tableName),
@@ -334,8 +303,6 @@ export function buildRowStatement(
 ): { text: string; values: SqlParam[] } {
   const pkFields = getPkFields(tableName);
   const whereArguments = columnNamesEqualsNumber(pkFields, 1, " AND ");
-  const softDelete = softDeleteClause(tableName);
-  const physicalTable = allowed.sqlTable !== tableName ? allowed.sqlTable : tableName;
 
   const { conditions: extraConditions, values: scopeValues } = buildScopeConditions(
     allowed,
@@ -344,10 +311,13 @@ export function buildRowStatement(
   const values: SqlParam[] = [...pkValues, ...scopeValues];
   const extraClause = extraConditions.length > 0 ? ` AND ${extraConditions.join(" AND ")}` : "";
 
+  // Same projection as the list path (soft-delete filter included in the base).
+  const baseQuery = getBaseSelectQuery(tableName, allowed.sqlTable);
+
   const text = `
     SELECT *
-    FROM ${physicalTable}
-    WHERE ${whereArguments}${softDelete ? ` AND ${softDelete}` : ""}${extraClause}
+    FROM (${baseQuery}) AS base
+    WHERE ${whereArguments}${extraClause}
   `;
 
   return { text, values };

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { promisify } from 'util';
-import type { Role } from '../../shared/src/types/types';
+import type { Role } from '../../shared/src/types/roles';
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -16,6 +16,14 @@ export type AuthUser = {
 
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
+
+export const MIN_PASSWORD_LENGTH = 8;
+
+// A submitted password is only accepted once it clears the minimum length — shared by the
+// change-password and admin create/reset paths so the rule lives in one place.
+export function readPassword(value: string | undefined): string | null {
+  return typeof value === 'string' && value.length >= MIN_PASSWORD_LENGTH ? value : null;
+}
 
 export async function hashPassword(password: string, salt = crypto.randomBytes(16).toString('hex')) {
   const key = (await scrypt(password, salt, 64)) as Buffer;

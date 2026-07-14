@@ -1,12 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
-import { resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
+import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
 import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
-import { getBlockServiceForSlot } from '../db/scheduling';
-import { resourceExistsInBusiness, clientExistsInBusiness } from '../db/appointments';
+import { getBlockServiceForSlot, resourceExistsInBusiness } from '../db/scheduling';
+import { findUser } from '../db/users';
 import { withTransaction } from '../db/core';
-import { recheckConflictsInTx } from './scheduling';
-import { DATE_RE, HHMM_RE, crossesMidnight, buildStartsAt } from '../time';
+import { recheckConflictsInTx, loadConflictInputs, toAggregatorOwner } from './scheduling';
+import { DATE_RE, HHMM_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
 
 // Booking input as the endpoints expect it; every field is still format-checked at runtime.
 export type BookingBody = {
@@ -57,6 +57,34 @@ export async function saveWithConflictRecheck<T>(
   });
 }
 
+// One format validator for every booking-shaped input. Id checks run only when the caller
+// supplies the value (reschedule validates only what the body may override); the resource
+// check runs only when a resource was named at all.
+export function validateBookingFields(parts: {
+  professionalUserId?: number;
+  serviceId?: number;
+  resourceId?: number;
+  date: string;
+  start: string;
+  durationMinutes: number;
+}): Record<string, string> {
+  const fields: Record<string, string> = {};
+  if (parts.professionalUserId !== undefined && (!Number.isInteger(parts.professionalUserId) || parts.professionalUserId <= 0))
+    fields.professional_user_id = 'required';
+  if (parts.serviceId !== undefined && (!Number.isInteger(parts.serviceId) || parts.serviceId <= 0))
+    fields.service_id = 'required';
+  if (parts.resourceId !== undefined && (!Number.isInteger(parts.resourceId) || parts.resourceId <= 0))
+    fields.resource_id = 'must be a valid id';
+  if (!DATE_RE.test(parts.date)) fields.date = 'must be YYYY-MM-DD';
+  if (!HHMM_RE.test(parts.start)) fields.start = 'must be HH:MM';
+  if (!Number.isInteger(parts.durationMinutes) || parts.durationMinutes <= 0)
+    fields.duration_minutes = 'must be a positive integer';
+  if (!fields.start && !fields.duration_minutes && crossesMidnight(parts.start, parts.durationMinutes)) {
+    fields.duration_minutes = 'start + duration must not cross midnight';
+  }
+  return fields;
+}
+
 // Validates and resolves a booking request into the concrete values a write needs: format-checks
 // the body, business-scopes the service/resource/client (404 to hide cross-tenant existence), and
 // resolves the effective price/duration. No write, no conflict check — the caller owns those.
@@ -65,6 +93,7 @@ export async function resolveAndLoadService(
   businessId: number,
   body: BookingBody,
   callerIsStaff: boolean,
+  invalidMessage = 'Invalid appointment input',
 ): Promise<
   | {
       ok: true;
@@ -98,20 +127,9 @@ export async function resolveAndLoadService(
   const name = typeof body.name === 'string' ? body.name : null;
   const description = typeof body.description === 'string' ? body.description : null;
 
-  const fields: Record<string, string> = {};
-  if (!Number.isInteger(professionalUserId) || professionalUserId <= 0)
-    fields.professional_user_id = 'required';
-  if (!Number.isInteger(serviceId) || serviceId <= 0) fields.service_id = 'required';
-  if (!DATE_RE.test(date)) fields.date = 'must be YYYY-MM-DD';
-  if (!HHMM_RE.test(start)) fields.start = 'must be HH:MM';
-  if (!Number.isInteger(durationMinutes) || durationMinutes <= 0)
-    fields.duration_minutes = 'must be a positive integer';
-  if (!fields.start && !fields.duration_minutes && crossesMidnight(start, durationMinutes)) {
-    fields.duration_minutes = 'start + duration must not cross midnight';
-  }
-
+  const fields = validateBookingFields({ professionalUserId, serviceId, resourceId, date, start, durationMinutes });
   if (Object.keys(fields).length > 0) {
-    return { ok: false, status: 422, code: 'invalid_request', message: 'Invalid appointment input', fields };
+    return { ok: false, status: 422, code: 'invalid_request', message: invalidMessage, fields };
   }
 
   const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);
@@ -129,10 +147,10 @@ export async function resolveAndLoadService(
     }
   }
 
-  // Client (when supplied) must belong to the session's business — a body-supplied
-  // client_user_id from another tenant is rejected before it reaches the INSERT.
+  // Client (when supplied) must be an active Client of the session's business — a cross-tenant
+  // or deactivated client is rejected identically (404, existence hidden) before the INSERT.
   if (clientUserId != null && Number.isInteger(clientUserId)) {
-    if (!(await clientExistsInBusiness(pool, clientUserId, businessId))) {
+    if (!(await findUser(pool, { id: clientUserId, businessId, role: 'Client', activeOnly: true }))) {
       return { ok: false, status: 404, code: 'not_found', message: 'Client not found in this business' };
     }
   }
@@ -173,4 +191,45 @@ export async function resolveAndLoadService(
     effective_duration_minutes,
     serviceDefaultPriceArs,
   };
+}
+
+// Read-only conflict verdict for a proposed slot — same loader + aggregator as the in-tx
+// recheck, so preview and save always agree. Never writes and takes no lock; a mere read
+// must not serialize against real bookings.
+export async function runConflictDryRun(
+  pool: Pool,
+  businessId: number,
+  params: {
+    professionalUserId: number;
+    resourceId?: number;
+    serviceId: number;
+    date: string;
+    start: string;
+    durationMinutes: number;
+    callerIsStaff: boolean;
+    excludeAppointmentId?: number;
+  },
+): Promise<
+  | { ok: true; verdict: ConflictVerdict }
+  | { ok: false; status: number; code: string; message: string }
+> {
+  const inputs = await loadConflictInputs(pool, businessId, {
+    professionalUserId: params.professionalUserId,
+    resourceId: params.resourceId,
+    date: params.date,
+    serviceId: params.serviceId,
+  });
+  if ('error' in inputs) {
+    return { ok: false, ...inputs.error };
+  }
+
+  const end = addMinutes(params.start, params.durationMinutes);
+  const verdict = evaluateConflicts({
+    proposed: { start: params.start, end, date: params.date },
+    callerIsStaff: params.callerIsStaff,
+    excludeAppointmentId: params.excludeAppointmentId,
+    professional: toAggregatorOwner(inputs.professional),
+    resource: inputs.resource ? toAggregatorOwner(inputs.resource) : undefined,
+  });
+  return { ok: true, verdict };
 }

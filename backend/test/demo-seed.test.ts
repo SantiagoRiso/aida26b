@@ -4,7 +4,7 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { seedDemo } from '../src/seed-demo';
 import { resetTestDb, makeTestPool } from './helpers';
-import type { SqlParam } from '../../shared/src/types/types';
+import type { SqlParam } from '../src/db/core';
 
 let pool: Pool;
 

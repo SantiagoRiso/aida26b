@@ -342,6 +342,52 @@ describe('cross-business tenant isolation on /schedule (CR-03)', () => {
   });
 });
 
+describe('POST /api/appointments/schedule — deactivated client', () => {
+  let inactiveClientId: number;
+  let historyApptId: number;
+
+  beforeAll(async () => {
+    inactiveClientId = await seedUser('appt_client_inactive', 'Client');
+    // Turno booked while the client was still active — their history.
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [inactiveClientId, proId, svcId, FAR_FUTURE_TS],
+    );
+    historyApptId = Number(r.rows[0].id);
+    // Deactivate as the admin path does (soft-delete; users are never deleted).
+    await pool.query(
+      `UPDATE auth.users SET is_active = false, deleted_at = now() WHERE id = $1`,
+      [inactiveClientId],
+    );
+  });
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [historyApptId]);
+  });
+
+  test('booking a deactivated client fails exactly like an unknown client (404, existence hidden)', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '10:30',
+      client_user_id: inactiveClientId,
+    }));
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('not_found');
+    expect(res.body.error.message).toBe('Client not found in this business');
+  });
+
+  test('the deactivated client is still readable in appointment history', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('GET', `/api/appointments?client_user_id=${inactiveClientId}`);
+    expect(res.status).toBe(200);
+    const rows = res.body?.data as AppointmentRow[];
+    expect(rows.some((r) => Number(r.id) === historyApptId)).toBe(true);
+  });
+});
+
 describe('POST /api/appointments/:id/approve', () => {
   test('approve on now-clashing slot returns 200 verdict without writing', async () => {
     const requested = await pool.query<{ id: string }>(

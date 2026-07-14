@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { guardRoute, guardMiddleware } from '../src/helpers';
 import { DbError } from '../src/db/errors';
+import { httpError } from '../src/errors';
 
 type Envelope = { success: boolean; error: { code: string; message: string } };
 
@@ -96,6 +97,23 @@ describe('async handler crash net', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.body?.error.code).toBe('conflict');
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('a structured {status} error thrown from middleware maps to its declared status and never calls next', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = fakeRes();
+    const next = vi.fn();
+    const middleware = guardMiddleware(async () => {
+      throw httpError(403, 'forbidden', 'Not allowed');
+    });
+
+    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
+    await Promise.resolve(middleware(req, res as unknown as Response, next));
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body?.error.code).toBe('forbidden');
+    expect(next).not.toHaveBeenCalled();
     expect(consoleError).not.toHaveBeenCalled();
   });
 

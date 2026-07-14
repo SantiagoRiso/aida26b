@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
-import type { TableRecordMap } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ProfessionalDetail from '@/components/staff/ProfessionalDetail.vue';

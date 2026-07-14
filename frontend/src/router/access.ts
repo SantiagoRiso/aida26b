@@ -1,4 +1,4 @@
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 
 // The single place role-access logic lives.
 // No view or component checks user.role directly — import from here instead.

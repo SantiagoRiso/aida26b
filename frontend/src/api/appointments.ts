@@ -1,37 +1,19 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
+import type { AppointmentRow, Wire } from '@shared/ssot/query-types';
+import { appointmentPaths } from '@shared/ssot/api-paths';
 
-export interface Appointment {
-  id: number;
-  client_user_id: number | null;
-  professional_user_id: number;
-  resource_id: number | null;
-  service_id: number;
-  starts_at: string;
-  duration_minutes: number;
-  ends_at: string;
-  state: string;
-  name: string | null;
-  description: string | null;
-  price: string;
-  override_conflict: boolean;
-  override_actor_id: number | null;
-  staff_note: string | null;
-  // Staff acknowledged this turno may overlap time-off — keep it and stop flagging it. Reversible.
-  conflict_ignored: boolean;
-  // Set on list reads: this open, future turno overlaps active time-off (a closure or its
-  // professional's exception) and isn't ignored. Computed server-side; clears when the time-off goes.
-  in_conflict?: boolean;
-}
+// client_user_id is NOT NULL on the appointments table — the wire always carries it.
+export type Appointment = Wire<AppointmentRow>;
 
 export interface AppointmentListFilters {
   date_from?: string;
   date_to?: string;
-  professional_user_id?: number;
-  resource_id?: number;
+  professional_user_id?: number | string;
+  resource_id?: number | string;
   // Staff-only: narrow to one client's turnos. Ignored for the Client role (already self-scoped).
-  client_user_id?: number;
+  client_user_id?: number | string;
   state?: string;
   // Only turnos overlapping active time-off (open + future). Role-scoped server-side.
   conflicting?: boolean;
@@ -64,29 +46,29 @@ export async function listAppointments(
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
-  return apiFetch<Appointment[]>(`/appointments${qs ? `?${qs}` : ''}`);
+  return apiFetch<Appointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`);
 }
 
 // Distinct client ids the caller has any appointment with, in their role scope. Backs the
 // "clients with a prior relationship" filter without shipping the whole appointment history.
 export async function listRelatedClientIds(): Promise<ApiResult<number[]>> {
-  const result = await apiFetch<{ client_user_ids: number[] }>('/appointments/related-clients');
+  const result = await apiFetch<{ client_user_ids: number[] }>(appointmentPaths.relatedClients());
   if (!result.ok) return result;
   return { ok: true, data: result.data.client_user_ids, meta: result.meta };
 }
 
-export async function getAppointment(id: number): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(`/appointments/${id}`);
+export async function getAppointment(id: number | string): Promise<ApiResult<Appointment>> {
+  return apiFetch<Appointment>(appointmentPaths.detail(id));
 }
 
 export interface ScheduleBody {
   // Optional on the wire — the server first checks for scheduling conflicts (warn-first) and
   // only requires a client once it's actually about to write the row (appointments.client_user_id
   // is NOT NULL).
-  client_user_id?: number;
-  professional_user_id: number;
-  service_id: number;
-  resource_id?: number;
+  client_user_id?: number | string;
+  professional_user_id: number | string;
+  service_id: number | string;
+  resource_id?: number | string;
   date: string;
   start: string;
   duration_minutes: number;
@@ -98,7 +80,7 @@ export interface ScheduleBody {
 export async function scheduleAppointment(
   body: ScheduleBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>('/appointments/schedule', {
+  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.schedule(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -107,10 +89,10 @@ export async function scheduleAppointment(
 }
 
 export async function approveAppointment(
-  id: number,
+  id: number | string,
   override?: boolean,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(`/appointments/${id}/approve`, {
+  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.approve(id), {
     method: 'POST',
     body: JSON.stringify({ override: override ?? false }),
   });
@@ -121,18 +103,18 @@ export async function approveAppointment(
 export interface RescheduleBody {
   date?: string;
   start?: string;
-  professional_user_id?: number;
-  service_id?: number;
-  resource_id?: number;
+  professional_user_id?: number | string;
+  service_id?: number | string;
+  resource_id?: number | string;
   duration_minutes?: number;
   override?: boolean;
 }
 
 export async function rescheduleAppointment(
-  id: number,
+  id: number | string,
   body: RescheduleBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(`/appointments/${id}/reschedule`, {
+  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.reschedule(id), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -143,8 +125,8 @@ export async function rescheduleAppointment(
 // Client-only request endpoint (no resource/override). Duration is the service default —
 // clients cannot set a custom duration; the server captures the authoritative price.
 export interface RequestBody {
-  professional_user_id: number;
-  service_id: number;
+  professional_user_id: number | string;
+  service_id: number | string;
   date: string;
   start: string;
   duration_minutes: number;
@@ -155,7 +137,7 @@ export interface RequestBody {
 export async function requestAppointment(
   body: RequestBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>('/appointments/request', {
+  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.request(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -164,10 +146,10 @@ export async function requestAppointment(
 }
 
 export async function transitionAppointment(
-  id: number,
+  id: number | string,
   to: string,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(`/appointments/${id}/transition`, {
+  return apiFetch<Appointment>(appointmentPaths.transition(id), {
     method: 'POST',
     body: JSON.stringify({ to }),
   });
@@ -175,10 +157,10 @@ export async function transitionAppointment(
 
 // Acknowledge (ignored=true) or re-flag (false) a turno that overlaps time-off. Staff-only.
 export async function ignoreAppointmentConflict(
-  id: number,
+  id: number | string,
   ignored = true,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(`/appointments/${id}/ignore-conflict`, {
+  return apiFetch<Appointment>(appointmentPaths.ignoreConflict(id), {
     method: 'POST',
     body: JSON.stringify({ ignored }),
   });
@@ -191,10 +173,10 @@ export interface PatchBody {
 }
 
 export async function patchAppointment(
-  id: number,
+  id: number | string,
   body: PatchBody,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(`/appointments/${id}`, {
+  return apiFetch<Appointment>(appointmentPaths.detail(id), {
     method: 'PATCH',
     body: JSON.stringify(body),
   });

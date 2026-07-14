@@ -1,20 +1,21 @@
 import { Pool, PoolClient } from 'pg';
 import { structure } from '../../../shared/src/ssot/structure';
-import { isProtected, getCrudPolicy as getSsotCrudPolicy, tableOf } from '../../../shared/src/utils/utils';
-import type {
-  TableKey,
-  CrudPolicy,
-  RoleRequired,
-  Role,
-  SqlParam,
-} from '../../../shared/src/types/types';
+import {
+  isProtected,
+  getCrudPolicy,
+  tableOf,
+  getProfessionalScheduleOwnerFk,
+  getResourceScheduleOwnerFk,
+  getRoleCheckedColumns,
+} from '../../../shared/src/utils/utils';
+import type { TableKey } from '../../../shared/src/ssot/derived';
+import type { SqlParam } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import { hasCalendarGrant } from '../db/grants';
 import { getProfessionalOwner, getResourceOwner } from '../db/scheduling';
 import { findRoleUserBusiness } from '../db/users';
 import { buildBusinessScope, buildOwnerScope, buildGrantScope, roleDiscriminatorFragment } from '../db/scope';
-import { getRoleCheckedColumns } from '../helpers';
 
 // Ordinary configuration entities declare a `crud` policy in the SSOT; protected/workflow
 // entities expose none and are unreachable through these routes.
@@ -22,30 +23,35 @@ import { getRoleCheckedColumns } from '../helpers';
 export type CrudOperation = 'create' | 'read' | 'update' | 'delete';
 
 export function getSqlTable(table: TableKey): string {
-  const meta = tableOf(table);
-  return (meta as { sqlTable?: string }).sqlTable ?? table;
+  return tableOf(table).sqlTable ?? table;
 }
 
 // Reads may target a secret-free view instead of the write table (see SSOT sqlReadTable).
 export function getSqlReadTable(table: TableKey): string {
-  const meta = tableOf(table);
-  return (meta as { sqlReadTable?: string }).sqlReadTable ?? getSqlTable(table);
+  return tableOf(table).sqlReadTable ?? getSqlTable(table);
 }
 
 export function isKnownTable(name: string): name is TableKey {
   return Object.prototype.hasOwnProperty.call(structure.tables, name);
 }
 
-export function getCrudPolicy(table: TableKey): CrudPolicy | null {
-  const policy = getSsotCrudPolicy(table) ?? null;
-  if (!policy) return null;
+export type CrudAccess =
+  | { allowed: true }
+  | { allowed: false; reason: 'hidden' | 'op_disabled' };
+
+// Per-op reachability through generic CRUD — the single encoding of the protected-table rule.
+// A protected table is unreachable unless it carves out an exception for THIS op (e.g. users:
+// read-only, for the admin Usuarios screen); unreachability on a protected/undeclared table is
+// 'hidden' (present as not-found, never reveal which protected tables exist), while a declared
+// entity that simply doesn't expose the op is 'op_disabled'.
+export function resolveCrudAccess(table: TableKey, op: CrudOperation): CrudAccess {
+  const policy = getCrudPolicy(table);
   if (isProtected(table)) {
-    // A protected table is unreachable through generic CRUD unless it carves out a narrow
-    // op exception (e.g. users: read-only, for the admin Usuarios screen).
-    const hasException = Object.values(policy).some(Boolean);
-    return hasException ? policy : null;
+    return policy?.[op] ? { allowed: true } : { allowed: false, reason: 'hidden' };
   }
-  return policy;
+  if (!policy) return { allowed: false, reason: 'hidden' };
+  if (!policy[op]) return { allowed: false, reason: 'op_disabled' };
+  return { allowed: true };
 }
 
 export type CrudCheck =
@@ -72,21 +78,11 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
     return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
   }
 
-  const policy = getSsotCrudPolicy(name);
-
-  // Protected entities are unreachable through generic CRUD by default. A table may carve out
-  // a narrow exception for a single operation (e.g. users: read, for the admin Usuarios screen)
-  // by declaring an explicit crud policy for just that op — every other op stays 404'd here,
-  // same as a fully protected table.
-  if (isProtected(name) && !(policy && policy[op])) {
-    return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
-  }
-
-  if (!policy) {
-    return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
-  }
-
-  if (!policy[op]) {
+  const access = resolveCrudAccess(name, op);
+  if (!access.allowed) {
+    if (access.reason === 'hidden') {
+      return { ok: false, status: 404, code: 'not_found', message: `Unknown entity '${name}'` };
+    }
     return {
       ok: false,
       status: 405,
@@ -96,7 +92,7 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
   }
 
   const meta = tableOf(name as TableKey);
-  const required: Role[] = ((meta.roleRequired as RoleRequired | undefined)?.[op] ?? []) as Role[];
+  const required = meta.roleRequired?.[op] ?? [];
   if (required.length > 0 && !required.includes(user.role)) {
     return { ok: false, status: 403, code: 'forbidden', message: 'Insufficient role' };
   }
@@ -128,10 +124,9 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
   };
 }
 
-export type OwnScheduleTarget = {
-  professional_user_id?: number | string | null;
-  resource_id?: number | string | null;
-};
+// Keyed by the schedule-owner FK columns the schedulable descriptors declare
+// (professional/resource) — the descriptors, not this type, own the column names.
+export type OwnScheduleTarget = Partial<Record<string, number | string | null>>;
 
 export type OwnScheduleResult =
   | { ok: true }
@@ -159,8 +154,10 @@ export async function assertOwnScheduleAllowed(
     return { ok: false, status: 400, code: 'no_business', message: 'A business context is required to edit schedules' };
   }
 
-  const professionalUserId = target.professional_user_id != null ? Number(target.professional_user_id) : null;
-  const resourceId = target.resource_id != null ? Number(target.resource_id) : null;
+  const professionalFk = getProfessionalScheduleOwnerFk();
+  const resourceFk = getResourceScheduleOwnerFk();
+  const professionalUserId = target[professionalFk] != null ? Number(target[professionalFk]) : null;
+  const resourceId = target[resourceFk] != null ? Number(target[resourceFk]) : null;
 
   if (professionalUserId != null) {
     const row = await getProfessionalOwner(db, professionalUserId);
@@ -175,7 +172,7 @@ export async function assertOwnScheduleAllowed(
       return { ok: false, status: 404, code: 'not_found', message: 'Resource not found in this business' };
     }
   } else {
-    return { ok: false, status: 422, code: 'invalid_request', message: 'A professional_user_id or resource_id is required' };
+    return { ok: false, status: 422, code: 'invalid_request', message: `A ${professionalFk} or ${resourceFk} is required` };
   }
 
   if (user.role === 'Admin') return { ok: true };

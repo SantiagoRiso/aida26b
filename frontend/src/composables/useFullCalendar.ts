@@ -36,8 +36,9 @@ const PROF_PALETTE = [
   { bg: '#84CC16', border: '#65A30D' },
 ] as const;
 
-export function colorForProfessional(professionalId: number): { bg: string; border: string } {
-  return PROF_PALETTE[professionalId % PROF_PALETTE.length];
+export function colorForProfessional(professionalId: number | string): { bg: string; border: string } {
+  // Wire ids are numeric strings; hash the numeric value so each professional keeps a stable colour.
+  return PROF_PALETTE[Number(professionalId) % PROF_PALETTE.length];
 }
 
 // A plain professional manages only their own calendar, so the professional filter

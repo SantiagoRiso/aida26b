@@ -8,6 +8,10 @@ import {
   TransitionChild,
 } from '@headlessui/vue';
 import { XMarkIcon } from '@heroicons/vue/24/outline';
+import { i18n } from '@/i18n';
+
+// Uses the global i18n instance (not useI18n()) — this shared panel is mounted by many
+// consumers, not all of which register the i18n plugin in their tests.
 
 const props = withDefaults(
   defineProps<{
@@ -84,7 +88,7 @@ const modalMaxWidth = computed(
                 type="button"
                 class="rounded-md p-1 text-neutral hover:text-current focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 @click="emit('close')"
-                aria-label="Cerrar"
+                :aria-label="i18n.global.t('actions.close')"
               >
                 <XMarkIcon class="h-5 w-5" aria-hidden="true" />
               </button>
@@ -118,7 +122,7 @@ const modalMaxWidth = computed(
                 type="button"
                 class="rounded-md p-1 text-neutral hover:text-current focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 @click="emit('close')"
-                aria-label="Cerrar"
+                :aria-label="i18n.global.t('actions.close')"
               >
                 <XMarkIcon class="h-5 w-5" aria-hidden="true" />
               </button>

@@ -25,6 +25,11 @@ function makeRouter() {
 }
 
 describe('StatusBadge', () => {
+  // stateLabel() resolves through useLabel/useUiStore (Pinia), unlike the old plain t() lookup.
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
   const states = [
     { state: 'requested', labelEs: 'Solicitado' },
     { state: 'scheduled', labelEs: 'Programado' },

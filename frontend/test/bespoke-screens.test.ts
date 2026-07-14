@@ -106,7 +106,7 @@ describe('LanguageToggle', () => {
 });
 
 import { roleAllowedFor } from '@/router/access';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 
 describe('Ledger roleAllowedFor create gate', () => {
   const createRoles: Role[] = ['Admin', 'Receptionist'];

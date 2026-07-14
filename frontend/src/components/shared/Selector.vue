@@ -9,6 +9,10 @@ import {
 } from '@headlessui/vue';
 import { ChevronUpDownIcon, CheckIcon } from '@heroicons/vue/20/solid';
 import { ref } from 'vue';
+import { i18n } from '@/i18n';
+
+// Uses the global i18n instance (not useI18n()) — this component is mounted standalone in
+// tests without the i18n plugin installed, and the global composer works either way.
 
 export interface SelectOption {
   value: string;
@@ -132,7 +136,7 @@ watch(
         @change="query = ($event.target as HTMLInputElement).value"
         @blur="query = ''"
       />
-      <ComboboxButton class="absolute inset-y-0 right-0 flex items-center px-2" aria-label="Abrir opciones">
+      <ComboboxButton class="absolute inset-y-0 right-0 flex items-center px-2" :aria-label="i18n.global.t('selector.openOptions')">
         <ChevronUpDownIcon class="h-5 w-5 text-neutral" aria-hidden="true" />
       </ComboboxButton>
     </div>
@@ -141,7 +145,7 @@ watch(
       class="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-lg focus:outline-none"
     >
       <div v-if="filtered.length === 0" class="px-3 py-2 text-neutral">
-        <slot name="empty">Sin resultados</slot>
+        <slot name="empty">{{ i18n.global.t('selector.noResults') }}</slot>
       </div>
       <ComboboxOption
         v-for="option in filtered"

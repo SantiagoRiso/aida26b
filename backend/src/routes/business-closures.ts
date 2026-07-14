@@ -1,10 +1,11 @@
 import express from 'express';
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import type { AuthUser } from '../auth';
-import type { ColumnValue } from '../../../shared/src/types/types';
+import { type AuthedRequest } from '../session';
+import type { AuditWriter } from '../audit';
+import { requireBusinessContext, belongsToBusiness } from './business-context';
 import {
   insertBusinessClosure,
   updateBusinessClosure,
@@ -12,45 +13,21 @@ import {
   findBusinessClosure,
   deleteBusinessClosure,
 } from '../db/scheduling';
-
-type AuthedRequest = Request & { user?: AuthUser };
-
-// Audit function signature — passed in to avoid a circular import on server.ts.
-type AuditFn = (
-  req: Request,
-  eventType: string,
-  outcome: string,
-  details?: Record<string, ColumnValue>
-) => Promise<void>;
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { parseTimeOffRange } from '../services/scheduling';
+import { CLOSURE_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
 type ClosureInput = { exception_date: string; start_time: string | null; end_time: string | null; reason: string | null };
 type ClosureParse = { ok: true; data: ClosureInput } | { ok: false; status: number; code: string; message: string };
 
-// Shared create/update validation: a valid date, a time range that's both-or-neither and ordered,
-// and an optional reason. Same rules the DB CHECK enforces, surfaced as friendly 400/422s.
+// Shared create/update validation: the common time-off range rules plus an optional reason.
 function parseClosureBody(body: Record<string, unknown>): ClosureParse {
-  const date = body.exception_date;
-  if (typeof date !== 'string' || !DATE_RE.test(date)) {
-    return { ok: false, status: 400, code: 'invalid_request', message: 'A valid exception_date (YYYY-MM-DD) is required' };
-  }
-  const start = body.start_time == null || body.start_time === '' ? null : String(body.start_time);
-  const end = body.end_time == null || body.end_time === '' ? null : String(body.end_time);
-  if ((start == null) !== (end == null)) {
-    return { ok: false, status: 422, code: 'invalid_request', message: 'A time range needs both a start and an end' };
-  }
-  if (start != null && end != null) {
-    if (!TIME_RE.test(start) || !TIME_RE.test(end)) {
-      return { ok: false, status: 422, code: 'invalid_request', message: 'Times must be HH:MM' };
-    }
-    if (end <= start) {
-      return { ok: false, status: 422, code: 'invalid_request', message: 'The end time must be after the start time' };
-    }
-  }
+  const parsed = parseTimeOffRange(
+    { date: body.exception_date, start: body.start_time, end: body.end_time },
+    { status: 400, message: 'A valid exception_date (YYYY-MM-DD) is required' },
+  );
+  if (!parsed.ok) return parsed;
   const reason = body.reason == null || body.reason === '' ? null : String(body.reason);
-  return { ok: true, data: { exception_date: date, start_time: start, end_time: end, reason } };
+  return { ok: true, data: { exception_date: parsed.date, start_time: parsed.start, end_time: parsed.end, reason } };
 }
 
 // A business-wide closure is a schedule_exceptions row owned by the whole business — both per-owner
@@ -61,9 +38,9 @@ function parseClosureBody(body: Record<string, unknown>): ClosureParse {
 export function mountBusinessClosureRoutes(
   app: express.Application,
   pool: Pool,
-  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditFn }
+  guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter }
 ) {
-  app.post('/api/business-closures', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.post(CLOSURE_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role !== 'Admin') {
@@ -71,15 +48,13 @@ export function mountBusinessClosureRoutes(
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
     }
     // Closures are tenant-bound; a super-admin (null business) has no single business to close.
-    if (user.business_id == null) {
-      await guards.audit(req, 'closure_denied', 'denied', { reason: 'no_business' });
-      return sendError(res, 400, 'no_business', 'A business context is required to manage closures');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const parsed = parseClosureBody(req.body ?? {});
     if (!parsed.ok) return sendError(res, parsed.status, parsed.code, parsed.message);
 
-    const row = await insertBusinessClosure(pool, user.business_id, parsed.data);
+    const row = await insertBusinessClosure(pool, businessId, parsed.data);
     if (!row) return sendError(res, 500, 'internal_error', 'Internal server error');
 
     await guards.audit(req, 'closure_created', 'success', {
@@ -91,26 +66,23 @@ export function mountBusinessClosureRoutes(
     return sendData(res, row, 201);
   }));
 
-  app.put('/api/business-closures/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.put(CLOSURE_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
     }
-    if (user.business_id == null) {
-      await guards.audit(req, 'closure_denied', 'denied', { reason: 'no_business' });
-      return sendError(res, 400, 'no_business', 'A business context is required to manage closures');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return sendError(res, 400, 'invalid_request', 'Valid closure id is required');
     }
 
-    // Cross-business (or non-closure) rows are invisible — 404, never 403, to avoid leaking existence.
     const existing = await findBusinessClosure(pool, id);
-    if (!existing || existing.business_id == null || Number(existing.business_id) !== user.business_id) {
+    if (!belongsToBusiness(existing, businessId)) {
       return sendError(res, 404, 'not_found', 'Closure not found');
     }
 
@@ -129,32 +101,29 @@ export function mountBusinessClosureRoutes(
     return sendData(res, row);
   }));
 
-  app.get('/api/business-closures', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.get(CLOSURE_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     // Staff-internal: which days the clinic is closed. Clients see it only through availability.
     if (user.role === 'Client') {
       return sendError(res, 403, 'forbidden', 'Staff access required');
     }
-    if (user.business_id == null) {
-      return sendError(res, 400, 'no_business', 'A business context is required');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
-    const rows = await listBusinessClosures(pool, user.business_id);
+    const rows = await listBusinessClosures(pool, businessId);
     return sendList(res, rows, { page: 1, limit: rows.length, total: rows.length });
   }));
 
-  app.delete('/api/business-closures/:id', guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
+  app.delete(CLOSURE_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const user = (req as AuthedRequest).user!;
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
     }
-    if (user.business_id == null) {
-      await guards.audit(req, 'closure_denied', 'denied', { reason: 'no_business' });
-      return sendError(res, 400, 'no_business', 'A business context is required to manage closures');
-    }
+    const businessId = requireBusinessContext(req, res);
+    if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -162,8 +131,7 @@ export function mountBusinessClosureRoutes(
     }
 
     const row = await findBusinessClosure(pool, id);
-    // Cross-business (or non-closure) rows are invisible — 404, never 403, to avoid leaking existence.
-    if (!row || row.business_id == null || Number(row.business_id) !== user.business_id) {
+    if (!belongsToBusiness(row, businessId)) {
       return sendError(res, 404, 'not_found', 'Closure not found');
     }
 

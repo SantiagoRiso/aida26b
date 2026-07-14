@@ -218,5 +218,5 @@ test('list responses carry pagination meta', async () => {
   const response = await fetch(`${API_BASE}/services`);
   const body = await response.json();
   expect(body.success).toBe(true);
-  expect(body.meta).toMatchObject({ page: 1, limit: 20, total: 1 });
+  expect(body.meta).toMatchObject({ page: 1, limit: 50, total: 1 });
 });

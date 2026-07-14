@@ -45,7 +45,8 @@ describe('dashboard current-appointment window', () => {
 });
 
 describe('dashboard current-appointment visibility', () => {
-  const forPro7 = { professional_user_id: 7 };
+  // professional_user_id arrives on the wire as a string (BIGINT); the auth user's id is a number.
+  const forPro7 = { professional_user_id: '7' };
 
   it('shows for the appointment’s own professional only', () => {
     expect(showsCurrentCard({ id: 7, role: 'Professional' }, forPro7)).toBe(true);

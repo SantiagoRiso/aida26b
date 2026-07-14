@@ -6,8 +6,9 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool, makeAppPool } from './helpers';
 import { mountAuditRoutes } from '../src/routes/audit';
+import { mountBusinessSettingsRoutes } from '../src/routes/business-settings';
 import type { AuthUser } from '../src/auth';
-import type { TableRecordMap } from '../../shared/src/types/types';
+import type { TableRecordMap } from '../../shared/src/ssot/derived';
 
 let pool: Pool;
 let appPool: Pool;
@@ -109,11 +110,13 @@ beforeAll(async () => {
   app.use(express.json());
   // The server runs on the app role so the settings endpoints hit aida26_user's real grants.
   appPool = makeAppPool();
-  mountAuditRoutes(app, appPool, {
+  const testGuards = {
     auth: injectUser,
-    passwordReady: (_req, _res, next) => next(),
+    passwordReady: ((_req, _res, next) => next()) as express.RequestHandler,
     audit: async () => {},
-  });
+  };
+  mountAuditRoutes(app, appPool, testGuards);
+  mountBusinessSettingsRoutes(app, appPool, testGuards);
 
   server = http.createServer(app);
   await new Promise<void>((resolve, reject) => {
@@ -332,11 +335,11 @@ describe('GET /api/audit — pagination', () => {
     expect(res.body.meta.limit).toBe(2);
   });
 
-  test('limit is capped at 200', async () => {
+  test('limit is capped at 500', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq('GET', '/api/audit?limit=9999');
     expect(res.status).toBe(200);
-    expect(res.body.meta.limit).toBe(200);
+    expect(res.body.meta.limit).toBe(500);
   });
 });
 

@@ -1,5 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router';
-import type { Role } from '@shared/types/types';
+import type { Role } from '@shared/types/roles';
 import { SCREEN_ROLES } from './access';
 
 const staffRoutes: RouteRecordRaw[] = [
