@@ -70,6 +70,9 @@ router.beforeEach((to) => {
   // The current view stays visible until this next navigation (soft redirect, not an abrupt yank).
   if (ui.sessionExpired && to.name !== 'login') {
     ui.sessionExpired = false;
+    // Drop the now-dead session's user, or the authenticated-at-/login rule above would bounce this
+    // redirect straight back to a role home and never reach /login.
+    auth.$reset();
     return { name: 'login' };
   }
 

@@ -1,0 +1,4 @@
+{
+  "//": "The e2e specs import named exports from the CJS shared/ modules. frontend/ is type:module, which would make Playwright load these files as ESM and break those named imports. Pin this directory to commonjs so Playwright transpiles the specs to CJS (its default mode).",
+  "type": "commonjs"
+}

@@ -46,7 +46,7 @@ const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
   { value: 'ledger_entries', tableKey: 'ledger_entries' },
   { value: 'auth.users', tableKey: 'users' },
   { value: 'businesses', tableKey: 'businesses' },
-  { value: 'permissions', tableKey: 'calendar_grants' },
+  { value: 'calendar_grants', tableKey: 'calendar_grants' },
 ];
 
 function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {

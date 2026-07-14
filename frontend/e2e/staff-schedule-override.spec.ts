@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS } from './helpers';
+import {
+  login, DEMO_ACCOUNTS, selectFromCombobox, fillDate, fillTime,
+  scheduleViaApi, findProfessionalId, findServiceId, findClientId, es,
+} from './helpers';
+import { DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/src/dev-fixtures';
 
 /**
  * The seed plants TWO appointments for the SAME professional (demo_pro) at the SAME
@@ -11,30 +15,43 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
   test('appointment form shows conflict override dialog on scheduling overlap', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
 
-    await page.getByRole('link', { name: 'Calendario' }).click();
+    // Seed a conflicting turno at a future, in-window slot (the create-mode date picker rejects
+    // past dates, so the collision must be in the future). 2026-08-25 is a Tuesday inside Marge's
+    // morning block and past the dense-seed window, so 10:00 is otherwise free.
+    const CONFLICT_DATE = shiftSeedDate('2026-08-25');
+    const profId = await findProfessionalId(page, 'Dra. Marge Bouvier');
+    const svcId = await findServiceId(page, DEMO_SERVICE_NAMES.sesion);
+    const clientId = await findClientId(page, 'Ruth Powers');
+    await scheduleViaApi(page, {
+      professional_user_id: profId, service_id: svcId, client_user_id: clientId,
+      date: CONFLICT_DATE, start: '10:00', duration_minutes: 50, name: 'Conflicto sembrado E2E',
+    });
 
-    await page.getByRole('button', { name: 'Nuevo turno' }).click();
+    await page.getByRole('link', { name: es.nav.calendar }).click();
 
-    const profSelect = page.locator('#appt-prof');
-    await expect(profSelect).toBeVisible();
+    await page.getByRole('button', { name: es.calendar.newAppointment }).click();
 
-    await expect(profSelect.locator('option', { hasText: 'Bouvier' })).toBeAttached({ timeout: 10_000 });
-    await profSelect.selectOption({ label: 'Dra. Marge Bouvier' });
+    // Professional is a searchable Selector combobox now (headlessui Combobox), not a native <select>.
+    const profInput = page.locator('input#appt-prof');
+    await expect(profInput).toBeVisible();
+    await selectFromCombobox(page, 'appt-prof', 'Dra. Marge Bouvier');
 
-    const serviceSelect = page.locator('#appt-service');
-    await expect(serviceSelect.locator('option').nth(1)).toBeAttached({ timeout: 10_000 });
-    await serviceSelect.selectOption({ index: 1 });
+    // Dra. Marge Bouvier offers a single service, so the service Selector collapses to a read-only
+    // label and auto-selects it — no interaction needed.
+    await expect(page.locator('#appt-service')).toContainText(DEMO_SERVICE_NAMES.sesion, { timeout: 10_000 });
 
-    // Fixed date/time deliberately colliding with the seeded appointments.
-    const dateInput = page.locator('#appt-date');
-    await dateInput.fill('2026-07-07');
+    // A fresh "Nuevo turno" opens in slot-picker mode; check "Sobreturno" to enter the manual
+    // hora/duración needed to book the exact off-slot instant that collides with the seed.
+    await page.getByRole('checkbox', { name: es.calendar.fineMode }).check();
 
-    const startInput = page.locator('#appt-start');
-    await startInput.fill('10:00');
+    // Book the same slot as the seeded turno above → the schedule check returns a conflict verdict.
+    await fillDate(page, CONFLICT_DATE);
+
+    await fillTime(page, 'appt-start', '10:00');
     const durInput = page.locator('#appt-duration');
     await durInput.fill('50');
 
-    await expect(page.locator('#appt-prof')).toBeVisible();
+    await expect(profInput).toBeVisible();
 
     // Wait for the schedule POST to complete so we don't poll for the dialog before the
     // backend round-trip finishes.
@@ -42,10 +59,10 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
       (r) => r.url().includes('/appointments/schedule') && r.request().method() === 'POST',
       { timeout: 15_000 },
     );
-    await page.getByRole('button', { name: 'Guardar' }).click();
+    await page.getByRole('button', { name: es.actions.save }).click();
     await scheduleResponse.catch(() => null);
 
-    const overrideButton = page.locator('button', { hasText: 'Reservar de todos modos' });
+    const overrideButton = page.locator('button', { hasText: es.actions.bookAnyway });
     await expect(overrideButton).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('text=Este horario se superpone con un turno existente')).toBeVisible();
 
@@ -55,14 +72,14 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
 
   test('Auditoría screen shows a conflict_override (sobreturno) audit event from seeded data', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: 'Auditoría' }).click();
+    await page.getByRole('link', { name: es.nav.audit }).click();
 
     // The audit_events table is seeded with at least one conflict_override entry, plus the
     // one this spec's first test just created. The event-type filter is a free-text input.
     await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 
-    await page.getByPlaceholder('Tipo de evento').fill('conflict_override');
-    await page.getByRole('button', { name: 'Buscar' }).click();
+    await page.getByPlaceholder(es.audit.eventTypePlaceholder).fill('conflict_override');
+    await page.getByRole('button', { name: es.audit.search }).click();
 
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });

@@ -4,6 +4,10 @@ import { defineConfig } from '@playwright/test';
 const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+// .mts (explicit ESM) so this config loads via import() even though the e2e/ directory is pinned to
+// commonjs (e2e/package.json) — which is what lets the spec files use named imports from the CJS
+// shared/ modules. Config = ESM, specs = CJS, same folder.
+
 // In CI the build/migrate/seed/start steps run as explicit job steps before the test
 // run, so reuseExistingServer=true lets Playwright skip the webServer entirely.
 const reuseServer = process.env.CI === 'true' || process.env.E2E_REUSE_SERVER === 'true';

@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS } from './helpers';
+import { login, DEMO_ACCOUNTS, selectFromCombobox, fillDate, es } from './helpers';
+import { DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/src/dev-fixtures';
 
 /**
  * Regression coverage for: "selecting a resource blanks the client/professional
- * dropdowns". Uses a client/professional/resource combination not touched by any
+ * pickers". Uses a client/professional/resource combination not touched by any
  * other spec (Troy McClure, Dr. Ned Flanders, Consultorio 3) and a date with no
  * seeded appointments for that professional, so the fixture is fully self-contained.
  */
@@ -14,7 +15,7 @@ test.describe('Appointment creation — full form with client + professional + r
     const [clientRes, profRes, svcRes, resourceRes] = await Promise.all([
       page.request.get(`/api/clients?filter_display_name=${encodeURIComponent('Troy McClure')}`),
       page.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Ned Flanders')}`),
-      page.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión de Psicología Infantil')}`),
+      page.request.get(`/api/services?filter_name=${encodeURIComponent(DEMO_SERVICE_NAMES.sesion)}`),
       page.request.get(`/api/resources?filter_name=${encodeURIComponent('Consultorio 3')}`),
     ]);
     const client = (await clientRes.json()).data[0];
@@ -26,36 +27,36 @@ test.describe('Appointment creation — full form with client + professional + r
     expect(svc, 'Sesión de Psicología Infantil must exist in the seed').toBeTruthy();
     expect(resource, 'Consultorio 3 must exist in the seed').toBeTruthy();
 
-    await page.getByRole('link', { name: 'Calendario' }).click();
+    await page.getByRole('link', { name: es.nav.calendar }).click();
     await expect(page.locator('.fc')).toBeVisible({ timeout: 10_000 });
-    await page.getByRole('button', { name: 'Nuevo turno' }).click();
+    await page.getByRole('button', { name: es.calendar.newAppointment }).click();
 
-    const clientSelect = page.locator('#appt-client');
-    const profSelect = page.locator('#appt-prof');
-    const serviceSelect = page.locator('#appt-service');
+    // Client and professional are searchable Selector comboboxes now (headlessui Combobox:
+    // input#<id> + [role=option] list), not native <select>s.
+    const clientInput = page.locator('input#appt-client');
+    const profInput = page.locator('input#appt-prof');
+    const serviceField = page.locator('#appt-service');
     const resourceSelect = page.locator('#appt-resource');
 
-    await expect(clientSelect.locator('option', { hasText: 'Troy McClure' })).toBeAttached({ timeout: 10_000 });
-    await clientSelect.selectOption({ label: 'Troy McClure' });
+    await selectFromCombobox(page, 'appt-client', 'Troy McClure');
+    await selectFromCombobox(page, 'appt-prof', 'Dr. Ned Flanders');
 
-    await expect(profSelect.locator('option', { hasText: 'Flanders' })).toBeAttached({ timeout: 10_000 });
-    await profSelect.selectOption({ label: 'Dr. Ned Flanders' });
+    // Dr. Ned Flanders offers a single service, so the service Selector collapses to a read-only
+    // label and auto-selects it — no interaction needed.
+    await expect(serviceField).toContainText(DEMO_SERVICE_NAMES.sesion, { timeout: 10_000 });
 
-    await expect(serviceSelect.locator('option', { hasText: 'Sesión de Psicología Infantil' })).toBeAttached({ timeout: 10_000 });
-    await serviceSelect.selectOption({ label: 'Sesión de Psicología Infantil' });
-
-    await expect(clientSelect).toHaveValue(String(client.id));
-    await expect(profSelect).toHaveValue(String(prof.id));
+    // The combobox input displays the selected label, not the id.
+    await expect(clientInput).toHaveValue(/Troy McClure/);
+    await expect(profInput).toHaveValue(/Ned Flanders/);
 
     // THE regression guard: selecting a resource must NOT blank client/professional.
     await expect(resourceSelect.locator('option', { hasText: 'Consultorio 3' })).toBeAttached({ timeout: 10_000 });
     await resourceSelect.selectOption({ label: 'Consultorio 3' });
 
-    await expect(clientSelect).toHaveValue(String(client.id));
-    await expect(profSelect).toHaveValue(String(prof.id));
+    await expect(clientInput).toHaveValue(/Troy McClure/);
+    await expect(profInput).toHaveValue(/Ned Flanders/);
     await expect(resourceSelect).toHaveValue(String(resource.id));
 
-    const dateInput = page.locator('#appt-date');
     const slotButton = page.locator('button').filter({ hasText: /^\d{2}:\d{2}/ }).first();
 
     // Wait for the actual /api/availability round-trip (not a blind timeout) before
@@ -65,31 +66,33 @@ test.describe('Appointment creation — full form with client + professional + r
         (r) => r.url().includes('/api/availability') && r.request().method() === 'GET',
         { timeout: 15_000 },
       ).catch(() => null);
-      await dateInput.fill(date);
+      await fillDate(page, date);
       await availResponse;
     }
 
-    let targetDate = '2026-07-16';
+    // Future, in-window (≤60 days) dates past the dense-seed window (~45 days from 2026-07-06) so
+    // free slots are guaranteed; the create-mode date picker rejects past dates (min = today).
+    let targetDate = shiftSeedDate('2026-08-25');
     await fillDateAndWaitForAvailability(targetDate);
     let slotVisible = await slotButton.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!slotVisible) {
-      targetDate = '2026-07-15';
+      targetDate = shiftSeedDate('2026-08-26');
       await fillDateAndWaitForAvailability(targetDate);
       slotVisible = await slotButton.isVisible({ timeout: 5_000 }).catch(() => false);
     }
-    expect(slotVisible, 'Expected a free slot for Dr. Ned Flanders on 2026-07-15/16').toBe(true);
+    expect(slotVisible, 'Expected a free slot for Dr. Ned Flanders').toBe(true);
     await slotButton.click();
 
     // Selections must STILL hold after picking a slot.
-    await expect(clientSelect).toHaveValue(String(client.id));
-    await expect(profSelect).toHaveValue(String(prof.id));
+    await expect(clientInput).toHaveValue(/Troy McClure/);
+    await expect(profInput).toHaveValue(/Ned Flanders/);
     await expect(resourceSelect).toHaveValue(String(resource.id));
 
     const scheduleResponse = page.waitForResponse(
       (r) => r.url().includes('/appointments/schedule') && r.request().method() === 'POST',
       { timeout: 15_000 },
     );
-    await page.getByRole('button', { name: 'Guardar' }).click();
+    await page.getByRole('button', { name: es.actions.save }).click();
     const resp = await scheduleResponse;
     expect(resp.status()).toBe(201);
     const body = await resp.json();
@@ -104,7 +107,7 @@ test.describe('Appointment creation — full form with client + professional + r
     // is also reflected in the UI, not just the API response. (The calendar's visible
     // week is still "today"'s — the fixture date is intentionally weeks ahead — so the
     // detail panel, not the grid, is the right UI signal here.)
-    await expect(page.getByText('Detalle del turno')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(es.calendar.detailTitle)).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(`${svc.default_duration_minutes} min`)).toBeVisible({ timeout: 10_000 });
   });
 });

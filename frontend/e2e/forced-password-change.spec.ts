@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { DEMO_ACCOUNTS } from './helpers';
+import { DEMO_ACCOUNTS, es } from './helpers';
 
 /**
  * demo_reset is the SOLE consumer of the must_change_password=true seed flag — only
@@ -15,9 +15,10 @@ import { DEMO_ACCOUNTS } from './helpers';
 
 async function loginAsDemoReset(page: Page) {
   await page.goto('/');
-  await page.getByLabel('Usuario').fill(DEMO_ACCOUNTS.forcedResetUser.username);
-  await page.getByLabel('Contraseña').fill(DEMO_ACCOUNTS.forcedResetUser.password);
-  await page.getByRole('button', { name: 'Ingresar' }).click();
+  await page.getByLabel(es.auth.usernameLabel).fill(DEMO_ACCOUNTS.forcedResetUser.username);
+  // #password (not getByLabel) — the show/hide toggle's aria-label also contains "Contraseña".
+  await page.locator('#password').fill(DEMO_ACCOUNTS.forcedResetUser.password);
+  await page.getByRole('button', { name: es.actions.login }).click();
 
   await page.waitForTimeout(2000);
 
@@ -46,11 +47,11 @@ test.describe('Forced password change', () => {
 
     await page.waitForURL(/\/change-password/, { timeout: 10_000 });
 
-    const banner = page.getByText('Por seguridad, elegí una nueva contraseña antes de continuar.');
+    const banner = page.getByText(es.auth.mustChangeBanner);
     await expect(banner).toBeVisible();
 
-    await expect(page.getByLabel('Contraseña actual')).toBeVisible();
-    await expect(page.getByLabel('Nueva contraseña')).toBeVisible();
+    await expect(page.getByLabel(es.auth.currentPasswordLabel)).toBeVisible();
+    await expect(page.getByLabel(es.auth.newPasswordLabel)).toBeVisible();
   });
 
   test('ChangePasswordView fills the entire screen — no sidebar nav visible when forced', async ({ page }) => {
@@ -64,12 +65,12 @@ test.describe('Forced password change', () => {
 
     // ChangePasswordView is full-screen with no sidebar nav — the sidebar that appears
     // in StaffLayout for normal staff access must NOT be present.
-    const sidebarLink = page.getByRole('link', { name: 'Calendario', exact: true });
+    const sidebarLink = page.getByRole('link', { name: es.nav.calendar, exact: true });
     await expect(sidebarLink).not.toBeVisible();
 
-    await expect(page.getByText('Por seguridad, elegí una nueva contraseña antes de continuar.')).toBeVisible();
-    await expect(page.getByLabel('Contraseña actual')).toBeVisible();
-    await expect(page.getByLabel('Nueva contraseña')).toBeVisible();
+    await expect(page.getByText(es.auth.mustChangeBanner)).toBeVisible();
+    await expect(page.getByLabel(es.auth.currentPasswordLabel)).toBeVisible();
+    await expect(page.getByLabel(es.auth.newPasswordLabel)).toBeVisible();
 
     await expect(page).toHaveURL(/\/change-password/);
   });
@@ -83,18 +84,18 @@ test.describe('Forced password change', () => {
 
     await page.waitForURL(/\/change-password/, { timeout: 10_000 });
 
-    await page.getByLabel('Contraseña actual').fill(DEMO_ACCOUNTS.forcedResetUser.password);
+    await page.getByLabel(es.auth.currentPasswordLabel).fill(DEMO_ACCOUNTS.forcedResetUser.password);
 
     // New password must be at least 8 characters.
     const newPassword = 'new-secure-pass-456';
-    await page.getByLabel('Nueva contraseña').fill(newPassword);
+    await page.getByLabel(es.auth.newPasswordLabel).fill(newPassword);
 
-    await page.getByRole('button', { name: 'Cambiar contraseña' }).click();
+    await page.getByRole('button', { name: es.actions.changePassword }).click();
 
     // demo_reset is a Professional — routes to /staff/dashboard once the flag clears.
     await page.waitForURL(/\/staff\//, { timeout: 10_000 });
     await expect(page).toHaveURL(/\/staff\//);
 
-    await expect(page.getByRole('link', { name: 'Calendario', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: es.nav.calendar, exact: true })).toBeVisible();
   });
 });

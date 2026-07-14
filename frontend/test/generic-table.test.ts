@@ -11,6 +11,8 @@ import { structure } from '@shared/ssot/structure';
 import type { ColumnDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import type { Role } from '@shared/types/roles';
+import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
+import Skeleton from '@/components/shared/Skeleton.vue';
 
 // Mirrors crud.ts buildQuery so the query-string contract is asserted without apiFetch.
 function buildQuery(params: {
@@ -229,5 +231,210 @@ describe('GenericTable for clients — no create button', () => {
     const emptyComponent = wrapper.findComponent({ name: 'EmptyState' });
     const hasNoText = wrapper.text().includes('No hay');
     expect(emptyComponent.exists() || hasNoText).toBe(true);
+  });
+});
+
+describe('GenericTable — sortable header toggles asc/desc and reloads', () => {
+  it('clicking a sortable header sorts asc first, then desc on a second click', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockClear();
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
+      meta: { page: 1, limit: 20, total: 1 },
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
+    expect(nameHeader).toBeTruthy();
+
+    await nameHeader!.trigger('click');
+    await flushPromises();
+    expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'asc' }));
+    expect(nameHeader!.text()).toContain('↑');
+
+    // Same header again — direction flips rather than resetting.
+    await nameHeader!.trigger('click');
+    await flushPromises();
+    expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'desc' }));
+    expect(nameHeader!.text()).toContain('↓');
+  });
+
+  it('a non-sortable header click does not reload or set a sort field', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockClear();
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+    const callsAfterInitialLoad = (listRows as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const cols = structure.tables.services.columns as Record<string, ColumnDef>;
+    if (!cols.description?.sortable) {
+      const descHeader = wrapper.findAll('th').find((th) => th.text().includes('Descripción'));
+      await descHeader!.trigger('click');
+      await flushPromises();
+      expect((listRows as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterInitialLoad);
+    }
+  });
+});
+
+describe('GenericTable — loading skeleton', () => {
+  it('shows the row skeleton while the list request is in flight, then the rows once resolved', async () => {
+    const { listRows } = await import('@/api/crud');
+    let resolveFetch!: (v: unknown) => void;
+    (listRows as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((r) => { resolveFetch = r; }));
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.findComponent(Skeleton).exists()).toBe(true);
+    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true);
+
+    resolveFetch({
+      ok: true,
+      data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
+      meta: { page: 1, limit: 20, total: 1 },
+    });
+    await flushPromises();
+
+    expect(wrapper.findComponent(Skeleton).exists()).toBe(false);
+    expect(wrapper.text()).toContain('Corte simple');
+  });
+});
+
+describe('GenericTable — empty state also masks a load error', () => {
+  it('a failed list request renders the same empty state as a genuinely empty table, not an error UI', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      code: 'internal',
+      message: 'boom',
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    // loadError is set internally but the template never branches on it — rows.length === 0
+    // always renders the plain "no items" EmptyState, whether the list was empty or the fetch failed.
+    expect(wrapper.findComponent({ name: 'EmptyState' }).exists()).toBe(true);
+    expect(wrapper.text()).not.toMatch(/error|falló|fall[oó]/i);
+  });
+});
+
+describe('GenericTable — FK cell shows the referenced label, or #id when unresolved', () => {
+  beforeEach(() => {
+    resetFkOptionsCache();
+  });
+
+  it('resolves a known FK id to its label and falls back to #id for one the options list does not contain', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockImplementation(async (table: string) => {
+      if (table === 'professional_services') {
+        return {
+          ok: true,
+          data: [
+            { id: '1', professional_user_id: '7', service_id: '9', min_booking_days: null, max_booking_days: null },
+            { id: '2', professional_user_id: '999', service_id: '9', min_booking_days: null, max_booking_days: null },
+          ],
+          meta: { page: 1, limit: 20, total: 2 },
+        };
+      }
+      if (table === 'professionals') {
+        return { ok: true, data: [{ id: '7', display_name: 'Dra. Cascada' }] };
+      }
+      if (table === 'services') {
+        return { ok: true, data: [{ id: '9', name: 'Corte Cascada' }] };
+      }
+      return { ok: true, data: [] };
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'professional_services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Dra. Cascada');
+    expect(wrapper.text()).toContain('#999');
+  });
+});
+
+describe('GenericTable — role-gated Edit action', () => {
+  it('a role with update rights sees the row Editar action and the Acciones column', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [{ id: '1', display_name: 'Dra. Ana', bio: null }],
+      meta: { page: 1, limit: 20, total: 1 },
+    });
+
+    const { pinia, router, i18n } = makePlugins('Receptionist');
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'professionals' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(es.actions.edit);
+    expect(wrapper.findAll('th').some((th) => th.text().includes(es.generic.actionsColumn))).toBe(true);
+  });
+
+  it('a role without update rights (roleRequired.update excludes it) sees no Editar action or Acciones column', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [{ id: '1', display_name: 'Dra. Ana', bio: null }],
+      meta: { page: 1, limit: 20, total: 1 },
+    });
+
+    // professionals.roleRequired.update = ['Admin', 'Receptionist', 'Professional'] — Client is excluded.
+    expect(structure.tables.professionals.roleRequired?.update).not.toContain('Client');
+
+    const { pinia, router, i18n } = makePlugins('Client');
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'professionals' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain(es.actions.edit);
+    expect(wrapper.findAll('th').some((th) => th.text().includes(es.generic.actionsColumn))).toBe(false);
+  });
+});
+
+describe('GenericTable — create button requires the descriptor role, not just crud.create', () => {
+  it('services.crud.create is true but roleRequired.create is Admin-only — a Professional does not see the add button', async () => {
+    expect(structure.tables.services.crud?.create).toBe(true);
+    expect(structure.tables.services.roleRequired?.create).toEqual(['Admin']);
+
+    const { pinia, router, i18n } = makePlugins('Professional');
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain(structure.tables.services.addButtonLabel!.es);
   });
 });

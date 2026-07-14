@@ -61,7 +61,7 @@ async function saveAdd() {
     return;
   }
   savingAdd.value = true;
-  const res = await createRow('resources', { name: newName.value.trim() });
+  const res = await createRow('resources', { name: newName.value.trim(), description: null });
   savingAdd.value = false;
   if (res.ok) {
     adding.value = false;

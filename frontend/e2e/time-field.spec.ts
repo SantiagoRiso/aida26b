@@ -1,17 +1,19 @@
 import { test, expect } from '@playwright/test';
 import type { Locator } from '@playwright/test';
-import { loginAs, openScreen } from './helpers';
+import { loginAs, openScreen, es } from './helpers';
 
 // The 24h TimeField (frontend/src/components/shared/TimeField.vue) is a custom masked input with a
-// click-open hour/minute adjuster. The admin Negocio → Días festivos "Desde" field is an
-// always-visible instance, so it drives the component end-to-end without creating any data
-// (nothing is submitted — the add-closure form is only typed into).
+// click-open hour/minute adjuster. The admin Negocio → Días festivos "Desde" field drives the
+// component end-to-end without creating any data (nothing is submitted — the add-closure form is
+// only typed into). The add-closure form defaults to "Todo el día" (allDay), which hides the
+// start/end TimeFields, so the range must be revealed by unchecking it first.
 test.describe('TimeField — 24h masked time input', () => {
   let desde: Locator;
 
   test.beforeEach(async ({ page }) => {
     await loginAs(page, 'adminUser');
-    await openScreen(page, 'Negocio');
+    await openScreen(page, es.nav.business);
+    await page.locator('[data-testid="closure-add-allday"]').uncheck();
     desde = page.locator('input[placeholder="hh:mm"]').first();
     await expect(desde).toBeVisible();
   });
@@ -68,18 +70,18 @@ test.describe('TimeField — 24h masked time input', () => {
     await retype(desde, '');
     // A single click focuses the field AND opens the adjuster popover.
     await desde.click();
-    const hourUp = page.getByRole('button', { name: '+ hora', exact: true });
+    const hourUp = page.getByRole('button', { name: es.timeField.hourUp, exact: true });
     await expect(hourUp).toBeVisible();
 
     await hourUp.click();
     await expect(desde).toHaveValue('01:00');
 
     // The minute adjuster steps by 5.
-    await page.getByRole('button', { name: '+ minutos', exact: true }).click();
+    await page.getByRole('button', { name: es.timeField.minuteUp, exact: true }).click();
     await expect(desde).toHaveValue('01:05');
 
     // The hour decrements independently of the minutes.
-    await page.getByRole('button', { name: '- hora', exact: true }).click();
+    await page.getByRole('button', { name: es.timeField.hourDown, exact: true }).click();
     await expect(desde).toHaveValue('00:05');
   });
 });

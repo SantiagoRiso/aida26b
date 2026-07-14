@@ -1,15 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS } from './helpers';
+import { login, DEMO_ACCOUNTS, es } from './helpers';
 
 /**
- * SettingsView.vue never fetches the current cancellation_cutoff_hours on mount (no
- * GET on load) — the input always starts empty, so persistence can't be verified by
- * simply re-rendering the field. Instead this proves persistence through the actual
- * enforced behavior: a fresh appointment ~30h out is inside the NEW 48h cutoff but
- * would have been outside the OLD 24h default, so a client cancel attempt must now
- * be blocked. The business-wide cutoff is restored to the seeded default (24) in
- * afterAll so later specs (e.g. client-cancel-cutoff.spec.ts, if re-run) see the
- * value they assume.
+ * A re-rendered #biz-cutoff field only proves the client-side value round-trips through
+ * BusinessView.vue's own onMounted fetch, not that it was actually persisted server-side. This
+ * proves persistence through the actual enforced behavior instead: a fresh appointment ~30h out
+ * is inside the NEW 48h cutoff but would have been outside the OLD 24h default, so a client
+ * cancel attempt must now be blocked. The business-wide cutoff is restored to the seeded default
+ * (24) in afterAll so later specs (e.g. client-cancel-cutoff.spec.ts, if re-run) see the value
+ * they assume.
  */
 test.describe('Business settings — cancellation cutoff persists and is enforced', () => {
   test.afterAll(async ({ browser }) => {
@@ -18,16 +17,18 @@ test.describe('Business settings — cancellation cutoff persists and is enforce
     const loginRes = await page.request.post('/api/auth/login', {
       data: { username: DEMO_ACCOUNTS.adminUser.username, password: DEMO_ACCOUNTS.adminUser.password },
     });
-    const businessId = (await loginRes.json()).user.business_id;
+    const businessId = (await loginRes.json()).data.user.business_id;
     await page.request.patch(`/api/businesses/${businessId}/settings`, { data: { cancellation_cutoff_hours: 24 } });
     await context.close();
   });
 
   test('admin updates the cutoff to 48h and it is enforced on a fresh appointment', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: 'Configuración' }).click();
+    await page.getByRole('link', { name: es.nav.business }).click();
 
-    const cutoffInput = page.locator('input[type="number"]').first();
+    // #biz-cutoff — the cancellation-cutoff field on BusinessView; the section now also has
+    // min/max booking-day number inputs, so a bare input[type="number"] selector is ambiguous.
+    const cutoffInput = page.locator('#biz-cutoff');
     await expect(cutoffInput).toBeVisible({ timeout: 10_000 });
     await cutoffInput.fill('48');
 
@@ -35,12 +36,12 @@ test.describe('Business settings — cancellation cutoff persists and is enforce
       (r) => /\/businesses\/\d+\/settings$/.test(r.url()) && r.request().method() === 'PATCH',
       { timeout: 10_000 },
     );
-    await page.getByRole('button', { name: 'Guardar' }).click();
+    await page.getByRole('button', { name: es.actions.save }).click();
     const resp = await saveResponse;
     expect(resp.status()).toBe(200);
     const body = await resp.json();
     expect(Number(body.data.cancellation_cutoff_hours)).toBe(48);
-    await expect(page.getByText('Guardado correctamente.')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(es.toast.settingsSaved)).toBeVisible({ timeout: 5_000 });
 
     const [profRes, svcRes, clientRes] = await Promise.all([
       page.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Dra. Marge Bouvier')}`),

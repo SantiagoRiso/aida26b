@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { login, DEMO_ACCOUNTS } from './helpers';
+import { login, DEMO_ACCOUNTS, es } from './helpers';
 
 /**
  * Cancellation cutoff is 24h before start.
@@ -12,7 +12,16 @@ import { login, DEMO_ACCOUNTS } from './helpers';
  *   - one starting ~72h from now → BEFORE the cutoff      → cancel must succeed.
  */
 
-interface CreatedAppt { id: number }
+interface CreatedAppt { id: number; startsAt: string }
+
+// Mirrors frontend/src/composables/useCurrency.ts DATETIME_FORMATTER. That formatter takes no
+// explicit timeZone, so it renders in whatever timezone is the runtime default — the same default
+// the Playwright-driven browser and this Node test process share on a given machine. Duplicated
+// here (not imported) for the same reason helpers.ts mirrors STATE_LABELS_ES: the e2e/ directory
+// is pinned to commonjs and can't load frontend/src's Vite-aliased ESM modules.
+const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
+  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+});
 
 async function scheduleAt(page: Page, hoursFromNow: number, name: string): Promise<CreatedAppt> {
   const profRes = await page.request.get('/api/professionals');
@@ -62,12 +71,17 @@ async function scheduleAt(page: Page, hoursFromNow: number, name: string): Promi
   if (!scheduleRes.ok() || !body.data?.id) {
     throw new Error(`Failed to create fixture appointment "${name}": ${scheduleRes.status()} ${JSON.stringify(body)}`);
   }
-  return { id: Number(body.data.id) };
+  // Use the server's authoritative starts_at (not the naive local `startAt` built above) — the
+  // backend interprets date+start in the business timezone, so only the persisted value is
+  // guaranteed to match what AppointmentsView.vue actually renders.
+  return { id: Number(body.data.id), startsAt: body.data.starts_at };
 }
 
 test.describe('Client cancel — cutoff boundary', () => {
   let withinCutoffApptId: number;
   let beforeCutoffApptId: number;
+  let withinCutoffLabel: string;
+  let beforeCutoffLabel: string;
 
   test.beforeAll(async ({ browser }) => {
     const context = await browser.newContext();
@@ -78,21 +92,28 @@ test.describe('Client cancel — cutoff boundary', () => {
     const before = await scheduleAt(page, 72, 'Turno cutoff E2E — antes del plazo');
     withinCutoffApptId = within.id;
     beforeCutoffApptId = before.id;
+    // The appointment `name` fixture value isn't a reliable locator: AppointmentsView.vue's
+    // history/past list items don't render `appt.name` at all (only the upcoming items do), and a
+    // fixed literal name is prone to matching stale rows left by earlier runs on this shared,
+    // non-reset server. The rendered date/time text is present in both sections and, being tied to
+    // this run's wall-clock, is effectively unique per run.
+    withinCutoffLabel = DATETIME_FORMATTER.format(new Date(within.startsAt));
+    beforeCutoffLabel = DATETIME_FORMATTER.format(new Date(before.startsAt));
 
     await context.close();
   });
 
   test('past-cutoff scheduled appointment shows disabled Cancelar with visible explanation', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.client.username, DEMO_ACCOUNTS.client.password);
-    await page.getByRole('link', { name: 'Mis turnos' }).click();
+    await page.getByRole('link', { name: es.nav.myAppointments }).click();
 
-    const row = page.locator('li', { hasText: 'Turno cutoff E2E — dentro del plazo' });
+    const row = page.locator('li').filter({ hasText: withinCutoffLabel }).first();
     await expect(row).toBeVisible({ timeout: 10_000 });
 
     const alert = row.getByRole('alert');
-    await expect(alert).toContainText('Ya pasó el plazo');
+    await expect(alert).toContainText('Venció el plazo para cancelar este turno');
 
-    const disabledBtn = row.getByRole('button', { name: 'Cancelar' });
+    const disabledBtn = row.getByRole('button', { name: es.actions.cancel });
     await expect(disabledBtn).toBeDisabled();
   });
 
@@ -112,16 +133,16 @@ test.describe('Client cancel — cutoff boundary', () => {
 
   test('before-cutoff scheduled appointment can be canceled and becomes Cancelado', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.client.username, DEMO_ACCOUNTS.client.password);
-    await page.getByRole('link', { name: 'Mis turnos' }).click();
+    await page.getByRole('link', { name: es.nav.myAppointments }).click();
 
-    const row = page.locator('li', { hasText: 'Turno cutoff E2E — antes del plazo' });
+    const row = page.locator('li').filter({ hasText: beforeCutoffLabel }).first();
     await expect(row).toBeVisible({ timeout: 10_000 });
 
-    const cancelBtn = row.getByRole('button', { name: 'Cancelar' });
+    const cancelBtn = row.getByRole('button', { name: es.actions.cancel });
     await expect(cancelBtn).toBeEnabled();
     await cancelBtn.click();
 
-    const confirmBtn = page.getByRole('button', { name: 'Cancelar turno' });
+    const confirmBtn = page.getByRole('button', { name: es.portal.cancelAppointment });
     await expect(confirmBtn).toBeVisible({ timeout: 5_000 });
 
     // Wait for the UI-triggered transition to actually complete before firing a second,

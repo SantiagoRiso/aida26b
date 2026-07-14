@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, navigateCalendarToAppointment } from './helpers';
+import { login, DEMO_ACCOUNTS, navigateCalendarToAppointment, es, stateLabelEs } from './helpers';
+import { DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/src/dev-fixtures';
 
 /**
  * State transition via the detail panel: approve a requested appointment.
@@ -19,7 +20,7 @@ test.describe('Appointment state transition via detail panel — approve a reque
 
     const profRes = await adminPage.request.get(`/api/professionals?filter_display_name=${encodeURIComponent('Edna Krabappel')}`);
     const prof = (await profRes.json()).data[0];
-    const svcRes = await adminPage.request.get(`/api/services?filter_name=${encodeURIComponent('Sesión de Psicología Infantil')}`);
+    const svcRes = await adminPage.request.get(`/api/services?filter_name=${encodeURIComponent(DEMO_SERVICE_NAMES.sesion)}`);
     const svc = (await svcRes.json()).data[0];
     await adminContext.close();
 
@@ -31,7 +32,11 @@ test.describe('Appointment state transition via detail panel — approve a reque
       data: {
         professional_user_id: Number(prof.id),
         service_id: Number(svc.id),
-        date: '2026-07-16',
+        // Dra. Edna Krabappel's Tue "sesión" block starts 09:00 (50-min slots). shiftSeedDate keeps
+        // this authored Tuesday aligned with the seed's shift, landing past the dense-fill window yet
+        // within the 60-day booking window, so the slot is conflict-free. /request cannot override,
+        // so the fixture must land on a genuinely free, slot-aligned start.
+        date: shiftSeedDate('2026-08-25'),
         start: '09:00',
         duration_minutes: 50,
       },
@@ -47,7 +52,7 @@ test.describe('Appointment state transition via detail panel — approve a reque
 
   test('admin approves the requested appointment from the detail panel', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: 'Calendario' }).click();
+    await page.getByRole('link', { name: es.nav.calendar }).click();
     await expect(page.locator('.fc')).toBeVisible();
 
     await navigateCalendarToAppointment(page, apptId);
@@ -55,21 +60,21 @@ test.describe('Appointment state transition via detail panel — approve a reque
     await expect(event).toHaveAttribute('data-appt-state', 'requested');
     await event.click();
 
-    await expect(page.getByText('Detalle del turno')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Solicitado')).toBeVisible();
+    await expect(page.getByText(es.calendar.detailTitle)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(stateLabelEs('requested'))).toBeVisible();
 
     const approveResponse = page.waitForResponse(
       (r) => r.url().includes(`/appointments/${apptId}/approve`) && r.request().method() === 'POST',
       { timeout: 15_000 },
     );
-    await page.getByRole('button', { name: 'Aprobar' }).click();
+    await page.getByRole('button', { name: es.calendar.approve }).click();
     const resp = await approveResponse;
     expect(resp.status()).toBe(200);
     const body = await resp.json();
     expect(body.success).toBe(true);
     expect(body.data.state).toBe('scheduled');
 
-    await expect(page.getByText('Programado')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(stateLabelEs('scheduled'))).toBeVisible({ timeout: 10_000 });
 
     // Independent backend confirmation — proves the transition is durable, not just
     // an optimistic client-side render.

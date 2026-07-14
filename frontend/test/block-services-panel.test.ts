@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
+import { useUiStore } from '@/stores/ui';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import type { ListParams } from '@/api/crud';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
@@ -354,6 +355,27 @@ describe('BlockServicesPanel', () => {
     expect(createRow).not.toHaveBeenCalled(); // already offered → nothing to create on submit
     expect(wrapper.find('[data-testid="block-service-toggle-1"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="block-service-label-1"]').text()).toContain('Corte');
+  });
+
+  it('renders a per-service field error from a failed save without a generic toast', async () => {
+    vi.mocked(updateRow).mockResolvedValueOnce({
+      ok: false, status: 422, code: 'validation_error', message: 'invalid',
+      fields: { duration_minutes: 'Debe ser un entero positivo.' },
+    });
+    const wrapper = await mountPanel();
+
+    const duration1 = wrapper.get('[data-testid="block-service-duration-1"]');
+    await duration1.setValue('0');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ok = await (wrapper.vm as any).save();
+    await flushPromises();
+
+    expect(ok).toBe(false);
+    expect(wrapper.text()).toContain('Debe ser un entero positivo.');
+    // A field-level error is surfaced inline, not as a generic toast (recordError only falls back
+    // to the toast when the server returns no `fields`).
+    const ui = useUiStore();
+    expect(ui.toasts).toHaveLength(0);
   });
 
   it('reloads and shows block B rows (not stale block A rows) when the block prop changes', async () => {

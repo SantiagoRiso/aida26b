@@ -26,3 +26,41 @@ export const DEMO_SERVICE_NAMES = {
   kineso: 'Sesión de kinesiología',
   medico: 'Consulta médica',
 } as const;
+
+// The demo dataset's fixtures were authored against this Monday. Both the backend seed and the e2e
+// specs shift every fixture date onto the current week so the data never rots — and because the shift
+// is a whole number of weeks (anchor and target are both Mondays), weekday and time-of-day are
+// preserved, keeping appointments on each professional's real working days. Single source so seed and
+// specs shift by the exact same amount and stay aligned.
+export const SEED_ANCHOR = '2026-07-06';
+
+export function currentMondayISO(): string {
+  const now = new Date();
+  const dow = now.getDay(); // 0=Sun..6=Sat
+  const backToMonday = dow === 0 ? 6 : dow - 1;
+  const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - backToMonday);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${mon.getFullYear()}-${pad(mon.getMonth() + 1)}-${pad(mon.getDate())}`;
+}
+
+function daysBetween(fromISO: string, toISO: string): number {
+  const [fy, fm, fd] = fromISO.split('-').map(Number);
+  const [ty, tm, td] = toISO.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+// Shift a fixture date (either 'YYYY-MM-DD' or a full ISO 'YYYY-MM-DDTHH:MM:SS±hh:mm') by the whole
+// number of weeks separating SEED_ANCHOR from the current week's Monday.
+export function shiftSeedDate(iso: string): string {
+  const shiftDays = daysBetween(SEED_ANCHOR, currentMondayISO());
+  const hasTime = iso.includes('T');
+  const datePart = hasTime ? iso.slice(0, 10) : iso;
+  const rest = hasTime ? iso.slice(10) : '';
+  const [y, m, d] = datePart.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + shiftDays);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}${rest}`;
+}
+
+// Monday of the current week — the demo seed's dense-fill start.
+export const SEED_START = shiftSeedDate(SEED_ANCHOR);
