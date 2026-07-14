@@ -4,11 +4,13 @@ import { useI18n, Translation as I18nT } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listRows } from '@/api/crud';
-import { checkConflict, getBookingWindow } from '@/api/scheduling';
+import { checkConflict } from '@/api/scheduling';
 import { requestAppointment, listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
-import type { TableRecordMap } from '@shared/types/types';
-import { useCurrency, todayLocalISO } from '@/composables/useCurrency';
+import type { TableRecordMap } from '@shared/ssot/derived';
+import { useCurrency } from '@/composables/useCurrency';
+import { addDaysISO, intervalMinutes, offeredServiceIds } from '@/composables/bookingForm';
+import { useBookingWindow } from '@/composables/useBookingWindow';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
 import Selector from '@/components/shared/Selector.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -16,12 +18,14 @@ import Skeleton from '@/components/shared/Skeleton.vue';
 import DateField from '@/components/shared/DateField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 
 const emit = defineEmits<{
   success: [appt: Appointment];
 }>();
 
 const { t } = useI18n();
+const { stateLabel } = useStateLabel();
 const auth = useAuthStore();
 const ui = useUiStore();
 const { formatARS, formatDate } = useCurrency();
@@ -45,7 +49,7 @@ const selectedServiceId = ref<string | null>(null);
 const selectedService = computed<ServiceRow | null>(() =>
   selectedServiceId.value == null
     ? null
-    : services.value.find((s) => String(s.id) === selectedServiceId.value) ?? null,
+    : services.value.find((s) => s.id === selectedServiceId.value) ?? null,
 );
 
 async function loadOptions() {
@@ -69,16 +73,16 @@ loadOptions();
 
 const serviceNameById = computed(() => {
   const m = new Map<string, string>();
-  for (const s of services.value) m.set(String(s.id), s.name);
+  for (const s of services.value) m.set(s.id, s.name);
   return m;
 });
 
 const serviceNamesByProf = computed(() => {
   const m = new Map<string, string[]>();
   for (const ps of profServices.value) {
-    const name = serviceNameById.value.get(String(ps.service_id));
+    const name = serviceNameById.value.get(ps.service_id);
     if (!name) continue;
-    const key = String(ps.professional_user_id);
+    const key = ps.professional_user_id;
     const list = m.get(key);
     if (list) list.push(name);
     else m.set(key, [name]);
@@ -92,10 +96,9 @@ const recencyByProf = computed(() => {
   const cutoff = Date.now() - 365 * 86400000;
   const m = new Map<string, number>();
   for (const a of myAppointments.value) {
-    if (a.professional_user_id == null) continue;
     const t = new Date(a.starts_at).getTime();
     if (t < cutoff) continue;
-    const key = String(a.professional_user_id);
+    const key = a.professional_user_id;
     const prev = m.get(key);
     if (prev == null || t > prev) m.set(key, t);
   }
@@ -107,7 +110,7 @@ interface ProfOption { value: string; label: string; bio: string | null; service
 const professionalOptions = computed<ProfOption[]>(() => {
   const recency = recencyByProf.value;
   const ranked = professionals.value.map((p) => {
-    const key = String(p.id);
+    const key = p.id;
     return {
       value: key,
       label: p.display_name,
@@ -128,28 +131,22 @@ const professionalOptions = computed<ProfOption[]>(() => {
 // The service list is scoped to what the chosen professional offers (mirrors the staff form);
 // with no professional selected, or a professional with no mapping, fall back to every service.
 const availableServices = computed<ServiceRow[]>(() => {
-  const profId = selectedProfId.value;
-  if (profId == null) return services.value;
-  const offered = new Set(
-    profServices.value
-      .filter((ps) => String(ps.professional_user_id) === String(profId))
-      .map((ps) => String(ps.service_id)),
-  );
-  if (offered.size === 0) return services.value;
-  return services.value.filter((s) => offered.has(String(s.id)));
+  const offered = offeredServiceIds(profServices.value, selectedProfId.value != null ? String(selectedProfId.value) : null);
+  if (!offered) return services.value;
+  return services.value.filter((s) => offered.has(s.id));
 });
 
 // Options for the Selector; the component renders a lone service as a read-only label and auto-picks it.
 const serviceSelectOptions = computed(() =>
   availableServices.value.map((s) => ({
-    value: String(s.id),
+    value: s.id,
     label: `${s.name} (${s.default_duration_minutes}min)`,
   })),
 );
 
 // Drop a chosen service the newly picked professional doesn't offer (Selector auto-picks a lone one).
 watch(availableServices, (opts) => {
-  if (selectedServiceId.value && !opts.some((s) => String(s.id) === selectedServiceId.value)) {
+  if (selectedServiceId.value && !opts.some((s) => s.id === selectedServiceId.value)) {
     selectedServiceId.value = null;
   }
 });
@@ -159,26 +156,16 @@ const selectedStart = ref<string | null>(null);
 const selectedSlotDuration = ref<number>(0);
 
 // Effective booking window (concrete dates) for the chosen professional+service; clamps the picker.
-const windowMin = ref<string | null>(null);
-const windowMax = ref<string | null>(null);
+const { windowMax, minDate } = useBookingWindow(
+  selectedProfId,
+  computed(() => (selectedService.value ? Number(selectedService.value.id) : null)),
+);
 
-watch([selectedProfId, selectedService], async () => {
+// Reset the picked date/slot whenever the professional or service changes.
+watch([selectedProfId, selectedService], () => {
   selectedDate.value = '';
   selectedStart.value = null;
   selectedSlotDuration.value = 0;
-  windowMin.value = null;
-  windowMax.value = null;
-
-  const profId = selectedProfId.value;
-  const svc = selectedService.value;
-  if (profId == null || svc == null) return;
-  const res = await getBookingWindow(profId, Number(svc.id));
-  // Ignore a stale response if the selection changed while awaiting.
-  if (selectedProfId.value !== profId || selectedService.value?.id !== svc.id) return;
-  if (res.ok) {
-    windowMin.value = res.data.min_date;
-    windowMax.value = res.data.max_date;
-  }
 });
 
 watch(selectedDate, () => {
@@ -188,9 +175,7 @@ watch(selectedDate, () => {
 
 function onSlotSelected(slot: { start: string; end: string }) {
   selectedStart.value = slot.start;
-  const [sh, sm] = slot.start.split(':').map(Number);
-  const [eh, em] = slot.end.split(':').map(Number);
-  selectedSlotDuration.value = (eh * 60 + em) - (sh * 60 + sm);
+  selectedSlotDuration.value = intervalMinutes(slot.start, slot.end);
 }
 
 const effectivePrice = ref<string | null>(null);
@@ -279,21 +264,12 @@ function goStep3() {
   }
 }
 
-const today = todayLocalISO();
 
-// Effective lower bound: the booking window's minimum when loaded, never earlier than today.
-const minDate = computed(() => (windowMin.value && windowMin.value > today ? windowMin.value : today));
-
-// Prev/next day arrows for the date field (mirrors the staff appointment form). Step by whole days
-// via local midnight so a timezone offset can't drift the day, clamped to the booking window so
-// clients can't step into the past or past the window's far end. From empty, stepping starts at min.
-function ymd(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+// Prev/next day arrows for the date field (mirrors the staff appointment form), clamped to the
+// booking window so clients can't step into the past or past the window's far end. From empty,
+// stepping starts at min.
 function stepDate(days: number): void {
-  const [y, m, d] = (selectedDate.value || minDate.value).split('-').map(Number);
-  let next = ymd(new Date(y, m - 1, d + days));
+  let next = addDaysISO(selectedDate.value || minDate.value, days);
   if (next < minDate.value) next = minDate.value;
   if (windowMax.value && next > windowMax.value) next = windowMax.value;
   selectedDate.value = next;
@@ -414,7 +390,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
       </div>
 
       <div v-else class="rounded-lg border border-border bg-card p-4 space-y-2">
-        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => String(p.id) === String(selectedProfId))?.display_name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => p.id === String(selectedProfId))?.display_name }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.service') }}: <strong class="text-current">{{ selectedService?.name }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.date') }}: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.time') }}: <strong class="text-current">{{ selectedStart }}</strong></p>
@@ -435,7 +411,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
 
       <I18nT keypath="portal.requestPendingNote" tag="p" class="text-sm text-neutral">
         <template #status>
-          <strong>{{ t('status.requested') }}</strong>
+          <strong>{{ stateLabel('requested') }}</strong>
         </template>
       </I18nT>
 

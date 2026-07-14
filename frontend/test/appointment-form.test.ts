@@ -17,6 +17,7 @@ vi.mock('@/api/crud', () => ({
 // SlotPicker fetches availability on mount when a professional + date are set (reschedule mode).
 vi.mock('@/api/scheduling', () => ({
   getAvailability: vi.fn().mockResolvedValue({ ok: true, data: { slots: [] } }),
+  getBookingWindow: vi.fn().mockResolvedValue({ ok: true, data: { min_date: '2000-01-01', max_date: null } }),
 }));
 
 function makeI18n() {

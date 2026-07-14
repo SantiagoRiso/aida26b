@@ -51,6 +51,7 @@ const dpLocale = computed(() => (ui.language === 'en' ? enUS : es));
     :input-class-name="invalid ? 'dp-invalid' : ''"
     teleport="body"
     auto-apply
+    :text-input="{ format: 'dd/MM/yyyy', enterSubmit: true, tabSubmit: true, selectOnFocus: true }"
     :input-attrs="{ clearable: true }"
     :placeholder="placeholder ?? 'dd/mm/aaaa'"
     @update:model-value="emit('update:modelValue', ($event as string | null) ?? '')"

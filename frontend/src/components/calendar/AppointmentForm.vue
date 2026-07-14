@@ -19,6 +19,8 @@ import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
 import { useLabel } from '@/composables/useLabel';
+import { isoDate, addDaysISO, intervalMinutes, offeredServiceIds } from '@/composables/bookingForm';
+import { useBookingWindow } from '@/composables/useBookingWindow';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
 import type { TableRecordMap } from '@shared/ssot/derived';
 
@@ -86,25 +88,29 @@ const form = reactive<FormState>({
   description: props.appointment?.description ?? '',
 });
 
-// Local-wall-clock day math for the date stepper. form.date is 'yyyy-MM-dd'; step by whole days via
-// local midnight so a timezone offset can't drift the day (new Date('yyyy-MM-dd') would parse as UTC).
-function ymd(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-const todayISO = ymd(new Date());
-function addDaysISO(iso: string, days: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  return ymd(new Date(y, m - 1, d + days));
-}
-// New bookings can't move into the past; reschedule edits around an existing (possibly past) date,
-// so the today-clamp applies to the create flow only.
-// TODO booking-window clamp: clamp to min/max_booking_days once enforced at save time.
+const todayISO = isoDate(new Date());
+
+// New bookings are bounded by the effective booking window (same as the client portal); a reschedule
+// edits around an existing (possibly out-of-window) date, so the clamp applies to the create flow only.
+const { windowMax, minDate } = useBookingWindow(
+  computed(() => (form.professional_user_id ? Number(form.professional_user_id) : null)),
+  computed(() => (form.service_id ? Number(form.service_id) : null)),
+);
+
 function stepDate(days: number): void {
-  const next = addDaysISO(form.date || todayISO, days);
-  form.date = !props.appointment && next < todayISO ? todayISO : next;
+  if (props.appointment) {
+    form.date = addDaysISO(form.date || todayISO, days);
+    return;
+  }
+  let next = addDaysISO(form.date || minDate.value, days);
+  if (next < minDate.value) next = minDate.value;
+  if (windowMax.value && next > windowMax.value) next = windowMax.value;
+  form.date = next;
 }
-const atMinDate = computed(() => !props.appointment && (form.date || todayISO) <= todayISO);
+const atMinDate = computed(() => !props.appointment && (form.date || minDate.value) <= minDate.value);
+const atMaxDate = computed(
+  () => !props.appointment && windowMax.value != null && (form.date || minDate.value) >= windowMax.value,
+);
 
 const fieldErrors = ref<Record<string, string>>({});
 const saving = ref(false);
@@ -167,29 +173,17 @@ watch(
   { immediate: true },
 );
 
-// Which services each professional offers (professional_user_id → service_ids). No entry / no
-// professional selected → fall back to all services.
-const profServiceMap = ref<Map<string, string[]>>(new Map());
+// Which services each professional offers; no mapping / no professional selected → all services.
+const profServiceRows = ref<TableRecordMap['professional_services'][]>([]);
 onMounted(async () => {
   const result = await listRows('professional_services', { limit: 500 });
-  if (!result.ok) return;
-  const map = new Map<string, string[]>();
-  for (const row of result.data) {
-    const key = String(row.professional_user_id);
-    const list = map.get(key);
-    if (list) list.push(String(row.service_id));
-    else map.set(key, [String(row.service_id)]);
-  }
-  profServiceMap.value = map;
+  if (result.ok) profServiceRows.value = result.data;
 });
 
 const availableServiceOptions = computed(() => {
-  const offered = form.professional_user_id
-    ? profServiceMap.value.get(String(form.professional_user_id))
-    : undefined;
-  if (!offered || offered.length === 0) return serviceOptions.value;
-  const set = new Set(offered);
-  return serviceOptions.value.filter((o) => set.has(String(o.value)));
+  const offered = offeredServiceIds(profServiceRows.value, form.professional_user_id || null);
+  if (!offered) return serviceOptions.value;
+  return serviceOptions.value.filter((o) => offered.has(String(o.value)));
 });
 
 // Keep the selected service consistent with the professional's offerings (auto-pick the only one).
@@ -206,9 +200,7 @@ watch(
 
 function handleSlotSelected(slot: TimeInterval) {
   form.start = slot.start;
-  const [sh, sm] = slot.start.split(':').map(Number);
-  const [eh, em] = slot.end.split(':').map(Number);
-  form.duration_minutes = String((eh * 60 + em) - (sh * 60 + sm));
+  form.duration_minutes = String(intervalMinutes(slot.start, slot.end));
 }
 
 function buildBody(override: boolean): ScheduleBody {
@@ -357,10 +349,18 @@ function submit() {
         >
           <ChevronLeftIcon class="h-5 w-5" />
         </button>
-        <DateField id="appt-date" v-model="form.date" :invalid="!!fieldErrors.date" class="flex-1" />
+        <DateField
+          id="appt-date"
+          v-model="form.date"
+          :invalid="!!fieldErrors.date"
+          :min="props.appointment ? null : minDate"
+          :max="props.appointment ? null : windowMax"
+          class="flex-1"
+        />
         <button
           type="button"
-          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface"
+          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="atMaxDate"
           :aria-label="label({ es: 'Día siguiente', en: 'Next day' })"
           @click="stepDate(1)"
         >
