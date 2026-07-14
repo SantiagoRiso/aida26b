@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { TRANSITION_MAP, TERMINAL_STATES, assertValidTransition } from '@shared/ssot/domain/scheduling';
+import { TRANSITION_MAP, TERMINAL_STATES, assertValidTransition } from '@shared/ssot/domain/appointment-lifecycle';
+import { structure } from '@shared/ssot/structure';
 import type { Appointment } from '@/api/appointments';
 import { transitionAppointment, patchAppointment, ignoreAppointmentConflict } from '@/api/appointments';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 
@@ -24,8 +27,13 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { label } = useLabel();
+const { stateLabel } = useStateLabel();
 const auth = useAuthStore();
 const toast = useToast();
+
+const nameColumnLabel = structure.tables.appointments.columns.name.label;
+const descriptionColumnLabel = structure.tables.appointments.columns.description.label;
 
 const staffNoteEdit = ref('');
 const editingNote = ref(false);
@@ -51,7 +59,9 @@ const serviceName = computed(() => serviceLabelFor(props.appointment?.service_id
 const availableTransitions = computed((): string[] => {
   const appt = props.appointment;
   if (!appt) return [];
-  const targets = TRANSITION_MAP[appt.state];
+  // TRANSITION_MAP's keys are a literal union ('requested' | 'scheduled'); appt.state is a
+  // plain string, so the lookup needs the same widening assertValidTransition uses internally.
+  const targets = (TRANSITION_MAP as Partial<Record<string, readonly string[]>>)[appt.state];
   if (!targets) return [];
   return targets.filter((to) => {
     const check = assertValidTransition(appt.state, to);
@@ -97,6 +107,8 @@ async function doTransition(to: string) {
   saving.value = false;
   if (result.ok) {
     emit('mutated', result.data);
+  } else if (result.code === 'too_early') {
+    toast.error('completeTooEarly');
   } else {
     // Defensive: the button guard should already exclude illegal transitions the server 422s.
     toast.error('genericError');
@@ -139,8 +151,8 @@ function fmtPrice(price: string): string {
   return `$ ${n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// The state → i18n action-key map for transition buttons; state labels themselves come from the
-// shared `status.*` namespace so this panel translates like every other screen.
+// The state → i18n action-key map for transition buttons; state labels themselves come from
+// stateLabel() (SSOT), not this map.
 const TRANSITION_KEY: Record<string, string> = {
   scheduled: 'calendar.approve',
   rejected: 'calendar.reject',
@@ -174,7 +186,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
             'bg-neutral/10 text-neutral': ['canceled','no_show','rejected'].includes(appointment.state),
           }"
         >
-          {{ t(`status.${appointment.state}`) }}
+          {{ stateLabel(appointment.state) }}
         </span>
         <span
           v-if="appointment.in_conflict"
@@ -214,12 +226,12 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
         <dd>{{ fmtPrice(appointment.price) }}</dd>
 
         <template v-if="appointment.name">
-          <dt class="font-semibold text-neutral">Título</dt>
+          <dt class="font-semibold text-neutral">{{ label(nameColumnLabel) }}</dt>
           <dd>{{ appointment.name }}</dd>
         </template>
 
         <template v-if="appointment.description">
-          <dt class="font-semibold text-neutral">Descripción</dt>
+          <dt class="font-semibold text-neutral">{{ label(descriptionColumnLabel) }}</dt>
           <dd class="whitespace-pre-line">{{ appointment.description }}</dd>
         </template>
       </dl>
@@ -303,7 +315,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
       </div>
 
       <p v-if="isTerminal && !canEditNote" class="text-sm text-neutral italic">
-        Este turno está cerrado.
+        {{ t('calendar.appointmentClosed') }}
       </p>
     </div>
   </DetailPanel>

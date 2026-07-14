@@ -4,14 +4,15 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { listAppointments, transitionAppointment, approveAppointment, ignoreAppointmentConflict } from '@/api/appointments';
-import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { createEntry } from '@/api/ledger';
 import { listAudit } from '@/api/audit';
 import type { Appointment } from '@/api/appointments';
 import type { AuditEvent } from '@/api/audit';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
+import { useConflictOverride } from '@/composables/useConflictOverride';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { isCurrent, canSettle as canSettleAt, transitionFor, showsCurrentCard } from '@/views/staff/dashboard-current';
 import type { SettleAction } from '@/views/staff/dashboard-current';
@@ -26,6 +27,7 @@ const auth = useAuthStore();
 const router = useRouter();
 const { formatDateTime, formatARS } = useCurrency();
 const { label } = useLabel();
+const { stateLabel } = useStateLabel();
 const toast = useToast();
 
 const role = computed(() => auth.user?.role);
@@ -114,7 +116,7 @@ async function loadConflicts() {
   }
 }
 
-const conflictBusy = ref<Record<number, boolean>>({});
+const conflictBusy = ref<Record<string, boolean>>({});
 // A pending turno is denied (rejected); a booked one is canceled — same destructive confirm, two verbs.
 const resolveTarget = ref<{ appt: Appointment; to: 'canceled' | 'rejected' } | null>(null);
 
@@ -143,33 +145,17 @@ async function confirmResolve() {
 
 // Approving a conflicting request books it over the time-off — the same conflict-aware path the
 // calendar uses, so an availability conflict surfaces the override dialog rather than failing silently.
-const conflictOpen = ref(false);
-const conflictVerdict = ref<ConflictVerdict | null>(null);
-const conflictRetry = ref<((override: boolean) => Promise<void>) | null>(null);
+const { conflictOpen, conflictVerdict, conflictRevert, raiseConflict, onOverrideConfirm, onOverrideCancel } =
+  useConflictOverride();
 
 async function approveConflict(appt: Appointment, override = false) {
   const res = await approveAppointment(appt.id, override);
   if (!res.ok) { toast.error('genericError'); return; }
   if (!res.data.saved) {
-    conflictVerdict.value = res.data.verdict;
-    conflictRetry.value = (ov: boolean) => approveConflict(appt, ov);
-    conflictOpen.value = true;
+    raiseConflict(res.data.verdict, (ov: boolean) => approveConflict(appt, ov));
   } else {
     await loadConflicts();
   }
-}
-
-async function onOverrideConfirm() {
-  conflictOpen.value = false;
-  if (conflictRetry.value) await conflictRetry.value(true);
-  conflictVerdict.value = null;
-  conflictRetry.value = null;
-}
-
-function onOverrideCancel() {
-  conflictOpen.value = false;
-  conflictVerdict.value = null;
-  conflictRetry.value = null;
 }
 
 onMounted(() => {
@@ -220,8 +206,8 @@ const settleCandidates = ref<Appointment[]>([]);
 const now = ref(new Date());
 let nowTimer: number | undefined;
 let refetchTimer: number | undefined;
-const amounts = ref<Record<number, string>>({});
-const processing = ref<Record<number, boolean>>({});
+const amounts = ref<Record<string, string>>({});
+const processing = ref<Record<string, boolean>>({});
 
 const currentAppointments = computed(() =>
   settleCandidates.value
@@ -278,11 +264,11 @@ async function settle(appt: Appointment, action: SettleAction) {
   try {
     const res = await transitionAppointment(appt.id, transitionFor(action));
     if (!res.ok) {
-      toast.error('genericError');
+      toast.error(res.code === 'too_early' ? 'completeTooEarly' : 'genericError');
       return;
     }
 
-    if (action === 'paid' && appt.client_user_id != null) {
+    if (action === 'paid') {
       const amount = (amounts.value[appt.id] ?? appt.price ?? '').trim();
       const paid = await createEntry({
         client_user_id: appt.client_user_id,
@@ -359,7 +345,7 @@ async function settle(appt: Appointment, action: SettleAction) {
             {{ label({ es: 'No pagó', en: 'Not paid' }) }}
           </AppButton>
           <AppButton variant="neutral" :disabled="processing[appt.id] || !canSettle(appt)" @click="settle(appt, 'absent')">
-            {{ label({ es: 'No asistió', en: 'No-show' }) }}
+            {{ stateLabel('no_show') }}
           </AppButton>
           <p v-if="!canSettle(appt)" class="text-xs text-neutral">
             {{ label({ es: 'El turno todavía no empezó.', en: 'The appointment hasn’t started yet.' }) }}
@@ -593,7 +579,7 @@ async function settle(appt: Appointment, action: SettleAction) {
     <ConflictOverrideDialog
       :open="conflictOpen"
       :verdict="conflictVerdict"
-      :revert="null"
+      :revert="conflictRevert"
       @confirm="onOverrideConfirm"
       @cancel="onOverrideCancel"
     />

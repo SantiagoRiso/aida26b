@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   Dialog,
@@ -23,6 +24,18 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+// A confirm often opens over a DetailPanel; headlessui would let Escape reach the panel underneath
+// and close it instead. Handle Escape ourselves in the capture phase and stop it, so it dismisses
+// only this confirm and never the modal behind it.
+function onKeydown(e: KeyboardEvent) {
+  if (props.open && e.key === 'Escape') {
+    e.stopPropagation();
+    emit('cancel');
+  }
+}
+onMounted(() => document.addEventListener('keydown', onKeydown, true));
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true));
 </script>
 
 <template>
