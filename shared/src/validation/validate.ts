@@ -1,5 +1,6 @@
 import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
+import { ARGENTINA_OFFSET_MS } from '../ssot/domain/availability';
 import type { ColumnDef, ColumnValidator, ColumnValue } from '../types/types';
 import type { TableKey, TableRecordMap } from '../ssot/derived';
 
@@ -10,8 +11,6 @@ export type ParseResult<T extends TableKey> =
   | { fields: FieldErrors };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-// Argentina (America/Argentina/Buenos_Aires) is UTC-3 all year - no daylight saving.
-const ARGENTINA_OFFSET_MS = -3 * 60 * 60 * 1000;
 
 const regexCache = new Map<string, RegExp>();
 function getRegex(source: string): RegExp {

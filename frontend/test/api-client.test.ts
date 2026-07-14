@@ -139,16 +139,33 @@ describe('401 on entry-mode route', () => {
   });
 });
 
-describe('403 on any route', () => {
+describe('403 with toastOnForbidden', () => {
   it('pushes exactly one notPermitted toast and returns ok:false', async () => {
     mockFetch(403, { success: false, error: { code: 'forbidden', message: 'Forbidden' } });
     const { apiFetch, useUiStore } = await importFresh();
     const ui = useUiStore();
     const toastSpy = vi.spyOn(ui, 'toast');
 
-    const result = await apiFetch('/admin/users/999/deactivate', { method: 'POST' });
+    const result = await apiFetch('/admin/users/999/deactivate', { method: 'POST' }, { toastOnForbidden: true });
 
     expect(toastSpy).toHaveBeenCalledWith('error', 'notPermitted');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(403);
+    }
+  });
+});
+
+describe('403 without toastOnForbidden (default)', () => {
+  it('stays silent — background/probe reads must not flash a toast', async () => {
+    mockFetch(403, { success: false, error: { code: 'forbidden', message: 'Forbidden' } });
+    const { apiFetch, useUiStore } = await importFresh();
+    const ui = useUiStore();
+    const toastSpy = vi.spyOn(ui, 'toast');
+
+    const result = await apiFetch('/appointments');
+
+    expect(toastSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.status).toBe(403);

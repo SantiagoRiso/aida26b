@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useUiStore } from '@/stores/ui';
-import { useLabel } from '@/composables/useLabel';
+import type { Language } from '@shared/types/languages';
 
 const ui = useUiStore();
-const { label } = useLabel();
+const { t } = useI18n();
 
 const current = computed(() => ui.language);
 
-function select(lang: 'es' | 'en') {
+function select(lang: Language) {
   if (lang !== current.value) {
     // setLanguage is the ONLY place the language changes: it flips both
     // SSOT labels (useLabel) and vue-i18n simultaneously.
@@ -22,7 +23,7 @@ function select(lang: 'es' | 'en') {
     data-testid="language-toggle"
     class="inline-flex rounded-md border border-border overflow-hidden"
     role="group"
-    :aria-label="label({ es: 'Idioma', en: 'Language' })"
+    :aria-label="t('settings.language')"
   >
     <button
       type="button"

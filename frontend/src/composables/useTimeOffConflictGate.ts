@@ -1,10 +1,12 @@
 import { ref } from 'vue';
+import { i18n } from '@/i18n';
 import { previewTimeOffConflicts, type TimeOffPreviewBody } from '@/api/scheduling';
 
 // Warn-then-confirm gate for adding time-off. Previews how many open, future turnos the time-off
 // would leave in conflict; if any, resolves only once the user confirms the dialog. A clean add —
 // or a preview that errors — proceeds silently, so the gate never blocks a save on its own failure.
 // Nothing here mutates data; flagging is computed server-side and clears when the time-off is removed.
+// Global i18n instance (not useI18n()) — also called from tests without a component setup context.
 export function useTimeOffConflictGate() {
   const open = ref(false);
   const message = ref('');
@@ -17,10 +19,7 @@ export function useTimeOffConflictGate() {
     r?.(proceed);
   }
 
-  async function confirmTimeOff(
-    body: TimeOffPreviewBody,
-    buildMessage: (count: number) => string,
-  ): Promise<boolean> {
+  async function confirmTimeOff(body: TimeOffPreviewBody): Promise<boolean> {
     // Fail open: a preview that errors or reports no conflict proceeds without a dialog. The warning
     // is advisory — the server-side flag is computed regardless, so a hiccup must never block a save.
     let count = 0;
@@ -31,7 +30,7 @@ export function useTimeOffConflictGate() {
       return true;
     }
     if (count === 0) return true;
-    message.value = buildMessage(count);
+    message.value = i18n.global.t('timeOff.conflictWarning', { n: count, date: shortDate(body.date) }, count);
     open.value = true;
     return new Promise<boolean>((resolve) => { resolver = resolve; });
   }

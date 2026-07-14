@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import { createUser } from '@/api/admin-users';
+import { structure } from '@shared/ssot/structure';
+import { useLabel } from '@/composables/useLabel';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import PasswordInput from '@/components/shared/PasswordInput.vue';
@@ -11,7 +13,9 @@ const emit = defineEmits<{
   cancel: [];
 }>();
 
+const { t } = useI18n();
 const { label } = useLabel();
+const clientColumns = structure.tables.clients.columns;
 
 const submitting = ref(false);
 const error = ref('');
@@ -39,7 +43,7 @@ async function submit() {
     if (result.ok) {
       emit('created');
     } else {
-      error.value = result.message ?? label({ es: 'Error creando cliente', en: 'Error creating client' });
+      error.value = result.message ?? t('clients.createError');
     }
   } finally {
     submitting.value = false;
@@ -53,7 +57,7 @@ async function submit() {
 
     <div class="flex flex-col gap-1">
       <label for="create-client-display-name" class="text-sm font-semibold">
-        {{ label({ es: 'Nombre visible', en: 'Display name' }) }} <span class="text-destructive">*</span>
+        {{ t('fields.displayName') }} <span class="text-destructive">*</span>
       </label>
       <input
         id="create-client-display-name"
@@ -66,7 +70,7 @@ async function submit() {
 
     <div class="flex flex-col gap-1">
       <label for="create-client-email" class="text-sm font-semibold">
-        {{ label({ es: 'Email', en: 'Email' }) }} <span class="text-destructive">*</span>
+        {{ label(clientColumns.email.label) }} <span class="text-destructive">*</span>
       </label>
       <input
         id="create-client-email"
@@ -78,7 +82,7 @@ async function submit() {
     </div>
 
     <div class="flex flex-col gap-1">
-      <label for="create-client-dni" class="text-sm font-semibold">{{ label({ es: 'DNI', en: 'DNI' }) }}</label>
+      <label for="create-client-dni" class="text-sm font-semibold">{{ label(clientColumns.dni.label) }}</label>
       <input
         id="create-client-dni"
         v-model="form.dni"
@@ -91,13 +95,13 @@ async function submit() {
 
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" v-model="enableLogin" class="accent-accent" />
-      {{ label({ es: 'Crear usuario', en: 'Create user' }) }}
+      {{ t('clients.createUser') }}
     </label>
 
     <template v-if="enableLogin">
       <div class="flex flex-col gap-1">
         <label for="create-client-username" class="text-sm font-semibold">
-          {{ label({ es: 'Usuario', en: 'Username' }) }} <span class="text-destructive">*</span>
+          {{ t('auth.usernameLabel') }} <span class="text-destructive">*</span>
         </label>
         <input
           id="create-client-username"
@@ -110,7 +114,7 @@ async function submit() {
 
       <div class="flex flex-col gap-1">
         <label for="create-client-password" class="text-sm font-semibold">
-          {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
+          {{ t('auth.passwordLabel') }} <span class="text-destructive">*</span>
         </label>
         <PasswordInput
           id="create-client-password"
@@ -123,10 +127,10 @@ async function submit() {
 
     <div class="flex justify-end gap-3 pt-2">
       <AppButton variant="neutral" type="button" @click="emit('cancel')">
-        {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+        {{ t('actions.cancel') }}
       </AppButton>
       <AppButton type="submit" :loading="submitting">
-        {{ label({ es: 'Guardar', en: 'Save' }) }}
+        {{ t('actions.save') }}
       </AppButton>
     </div>
   </form>

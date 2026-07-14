@@ -52,9 +52,11 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
 
 1. Setup inicial (una vez por entorno, como superusuario de Postgres):
    ```
-   psql -U postgres -f database/bootstrap.sql
+   set -a; . .env; set +a          # carga DB_* (ver .env.example)
+   POSTGRES_USER=postgres sh database/bootstrap.sh
    ```
-   Esto crea los roles `aida26_owner` / `aida26_user` y la base `professional_agenda`.
+   Toma los roles/base de las variables `DB_*` del entorno y crea los roles
+   `aida26_owner` / `aida26_user` y la base `professional_agenda`.
 
 2. Aplicar migraciones (desde `backend/`):
    ```

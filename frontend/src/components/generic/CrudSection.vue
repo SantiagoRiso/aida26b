@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { deleteRow } from '@/api/crud';
+import { invalidateFkOptions } from '@/composables/useForeignKeyOptions';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
@@ -17,9 +18,9 @@ import AppButton from '@/components/shared/AppButton.vue';
 
 const props = defineProps<{
   tableKey: K;
-  panelTitle: LocalizedText;
-  deleteLabel: LocalizedText;
-  deleteBody: LocalizedText;
+  panelTitle: LocalizedText | string;
+  deleteLabel: LocalizedText | string;
+  deleteBody: LocalizedText | string;
   hideTitle?: boolean;
   hideFilters?: boolean;
 }>();
@@ -62,6 +63,8 @@ function onSaved() {
   panelOpen.value = false;
   toast('success', 'saved');
   reloadKey.value++;
+  // Other screens resolve FK labels against this table from a shared cache — refresh it.
+  invalidateFkOptions(props.tableKey);
 }
 
 // Read editingRow in the script (not the template) — passing the ref-unwrapped generic value
@@ -79,15 +82,26 @@ async function confirmDelete() {
   if (!pendingDeleteId.value) return;
   confirmOpen.value = false;
   const result = await deleteRow(props.tableKey, pendingDeleteId.value);
-  if (result.ok) reloadKey.value++;
-  else toast('error', 'genericError');
+  if (result.ok) {
+    reloadKey.value++;
+    invalidateFkOptions(props.tableKey);
+  } else {
+    toast('error', 'genericError');
+  }
   pendingDeleteId.value = null;
 }
 </script>
 
 <template>
   <div>
-    <GenericTable :key="reloadKey" :table-key="tableKey" :hide-title="hideTitle" :hide-filters="hideFilters" @create="onCreate" @edit="onEdit" />
+    <GenericTable :key="reloadKey" :table-key="tableKey" :hide-title="hideTitle" :hide-filters="hideFilters" @create="onCreate" @edit="onEdit">
+      <!-- Forward table slots (row-actions, header-actions) so sections can add per-row or
+           header controls without leaving the generic pipeline. Forwarding only the slots the
+           caller provides keeps existing consumers rendering exactly as before. -->
+      <template v-for="(_, name) in $slots" :key="name" #[name]="slotProps">
+        <slot :name="name" v-bind="slotProps" />
+      </template>
+    </GenericTable>
 
     <DetailPanel :open="panelOpen" :title="label(panelTitle)" @close="panelOpen = false">
       <GenericForm

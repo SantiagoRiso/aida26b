@@ -6,11 +6,10 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { useCurrency } from '@/composables/useCurrency';
-import { useLabel } from '@/composables/useLabel';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
-import { roleAllowedFor } from '@/router/access';
+import { roleAllowedFor, descriptorWriteRoles } from '@/router/access';
 import type { Role } from '@shared/types/roles';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { isOpenAppointmentState } from '@shared/ssot/domain';
@@ -29,7 +28,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { formatDateTime } = useCurrency();
-const { label } = useLabel();
 const { stateLabel } = useStateLabel();
 const toast = useToast();
 const auth = useAuthStore();
@@ -48,12 +46,13 @@ const deactivateConfirmOpen = ref(false);
 
 const role = computed(() => auth.user?.role as Role | undefined);
 const isSelf = computed(() => String(auth.user?.id) === String(professionalId));
-const canEditProfile = computed(
-  () =>
-    !!role.value &&
-    (roleAllowedFor(['Admin', 'Receptionist'], role.value) || (role.value === 'Professional' && isSelf.value)),
-);
-const canDeactivate = computed(() => !!role.value && roleAllowedFor(['Admin'], role.value));
+const canEditProfile = computed(() => {
+  if (!role.value) return false;
+  // Admin/Receptionist manage any professional; a Professional edits only their own profile.
+  if (roleAllowedFor(descriptorWriteRoles('professionals', 'update', { exclude: ['Professional'] }), role.value)) return true;
+  return role.value === 'Professional' && isSelf.value && descriptorWriteRoles('professionals', 'update').includes('Professional');
+});
+const canDeactivate = computed(() => !!role.value && roleAllowedFor(descriptorWriteRoles('professionals', 'delete'), role.value));
 
 const now = new Date();
 // The appointments list is server-scoped: Admin/Receptionist see this professional's whole agenda,
@@ -143,17 +142,17 @@ onMounted(load);
         </div>
         <div class="flex gap-2">
           <AppButton v-if="canEditProfile" variant="neutral" @click="showEditProfile = true">
-            {{ label({ es: 'Editar perfil', en: 'Edit profile' }) }}
+            {{ t('users.editProfile') }}
           </AppButton>
           <AppButton v-if="canDeactivate" variant="destructive" @click="deactivateConfirmOpen = true">
-            {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
+            {{ t('users.deactivate') }}
           </AppButton>
         </div>
       </div>
 
       <div class="grid gap-6 lg:grid-cols-2">
         <section class="space-y-3">
-          <h2 class="text-lg font-semibold">{{ label({ es: 'Servicios', en: 'Services' }) }}</h2>
+          <h2 class="text-lg font-semibold">{{ t('professionals.servicesHeading') }}</h2>
           <div v-if="services.length > 0" class="flex flex-wrap gap-2">
             <span
               v-for="name in services"
@@ -164,12 +163,12 @@ onMounted(load);
             </span>
           </div>
           <p v-else class="text-sm text-neutral">
-            {{ label({ es: 'Sin servicios asignados.', en: 'No services assigned.' }) }}
+            {{ t('professionals.noServicesAssigned') }}
           </p>
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-lg font-semibold">{{ label({ es: 'Próximos turnos', en: 'Upcoming appointments' }) }}</h2>
+          <h2 class="text-lg font-semibold">{{ t('portal.upcomingHeading') }}</h2>
           <div v-if="upcoming.length > 0">
             <ul class="divide-y divide-border rounded-lg border border-border bg-card">
               <li v-for="appt in visibleUpcoming" :key="appt.id" class="px-4 py-3 text-sm">
@@ -180,13 +179,13 @@ onMounted(load);
               </li>
             </ul>
             <p v-if="extraUpcoming > 0" class="mt-2 text-xs text-neutral">
-              {{ label({ es: `+${extraUpcoming} turno(s) más`, en: `+${extraUpcoming} more appointment(s)` }) }}
+              {{ t('professionals.moreAppointments', { n: extraUpcoming }) }}
             </p>
           </div>
           <EmptyState
             v-else
-            :heading="label({ es: 'Sin turnos próximos', en: 'No upcoming appointments' })"
-            :body="label({ es: 'Este profesional no tiene turnos próximos visibles.', en: 'No upcoming appointments visible for this professional.' })"
+            :heading="t('dashboard.noUpcoming')"
+            :body="t('professionals.noUpcomingBody')"
           />
         </section>
       </div>
@@ -194,14 +193,14 @@ onMounted(load);
 
     <template v-else>
       <EmptyState
-        :heading="label({ es: 'Profesional no encontrado', en: 'Professional not found' })"
-        :body="label({ es: 'No se pudo cargar este profesional.', en: 'Could not load this professional.' })"
+        :heading="t('professionals.notFoundHeading')"
+        :body="t('professionals.notFoundBody')"
       />
     </template>
 
     <DetailPanel
       :open="showEditProfile"
-      :title="label({ es: 'Editar perfil', en: 'Edit profile' })"
+      :title="t('users.editProfile')"
       @close="showEditProfile = false"
     >
       <GenericForm
@@ -216,9 +215,9 @@ onMounted(load);
 
     <ConfirmDialog
       :open="deactivateConfirmOpen"
-      :title="label({ es: 'Desactivar profesional', en: 'Deactivate professional' })"
-      :body="label({ es: `Desactivar a ${professional?.display_name ?? ''}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${professional?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments.` })"
-      :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
+      :title="t('professionals.deactivateTitle')"
+      :body="t('users.deactivateBody', { name: professional?.display_name ?? '' })"
+      :confirm-label="t('users.deactivate')"
       :destructive="true"
       @confirm="confirmDeactivate"
       @cancel="deactivateConfirmOpen = false"

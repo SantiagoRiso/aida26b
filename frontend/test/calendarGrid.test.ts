@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  gcd, gcdAll, computeSnapMinutes, mergeIntervals, tileFreeWindows, resolveDrop, snapDragMinutes,
+  gcd, gcdAll, computeSnapMinutes, tileFreeWindows, resolveDrop, snapDragMinutes,
   exceedsEndOfDay, complementIntervals,
 } from '@/composables/calendarGrid';
+import { mergeIntervals } from '@shared/ssot/domain/availability';
 
 describe('complementIntervals', () => {
   it('returns the gaps around a single free window within [min,max]', () => {

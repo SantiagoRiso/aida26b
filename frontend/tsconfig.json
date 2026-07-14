@@ -1,15 +1,10 @@
 {
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "preserve",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -59,11 +54,15 @@
     "test/i18n-label.test.ts",
     "test/tailwind-theme.test.ts",
     "test/router-guards.test.ts",
+    "test/screen-roles.test.ts",
     "test/generic-table.test.ts",
     "test/generic-form.test.ts",
+    "test/fk-options-cache.test.ts",
+    "test/use-settle-card.test.ts",
     "test/calendar.test.ts",
     "test/bespoke-screens.test.ts",
     "test/portal.test.ts",
+    "test/ssot-nullability.test.ts",
     "../shared/src/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", "e2e"]

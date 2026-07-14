@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { listGrants, listGrantableStaff, createGrant, revokeGrant } from '@/api/grants';
@@ -11,7 +11,7 @@ import Selector from '@/components/shared/Selector.vue';
 
 const props = defineProps<{ professionalUserId: number | null }>();
 
-const { label } = useLabel();
+const { t } = useI18n();
 const { roleLabel } = useStateLabel();
 const { success, error } = useToast();
 
@@ -92,13 +92,13 @@ async function revoke(id: string) {
 <template>
   <div class="space-y-4">
     <p v-if="professionalUserId == null" class="text-sm text-neutral">
-      {{ label({ es: 'Seleccionar un profesional para ver sus permisos.', en: 'Select a professional to see their permissions.' }) }}
+      {{ t('grants.selectProfessional') }}
     </p>
 
     <template v-else>
       <div v-if="loading" class="text-sm text-neutral">…</div>
       <p v-else-if="grants.length === 0" class="text-sm text-neutral">
-        {{ label({ es: 'Nadie tiene acceso todavía.', en: 'No one has access yet.' }) }}
+        {{ t('grants.noneYet') }}
       </p>
       <ul v-else class="space-y-2">
         <li
@@ -116,19 +116,19 @@ async function revoke(id: string) {
             :loading="revokingId === g.id"
             @click="revoke(g.id)"
           >
-            {{ label({ es: 'Quitar acceso', en: 'Remove access' }) }}
+            {{ t('grants.removeAccess') }}
           </AppButton>
         </li>
       </ul>
 
       <div class="flex flex-wrap items-end gap-3 border-t border-border pt-4">
         <label class="flex min-w-[220px] flex-1 flex-col gap-1 text-sm">
-          <span class="font-medium text-neutral">{{ label({ es: 'Dar acceso a', en: 'Give access to' }) }}</span>
+          <span class="font-medium text-neutral">{{ t('grants.giveAccessTo') }}</span>
           <Selector
             id="grant-grantee-select"
             v-model="selectedGranteeId"
             :options="grantableOptions"
-            :placeholder="label({ es: 'Seleccionar', en: 'Select' })"
+            :placeholder="t('generic.select')"
             :label-if-single="false"
           />
         </label>
@@ -138,7 +138,7 @@ async function revoke(id: string) {
           :loading="granting"
           @click="grant"
         >
-          {{ label({ es: 'Dar acceso', en: 'Give access' }) }}
+          {{ t('grants.giveAccess') }}
         </AppButton>
       </div>
       <FieldError :message="grantError" />

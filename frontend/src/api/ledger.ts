@@ -35,5 +35,5 @@ export function getLedger(
 }
 
 export function createEntry(body: CreateEntryBody): Promise<ApiResult<LedgerEntry>> {
-  return apiFetch<LedgerEntry>(ledgerPaths.create(), { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<LedgerEntry>(ledgerPaths.create(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }

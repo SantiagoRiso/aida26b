@@ -8,9 +8,7 @@ import { i18n } from '@/i18n';
 import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
 import type { ProfessionalBlock } from '@/composables/useProfessionalBlocks';
 
-// Raw timegrid interaction for the staff calendar: pointer→slot resolution, the snap lattice
-// derived from the selected professional's free slots, and the hover/click-to-book plumbing.
-// The custom drag itself (useCustomDrag) stays separate — this only owns the grid side.
+// The custom drag itself (useCustomDrag) stays separate from this — this only owns the grid side.
 
 // Sobreturno free-click step: a placement snaps to this (matching the sobreturno drag's 5-min snap).
 const FREE_SNAP_MINUTES = 5;

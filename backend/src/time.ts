@@ -1,9 +1,10 @@
-// Argentina-only (UTC-3, no DST). Appointment starts_at/ends_at are TIMESTAMPTZ; slots and
-// schedules are local wall-clock HH:MM. Shared by the booking and scheduling paths so the two
-// cannot disagree on timezone, formats, or the same-day rule.
-export const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
+import { HHMM_PATTERN, BUSINESS_TZ } from '../../shared/src/ssot/domain/availability';
 
-export const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Shared by the booking and scheduling paths so the two cannot disagree on timezone, formats,
+// or the same-day rule. The timezone fact itself lives in the shared SSOT.
+export { BUSINESS_TZ };
+
+export const HHMM_RE = new RegExp(HHMM_PATTERN);
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 

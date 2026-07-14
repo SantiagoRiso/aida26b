@@ -11,7 +11,7 @@ export const APPOINTMENT_STATES = [
   { value: 'rejected', label: { es: 'Rechazado', en: 'Rejected' } },
 ] as const;
 
-type AppointmentState = (typeof APPOINTMENT_STATES)[number]['value'];
+export type AppointmentState = (typeof APPOINTMENT_STATES)[number]['value'];
 
 // Valid nodes of the appointment state machine — the SSOT set for validating a state filter/value.
 export const APPOINTMENT_STATE_VALUES = new Set<string>(APPOINTMENT_STATES.map((s) => s.value));
@@ -62,6 +62,8 @@ export const VOID_APPOINTMENT_STATES = [
   'canceled',
   'rejected',
 ] as const satisfies readonly TerminalAppointmentState[];
+
+export type VoidAppointmentState = (typeof VOID_APPOINTMENT_STATES)[number];
 
 // Business default cancellation window when a business has none set.
 export const DEFAULT_CANCELLATION_CUTOFF_HOURS = 24;

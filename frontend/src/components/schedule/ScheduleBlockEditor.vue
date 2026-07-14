@@ -12,10 +12,10 @@ import { useScheduleTemplate } from '@/composables/useScheduleTemplate';
 import { useTimegridGeometry } from '@/composables/useTimegridGeometry';
 import { useTemplateBlockDrag } from '@/composables/useTemplateBlockDrag';
 import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type TemplateBlock, type WeekdayTimes } from '@/composables/scheduleTemplateGrid';
-import type { ColumnValue } from '@shared/types/types';
 import type { TableRecordMap } from '@shared/ssot/derived';
+import type { OwnerKind } from '@shared/ssot/domain/conflict';
 
-const props = defineProps<{ owner: { kind: 'professional' | 'resource'; id: number } }>();
+const props = defineProps<{ owner: { kind: OwnerKind; id: number } }>();
 
 const { t } = useI18n();
 const toast = useToast();
@@ -58,19 +58,16 @@ async function loadBlocks() {
 watch(() => props.owner, loadBlocks, { deep: true });
 onMounted(loadBlocks);
 
-// schedule_blocks columns are typed non-nullable in TableRecordMap (the SSOT type map doesn't
-// encode per-column nullability), but professional_user_id/resource_id ARE nullable at the
-// DB/validator level — this write body intentionally nulls the non-owning FK, matching GenericForm's cast.
+// A block belongs to exactly one owner — the non-owning FK is explicitly nulled.
 function writeBody(times: WeekdayTimes): Partial<TableRecordMap['schedule_blocks']> {
   const { kind, id } = props.owner;
-  const body: Record<string, ColumnValue | undefined> = {
+  return {
     professional_user_id: kind === 'professional' ? String(id) : null,
     resource_id: kind === 'resource' ? String(id) : null,
     weekday: times.weekday,
     start_time: times.start_time,
     end_time: times.end_time,
   };
-  return body as Partial<TableRecordMap['schedule_blocks']>;
 }
 
 async function onSelect(arg: DateSelectArg) {

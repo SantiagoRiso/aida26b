@@ -87,7 +87,7 @@ function apptToEvent(appt: Appointment, decorators?: CalendarDecorators): EventI
   const colors = colorForProfessional(appt.professional_user_id);
   return {
     id: String(appt.id),
-    title: appt.name ?? decorators?.fallbackTitle?.(appt) ?? `Turno #${appt.id}`,
+    title: appt.name ?? decorators?.fallbackTitle?.(appt) ?? i18n.global.t('portal.appointmentFallback', { id: appt.id }),
     start: appt.starts_at,
     end: appt.ends_at,
     backgroundColor: colors.bg,

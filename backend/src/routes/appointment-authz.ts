@@ -1,6 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
+import type { AuditOutcome } from '../../../shared/src/ssot/domain';
+import { LEDGER_WRITE_ROLES } from '../../../shared/src/ssot/domain';
 import { hasCalendarGrant } from '../db/grants';
 import { insertAuditEvent } from '../db/audit';
 import { NO_BUSINESS_CODE, NO_BUSINESS_MESSAGE } from './business-context';
@@ -21,7 +23,7 @@ export async function auditInTx(
   client: PoolClient,
   user: AuthUser,
   eventType: string,
-  outcome: 'success' | 'failure' | 'denied',
+  outcome: AuditOutcome,
   entityId?: number,
   entityType = 'appointments',
   details: Record<string, ColumnValue | string[]> = {},
@@ -73,7 +75,7 @@ export async function assertLedgerWriteAllowed(
 ): Promise<AuthzResult> {
   const { clientUserId, appointmentId, entryType } = opts;
 
-  if (user.role === 'Client') {
+  if (!LEDGER_WRITE_ROLES.includes(user.role)) {
     return { ok: false, status: 403, code: 'forbidden', message: 'Clients cannot create ledger entries' };
   }
   if (user.business_id == null) {

@@ -32,6 +32,8 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async logout() {
+      // Errors are ignored on purpose (local state clears regardless); a 403 here is unreachable
+      // in practice, so no forbidden toast.
       await apiFetch(authPaths.logout(), { method: 'POST' });
       this.user = null;
     },
@@ -52,6 +54,7 @@ export const useAuthStore = defineStore('auth', {
       const result = await apiFetch<{ user: AuthUser }>(
         authPaths.changePassword(),
         { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) },
+        { toastOnForbidden: true },
       );
       if (result.ok && result.data.user) {
         this.user = result.data.user;

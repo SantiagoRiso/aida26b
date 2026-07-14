@@ -145,7 +145,7 @@ async function onSubmit() {
         @blur="onBlur(field)"
         @change="onBlur(field)"
       >
-        <option value="">{{ label({ es: 'Seleccionar…', en: 'Select…' }) }}</option>
+        <option value="">{{ i18n.global.t('generic.selectPlaceholder') }}</option>
         <option
           v-for="opt in getFkOptions(field, col).options.value"
           :key="opt.value"
@@ -164,7 +164,7 @@ async function onSubmit() {
         @blur="onBlur(field)"
         @change="onBlur(field)"
       >
-        <option value="">{{ label({ es: 'Seleccionar…', en: 'Select…' }) }}</option>
+        <option value="">{{ i18n.global.t('generic.selectPlaceholder') }}</option>
         <option
           v-for="opt in col.options"
           :key="opt.value"

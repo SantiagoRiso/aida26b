@@ -3,6 +3,15 @@
 
 import type { LocalizedText } from '../../types/types';
 
+// Argentina-only product: every wall-clock time is this zone. Appointment starts_at/ends_at are
+// TIMESTAMPTZ; slots and schedules are local HH:MM.
+export const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
+
+// BUSINESS_TZ as a fixed offset — Argentina observes no DST, so UTC-3 holds all year. Paired with
+// BUSINESS_TZ: a drift test recomputes the zone's real offset via Intl and fails if they diverge
+// (e.g. Argentina re-adopting DST).
+export const ARGENTINA_OFFSET_MS = -3 * 60 * 60 * 1000;
+
 // Shared by every 'HH:MM' 24h column (block/exception start and end times).
 export const HHMM_PATTERN = '^([01]\\d|2[0-3]):[0-5]\\d$';
 export const HHMM_PATTERN_MESSAGE = 'must be HH:MM';

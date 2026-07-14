@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { roleAllowedFor } from '@/router/access';
 import type { Role } from '@shared/types/roles';
 
-// Mirrors ProfessionalDetail's action gating (#9): Admin/Receptionist manage any professional's
+// Mirrors ProfessionalDetail's action gating: Admin/Receptionist manage any professional's
 // profile; a Professional may edit only their own; only an Admin can deactivate.
 function canEditProfile(role: Role, isSelf: boolean): boolean {
   return roleAllowedFor(['Admin', 'Receptionist'], role) || (role === 'Professional' && isSelf);

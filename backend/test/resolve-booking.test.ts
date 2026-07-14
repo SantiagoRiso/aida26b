@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveBooking } from '../../shared/src/ssot/domain/catalog';
+import { resolveBooking } from '../../shared/src/ssot/domain/booking';
 
 describe('resolveBooking precedence', () => {
   const base = { serviceDefaultPriceArs: '5000.00', serviceDefaultDurationMinutes: 30 };

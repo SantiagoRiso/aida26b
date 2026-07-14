@@ -25,7 +25,7 @@ function makeRouter() {
 }
 
 describe('StatusBadge', () => {
-  // stateLabel() resolves through useLabel/useUiStore (Pinia), unlike the old plain t() lookup.
+  // stateLabel() resolves through useLabel/useUiStore, so Pinia must be active.
   beforeEach(() => {
     setActivePinia(createPinia());
   });
@@ -117,7 +117,7 @@ describe('PortalNav', () => {
     expect(wrapper.html()).toContain('Mis turnos');
   });
 
-  // "Solicitar turno" is no longer a nav tab — it's a button on the appointments dashboard.
+  // "Solicitar turno" lives as a button on the appointments dashboard, not a nav tab.
   it('does not include a Solicitar turno nav link', async () => {
     const router = makeRouter();
     const i18n = makeI18n();

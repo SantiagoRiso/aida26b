@@ -1,12 +1,12 @@
-// Pure placement math for the live (mid-drag) move/resize of schedule-template blocks. Split out from
-// the DOM interaction (useTemplateBlockDrag) so it unit-tests without a calendar. Every result clamps
-// the block inside the free time around its neighbours — overlap is impossible by construction — and
-// snaps an edge flush to a neighbour boundary when it lands within SNAP_THRESHOLD_MINUTES, otherwise to
-// a coarse grid step for a steady feel between magnets.
+// Split out from the DOM interaction (useTemplateBlockDrag) so it unit-tests without a calendar. Every
+// result clamps the block inside the free time around its neighbours — overlap is impossible by
+// construction — and snaps an edge flush to a neighbour boundary when it lands within
+// SNAP_THRESHOLD_MINUTES, otherwise to a coarse grid step for a steady feel between magnets.
 
 import { nearestEdgeWithin } from './scheduleTemplateGrid';
 
-// Match the template calendar's visible range (slotMinTime/slotMaxTime in useScheduleTemplate).
+// The template calendar's visible range — useScheduleTemplate derives its FC slotMinTime/slotMaxTime
+// strings from these, so this is the single source of truth for the day bounds.
 export const DAY_MIN_MINUTES = 6 * 60;
 export const DAY_MAX_MINUTES = 23 * 60;
 export const MIN_BLOCK_MINUTES = 5;
@@ -60,9 +60,8 @@ export function placeResizeBottom(block: MinuteInterval, desiredEnd: number, win
   return snapWithin(desiredEnd, edges, lo, hi);
 }
 
-// Move a fixed-duration block to `desiredStart` on a day whose free windows are given. Places it in the
-// window nearest the pointer that can hold the duration; either edge may snap onto a block boundary
-// (whichever is closer). Returns the new start (minutes), or null when no window can fit the block.
+// Places the block in the window nearest the pointer that can hold the duration; either edge may snap
+// onto a block boundary, whichever is closer.
 export function placeMove(duration: number, desiredStart: number, windows: MinuteInterval[], edges: number[]): number | null {
   const fits = windows.filter((w) => w.end - w.start >= duration);
   if (fits.length === 0) return null;

@@ -1,5 +1,5 @@
 import type { EventInput } from '@fullcalendar/core';
-import { detectOverlap } from '@shared/ssot/domain';
+import { detectOverlap, toHHMM, toMinutes } from '@shared/ssot/domain';
 import type { Weekday } from '@shared/ssot/domain';
 
 // A known Monday; the template is dateless, so any fixed Monday works as the render anchor.
@@ -57,15 +57,6 @@ export function eventToWeekdayTimes(startISO: string, endISO: string): { weekday
   };
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
-function fromMinutes(mins: number): string {
-  return `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`;
-}
-
 // A dragged edge snaps to another block's edge when it lands within this many minutes; otherwise it
 // moves per-minute. It's a magnet to real boundaries, not a coarse grid.
 export const SNAP_THRESHOLD_MINUTES = 10;
@@ -103,8 +94,8 @@ export function snapToNeighbors(
   const edges = otherBlockEdges(others, ignoreId);
   return {
     weekday: candidate.weekday,
-    start_time: fromMinutes(snapMinuteToEdges(toMinutes(candidate.start_time), edges)),
-    end_time: fromMinutes(snapMinuteToEdges(toMinutes(candidate.end_time), edges)),
+    start_time: toHHMM(snapMinuteToEdges(toMinutes(candidate.start_time), edges)),
+    end_time: toHHMM(snapMinuteToEdges(toMinutes(candidate.end_time), edges)),
   };
 }
 

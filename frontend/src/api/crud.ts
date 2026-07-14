@@ -51,19 +51,24 @@ export function getRow<K extends TableKey>(
   return apiFetch<TableRecordMap[K]>(`${crudPath(table)}?id=${encodeURIComponent(id)}`);
 }
 
+// Nullable columns already carry `| null` in TableRecordMap; the widening here remains only
+// for generic builders (e.g. GenericForm) that clear any emptied field by sending explicit
+// null — the server decides per column whether null is acceptable.
+type WriteBody<K extends TableKey> = { [C in keyof TableRecordMap[K]]?: TableRecordMap[K][C] | null };
+
 export function createRow<K extends TableKey>(
   table: K,
-  body: Partial<TableRecordMap[K]>,
+  body: WriteBody<K>,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(crudPath(table), { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<TableRecordMap[K]>(crudPath(table), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function updateRow<K extends TableKey>(
   table: K,
   id: string | number,
-  body: Partial<TableRecordMap[K]>,
+  body: WriteBody<K>,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'PUT', body: JSON.stringify(body) });
+  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 // The backend DELETE returns the removed (or soft-delete-archived) row via RETURNING *.
@@ -71,5 +76,5 @@ export function deleteRow<K extends TableKey>(
   table: K,
   id: string | number,
 ): Promise<ApiResult<TableRecordMap[K]>> {
-  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'DELETE' });
+  return apiFetch<TableRecordMap[K]>(crudPath(table, id), { method: 'DELETE' }, { toastOnForbidden: true });
 }

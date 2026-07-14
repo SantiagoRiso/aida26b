@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
+import { useLabel } from '@/composables/useLabel';
 import { listRows } from '@/api/crud';
 import { listRelatedClientIds } from '@/api/appointments';
+import { structure } from '@shared/ssot/structure';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -13,9 +15,12 @@ import ClientDetail from '@/components/staff/ClientDetail.vue';
 import CreateClientForm from '@/components/staff/CreateClientForm.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 
-const { label } = useLabel();
+const { t } = useI18n();
 const { success } = useToast();
 const auth = useAuthStore();
+const { label } = useLabel();
+
+const clientColumns = structure.tables.clients.columns;
 
 // The "prior relationship" scoping is only meaningful for staff whose client list is a subset
 // (Professional/Receptionist): an Admin sees every client, all of them relevant.
@@ -82,9 +87,9 @@ onMounted(load);
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-semibold">{{ label({ es: 'Clientes', en: 'Clients' }) }}</h1>
+      <h1 class="text-2xl font-semibold">{{ t('nav.clients') }}</h1>
       <AppButton @click="openCreate">
-        {{ label({ es: 'Agregar cliente', en: 'Add client' }) }}
+        {{ t('clients.addClient') }}
       </AppButton>
     </div>
 
@@ -92,12 +97,12 @@ onMounted(load);
       <input
         v-model="nameQuery"
         type="search"
-        :placeholder="label({ es: 'Buscar por nombre o DNI…', en: 'Search by name or DNI…' })"
+        :placeholder="t('clients.searchPlaceholder')"
         class="w-64 rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
       />
       <label v-if="!isAdmin" class="flex items-center gap-2 text-sm text-neutral">
         <input type="checkbox" v-model="includeUnrelated" class="accent-accent" />
-        {{ label({ es: 'Incluir clientes sin relación previa', en: 'Include clients with no prior relationship' }) }}
+        {{ t('clients.includeUnrelated') }}
       </label>
     </div>
 
@@ -107,10 +112,10 @@ onMounted(load);
 
     <div v-else-if="filtered.length === 0">
       <EmptyState
-        :heading="label({ es: 'No hay clientes para mostrar', en: 'No clients to show' })"
+        :heading="t('clients.emptyHeading')"
         :body="(includeUnrelated || isAdmin)
-          ? label({ es: 'No hay resultados para la búsqueda.', en: 'No results for the search.' })
-          : label({ es: 'No hay clientes con relación previa.', en: 'No clients with a prior relationship.' })"
+          ? t('clients.emptySearchBody')
+          : t('clients.emptyUnrelatedBody')"
       />
     </div>
 
@@ -118,10 +123,10 @@ onMounted(load);
       <table class="w-full text-sm">
         <thead class="bg-surface text-left">
           <tr>
-            <th class="px-4 py-3 font-semibold">{{ label({ es: 'Nombre', en: 'Name' }) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label({ es: 'DNI', en: 'DNI' }) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label({ es: 'Email', en: 'Email' }) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label({ es: 'Teléfono', en: 'Phone' }) }}</th>
+            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.display_name.label) }}</th>
+            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.dni.label) }}</th>
+            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.email.label) }}</th>
+            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.phone.label) }}</th>
           </tr>
         </thead>
         <tbody>
@@ -137,7 +142,7 @@ onMounted(load);
                 v-if="!isAdmin && !relatedIds.has(String(c.id))"
                 class="ml-2 rounded-full bg-border px-2 py-0.5 text-xs font-normal text-neutral"
               >
-                {{ label({ es: 'sin relación', en: 'no relationship' }) }}
+                {{ t('clients.noRelationship') }}
               </span>
             </td>
             <td class="px-4 py-3 text-neutral">{{ c.dni ?? '—' }}</td>
@@ -151,7 +156,7 @@ onMounted(load);
     <DetailPanel
       :open="clientOpen"
       size="7xl"
-      :title="label({ es: 'Detalle del cliente', en: 'Client detail' })"
+      :title="t('clients.detailTitle')"
       @close="clientOpen = false"
       @after-leave="selectedClientId = null"
     >
@@ -165,7 +170,7 @@ onMounted(load);
 
     <DetailPanel
       :open="createPanelOpen"
-      :title="label({ es: 'Nuevo cliente', en: 'New client' })"
+      :title="t('clients.newClient')"
       @close="createPanelOpen = false"
     >
       <CreateClientForm @created="onClientCreated" @cancel="createPanelOpen = false" />

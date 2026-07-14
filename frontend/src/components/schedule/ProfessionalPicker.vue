@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useLabel } from '@/composables/useLabel';
 import { listRows } from '@/api/crud';
 import Selector from '@/components/shared/Selector.vue';
 import { scopeProfessionalOptions } from '@/composables/useFullCalendar';
@@ -14,7 +13,6 @@ const props = defineProps<{ modelValue: number | null; allowAll?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [id: number | null] }>();
 
 const { t } = useI18n();
-const { label } = useLabel();
 const auth = useAuthStore();
 const proOptions = ref<{ value: string; label: string }[]>([]);
 
@@ -32,7 +30,7 @@ onMounted(async () => {
 const ALL = 'all';
 const options = computed(() =>
   props.allowAll
-    ? [{ value: ALL, label: label({ es: 'Todos los profesionales', en: 'All professionals' }) }, ...proOptions.value]
+    ? [{ value: ALL, label: t('schedule.allProfessionals') }, ...proOptions.value]
     : proOptions.value,
 );
 

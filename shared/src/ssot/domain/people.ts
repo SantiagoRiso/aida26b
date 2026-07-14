@@ -1,10 +1,19 @@
-import type { SoftDeletePolicy, SchedulableCapability, TableStructure, LocalizedText } from '../../types/types';
+import type { GrantScopeDescriptor, SoftDeletePolicy, SchedulableCapability, TableStructure, LocalizedText } from '../../types/types';
 import { ROLES, type Role } from '../../types/roles';
-import { pkColumn, businessIdColumn } from './business';
+import { pkColumn, businessIdColumn, businessForeignKey } from './business';
 
 export const softDelete: SoftDeletePolicy = {
   deletedAtColumn: 'deleted_at',
   deletedByColumn: 'deleted_by_user_id',
+};
+
+// A receptionist's world is the calendars they were granted, reads and writes alike — the same
+// relationship on every table it scopes. db/grants.ts owns the SQL side of this shape.
+export const receptionistGrantScope: GrantScopeDescriptor = {
+  role: 'Receptionist',
+  grantTable: 'calendar_grants',
+  grantRowColumn: 'professional_user_id',
+  granteeColumn: 'grantee_user_id',
 };
 
 // Same shape everywhere a user-facing email column appears (users.email, clients.email).
@@ -55,7 +64,7 @@ export const peopleTables = {
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
+        foreignKey: businessForeignKey,
       },
       username: {
         type: 'string',
@@ -267,8 +276,7 @@ export const peopleTables = {
     // profile). Reads stay unscoped for every allowed role — Clients need the full
     // professional list to book, Admin/Receptionist need it to manage the calendar.
     ownership: { ownerColumn: 'id', role: 'Professional', ops: ['update', 'delete'] },
-    // A receptionist's world is the calendars they were granted; reads and writes alike.
-    grantScope: { role: 'Receptionist', grantTable: 'calendar_grants', grantRowColumn: 'professional_user_id', granteeColumn: 'grantee_user_id' },
+    grantScope: receptionistGrantScope,
   } satisfies TableStructure,
 
   resources: {

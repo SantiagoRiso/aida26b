@@ -1,4 +1,5 @@
 import type { TableStructure } from '../../types/types';
+import type { Role } from '../../types/roles';
 import { pkColumn } from './business';
 import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
 
@@ -15,6 +16,12 @@ export type LedgerEntryType = (typeof LEDGER_ENTRY_TYPES)[number]['value'];
 
 export const LEDGER_DEBIT_TYPES = LEDGER_ENTRY_TYPES.filter((t) => t.sign === 'debit').map((t) => t.value);
 export const LEDGER_CREDIT_TYPES = LEDGER_ENTRY_TYPES.filter((t) => t.sign === 'credit').map((t) => t.value);
+
+// Roles that may create a ledger entry at all. The server refines this per-role (a Professional
+// only for own clients, a Receptionist only for granted appointment charges); Clients never can.
+// ledger_entries has no descriptor roleRequired — authz is bespoke — so this list is the shared
+// source the server's check and the frontend gate both read.
+export const LEDGER_WRITE_ROLES: Role[] = ['Admin', 'Professional', 'Receptionist'];
 
 export const financeTables = {
   // Immutable: balance is SUM over entries; corrections are new adjustment rows.

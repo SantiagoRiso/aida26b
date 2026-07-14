@@ -23,5 +23,6 @@ export function updateSettings(
   return apiFetch<BusinessSettings>(
     businessPaths.settings(businessId),
     { method: 'PATCH', body: JSON.stringify(body) },
+    { toastOnForbidden: true },
   );
 }

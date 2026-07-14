@@ -100,7 +100,7 @@ function onValueChange() {
         </option>
       </select>
       <AppButton size="sm" :disabled="!selectedField" @click="addFilter">
-        {{ label({ es: 'Agregar', en: 'Add' }) }}
+        {{ i18n.global.t('generic.add') }}
       </AppButton>
     </div>
 
@@ -109,7 +109,7 @@ function onValueChange() {
 
       <label class="flex items-center gap-1 text-xs text-neutral">
         <input type="checkbox" v-model="f.negated" class="accent-accent" @change="onValueChange" />
-        {{ label({ es: 'excluir', en: 'exclude' }) }}
+        {{ i18n.global.t('generic.exclude') }}
       </label>
 
       <template v-if="isNumericField(f.field)">
@@ -117,7 +117,7 @@ function onValueChange() {
           v-model="f.min"
           type="number"
           class="w-20 rounded border border-border px-2 py-1 text-sm"
-          :placeholder="label({ es: 'mín', en: 'min' })"
+          :placeholder="i18n.global.t('generic.minPlaceholder')"
           @input="onValueChange"
         />
         <span class="text-xs text-neutral">–</span>
@@ -125,7 +125,7 @@ function onValueChange() {
           v-model="f.max"
           type="number"
           class="w-20 rounded border border-border px-2 py-1 text-sm"
-          :placeholder="label({ es: 'máx', en: 'max' })"
+          :placeholder="i18n.global.t('generic.maxPlaceholder')"
           @input="onValueChange"
         />
       </template>
@@ -136,7 +136,7 @@ function onValueChange() {
           class="rounded border border-border px-2 py-1 text-sm"
           @change="onValueChange"
         >
-          <option value="">{{ label({ es: 'Todos', en: 'All' }) }}</option>
+          <option value="">{{ i18n.global.t('generic.all') }}</option>
           <option
             v-for="opt in colForField(f.field)?.options"
             :key="opt.value"

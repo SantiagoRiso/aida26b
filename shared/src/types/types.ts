@@ -1,4 +1,5 @@
 import type { Role } from "./roles";
+import type { Language } from "./languages";
 
 type CrudOp = 'create' | 'read' | 'update' | 'delete';
 
@@ -57,7 +58,9 @@ type ColumnValue = TypeMap[MyTypeNames] | null;
 
 type ColumnValidator = {
   required?: boolean;
-  nullable?: boolean;
+  // Literal `true` (not boolean) so descriptor literals keep it narrow and InferType
+  // can derive `| null` per column; a non-nullable column just omits the flag.
+  nullable?: true;
   minLength?: number;
   maxLength?: number;
   minValue?: number;
@@ -81,7 +84,6 @@ type ForeignKeyDef = {
   };
 };
 
-type Language = 'es' | 'en';
 type LocalizedText = Record<Language, string>;
 
 type ColumnDef = {
@@ -93,7 +95,6 @@ type ColumnDef = {
   required?: boolean;
   readonlyOnEdit?: boolean;
   validator?: ColumnValidator;
-  nullable?: boolean;
   filterable?: boolean;
   sortable?: boolean;
   derivable?: {originTable: string, sqlGenerationStatement: string};
@@ -173,7 +174,9 @@ type TableStructure = {
 }
 
 type InferType<FieldDefs extends Record<string, ColumnDef>> = {
-  [K in keyof FieldDefs]: TypeMap[FieldDefs[K]['type']]
+  [K in keyof FieldDefs]: FieldDefs[K]['validator'] extends { nullable: true }
+    ? TypeMap[FieldDefs[K]['type']] | null
+    : TypeMap[FieldDefs[K]['type']]
 }
 
 export type {CrudOp, RoleRequired, OwnershipDescriptor, BusinessJoinPath, BusinessJoinDescriptor, RoleDiscriminator, TypeMap, MyTypeNames, ColumnValidator, ColumnDef, CrudPolicy, SoftDeletePolicy, StatusMeta, SchedulableCapability, TableStructure, InferType, ForeignKeyDef, Language, LocalizedText, ColumnValue, GrantScopeDescriptor};

@@ -17,8 +17,9 @@ import {
 } from '../db/auth';
 import { getSelfProfile, updateSelfProfile } from '../db/users';
 import { AUTH_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = new RegExp(EMAIL_PATTERN);
 
 // Fixed dummy salt/hash for the login path: verifying against these when the username
 // is unknown keeps scrypt cost identical to the real-account path (anti-enumeration).

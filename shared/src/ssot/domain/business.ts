@@ -1,4 +1,8 @@
-import type { ColumnDef, TableStructure } from '../../types/types';
+import type { ColumnDef, ForeignKeyDef, TableStructure } from '../../types/types';
+
+// Every business_id column resolves against businesses the same way, whatever its
+// nullability/derivability at the declaring site.
+export const businessForeignKey: ForeignKeyDef = { table: 'businesses', valueField: 'id', labelField: 'name' };
 
 export const pkColumn = {
   type: 'string',
@@ -21,7 +25,7 @@ export const businessIdColumn = {
   validator: { required: true },
   filterable: true,
   sortable: false,
-  foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
+  foreignKey: businessForeignKey,
 } satisfies ColumnDef;
 
 export const AUDIT_OUTCOMES = [
@@ -29,6 +33,8 @@ export const AUDIT_OUTCOMES = [
   { value: 'failure', label: { es: 'Fallo', en: 'Failure' } },
   { value: 'denied', label: { es: 'Denegado', en: 'Denied' } },
 ] as const;
+
+export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number]['value'];
 
 // The SSOT set for validating an audit outcome filter value.
 export const AUDIT_OUTCOME_VALUES = new Set<string>(AUDIT_OUTCOMES.map((o) => o.value));

@@ -1,6 +1,5 @@
-// Pure math for the availability background layers (past wash, occupied/requested washes,
-// closed-hours hatch, dotted slot outlines). No Vue deps so it unit-tests in isolation; both the
-// staff calendar and the request-detail day view render from these so they can never disagree.
+// No Vue deps so this unit-tests in isolation; both the staff calendar and the request-detail day
+// view render from these so they can never disagree.
 import type { EventInput } from '@fullcalendar/core';
 import { WEEKDAYS, toHHMM, mergeIntervals } from '@shared/ssot/domain/availability';
 import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain/appointment-lifecycle';

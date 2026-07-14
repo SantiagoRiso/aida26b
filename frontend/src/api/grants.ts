@@ -14,8 +14,8 @@ export function listGrantableStaff(): Promise<ApiResult<GrantableStaff[]>> {
   return apiFetch<GrantableStaff[]>(grantPaths.grantableStaff());
 }
 export function createGrant(body: { professional_user_id: number; grantee_user_id: number }): Promise<ApiResult<{ id: string }>> {
-  return apiFetch<{ id: string }>(grantPaths.list(), { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<{ id: string }>(grantPaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 export function revokeGrant(id: number | string): Promise<ApiResult<{ id: string; revoked: boolean }>> {
-  return apiFetch<{ id: string; revoked: boolean }>(grantPaths.detail(id), { method: 'DELETE' });
+  return apiFetch<{ id: string; revoked: boolean }>(grantPaths.detail(id), { method: 'DELETE' }, { toastOnForbidden: true });
 }

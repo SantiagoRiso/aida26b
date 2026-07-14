@@ -1,17 +1,25 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { TRANSITION_MAP, TERMINAL_STATES, assertValidTransition } from '@shared/ssot/domain/appointment-lifecycle';
+import {
+  TRANSITION_MAP,
+  TERMINAL_STATES,
+  assertValidTransition,
+  canCancelAppointment,
+  DEFAULT_CANCELLATION_CUTOFF_HOURS,
+} from '@shared/ssot/domain/appointment-lifecycle';
 import { structure } from '@shared/ssot/structure';
 import type { Appointment } from '@/api/appointments';
 import { transitionAppointment, patchAppointment, ignoreAppointmentConflict } from '@/api/appointments';
+import { getMySettings } from '@/api/business';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
+import { useCurrency } from '@/composables/useCurrency';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useLabel } from '@/composables/useLabel';
-import { useStateLabel } from '@/composables/useStateLabel';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import StatusBadge from '@/components/portal/StatusBadge.vue';
 
 const props = defineProps<{
   appointment: Appointment | null;
@@ -28,9 +36,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { label } = useLabel();
-const { stateLabel } = useStateLabel();
 const auth = useAuthStore();
 const toast = useToast();
+const { formatARS, formatDate, formatTime } = useCurrency();
 
 const nameColumnLabel = structure.tables.appointments.columns.name.label;
 const descriptionColumnLabel = structure.tables.appointments.columns.description.label;
@@ -56,6 +64,14 @@ const clientName = computed(() => clientLabelFor(props.appointment?.client_user_
 const professionalName = computed(() => professionalLabelFor(props.appointment?.professional_user_id ?? null));
 const serviceName = computed(() => serviceLabelFor(props.appointment?.service_id ?? null));
 
+// The backend 422 is the real gate; the button reads the same rule (canCancelAppointment) and the
+// real per-business cutoff so its state can't disagree with what the server will accept.
+const cutoffHours = ref(DEFAULT_CANCELLATION_CUTOFF_HOURS);
+onMounted(async () => {
+  const res = await getMySettings();
+  if (res.ok) cutoffHours.value = res.data.cancellation_cutoff_hours;
+});
+
 const availableTransitions = computed((): string[] => {
   const appt = props.appointment;
   if (!appt) return [];
@@ -66,8 +82,11 @@ const availableTransitions = computed((): string[] => {
   return targets.filter((to) => {
     const check = assertValidTransition(appt.state, to);
     if (!check.ok) return false;
-    // Clients may only cancel; staff see all transitions.
-    if (auth.user?.role === 'Client') return to === 'canceled';
+    // Clients may only cancel, and only within the business's cancellation cutoff.
+    if (auth.user?.role === 'Client') {
+      return to === 'canceled'
+        && canCancelAppointment(appt.state, appt.starts_at, cutoffHours.value, Date.now());
+    }
     return true;
   });
 });
@@ -134,23 +153,6 @@ async function doIgnore(ignored: boolean) {
   else toast.error('genericError');
 }
 
-// es-AR date/time formatting (DD/MM/YYYY, 24h) regardless of language toggle.
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-function fmtPrice(price: string): string {
-  const n = parseFloat(price);
-  if (isNaN(n)) return `$ ${price}`;
-  return `$ ${n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 // The state → i18n action-key map for transition buttons; state labels themselves come from
 // stateLabel() (SSOT), not this map.
 const TRANSITION_KEY: Record<string, string> = {
@@ -177,17 +179,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
   <DetailPanel :open="open" :title="t('calendar.detailTitle')" variant="side" @close="emit('close')">
     <div v-if="appointment" class="flex flex-col gap-4">
       <div class="flex items-center gap-2">
-        <span
-          class="rounded-full px-3 py-0.5 text-xs font-semibold"
-          :class="{
-            'bg-info/10 text-info': appointment.state === 'requested',
-            'bg-accent/10 text-accent': appointment.state === 'scheduled',
-            'bg-success/10 text-success': appointment.state === 'completed',
-            'bg-neutral/10 text-neutral': ['canceled','no_show','rejected'].includes(appointment.state),
-          }"
-        >
-          {{ stateLabel(appointment.state) }}
-        </span>
+        <StatusBadge :state="appointment.state" />
         <span
           v-if="appointment.in_conflict"
           class="rounded-full bg-destructive/10 px-3 py-0.5 text-xs font-semibold text-destructive"
@@ -214,16 +206,16 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
         </template>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.dateLabel') }}</dt>
-        <dd>{{ fmtDate(appointment.starts_at) }}</dd>
+        <dd>{{ formatDate(appointment.starts_at) }}</dd>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.timeLabel') }}</dt>
-        <dd>{{ fmtTime(appointment.starts_at) }} – {{ fmtTime(appointment.ends_at) }}</dd>
+        <dd>{{ formatTime(appointment.starts_at) }} – {{ formatTime(appointment.ends_at) }}</dd>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.durationLabel') }}</dt>
         <dd>{{ appointment.duration_minutes }} min</dd>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.priceLabel') }}</dt>
-        <dd>{{ fmtPrice(appointment.price) }}</dd>
+        <dd>{{ formatARS(appointment.price) }}</dd>
 
         <template v-if="appointment.name">
           <dt class="font-semibold text-neutral">{{ label(nameColumnLabel) }}</dt>

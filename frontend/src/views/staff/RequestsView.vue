@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useLabel } from '@/composables/useLabel';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useCurrency } from '@/composables/useCurrency';
 import { useToast } from '@/composables/useToast';
@@ -13,8 +12,10 @@ import { getAvailability } from '@/api/scheduling';
 import { listAppointments, approveAppointment, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { toMinutes } from '@shared/ssot/domain/availability';
+import { structure } from '@shared/ssot/structure';
 import { nextDay } from '@/composables/scheduleExceptions';
 import type { TableRecordMap } from '@shared/ssot/derived';
+import { useLabel } from '@/composables/useLabel';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { fetchProfessionalBlocks } from '@/composables/useProfessionalBlocks';
 import type { ProfessionalBlock } from '@/composables/useProfessionalBlocks';
@@ -34,10 +35,11 @@ import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
 // Receptionist: granted), so the requested rows returned here already respect
 // who may see which requests.
 const { t, locale } = useI18n();
-const { label } = useLabel();
 const { stateLabel } = useStateLabel();
 const { formatDateTime, formatARS } = useCurrency();
+const { label } = useLabel();
 const toast = useToast();
+const appointmentColumns = structure.tables.appointments.columns;
 
 const requests = ref<Appointment[]>([]);
 const loading = ref(false);
@@ -70,7 +72,7 @@ const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'profes
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
 
 function clientName(a: Appointment): string {
-  return clientLabelFor(a.client_user_id) ?? a.name ?? `Turno #${a.id}`;
+  return clientLabelFor(a.client_user_id) ?? a.name ?? t('portal.appointmentFallback', { id: a.id });
 }
 function professionalName(a: Appointment): string {
   return professionalLabelFor(a.professional_user_id) ?? '—';
@@ -180,8 +182,6 @@ const dayBgEvents = computed<EventInput[]>(() => {
   const booked = bookedIntervalsByDate(dayAppts.value).get(day) ?? { occupied: [], requested: [] };
   out.push(...availabilityWashEvents(day, dayFreeSlots.value, booked, floor));
 
-  // A dotted outline per free, bookable schedule slot: not yet elapsed, not overlapping anything
-  // booked or requested.
   const taken = [...booked.occupied, ...booked.requested];
   out.push(...slotOutlineEventsForDay(day, dayBlocks.value,
     (s, e) => s >= floor && !taken.some((k) => s < k.end && k.start < e)));
@@ -272,7 +272,7 @@ async function confirmReject() {
 <template>
   <div>
     <h1 class="text-2xl font-semibold mb-6">
-      {{ label({ es: 'Solicitudes', en: 'Requests' }) }}
+      {{ t('nav.requests') }}
     </h1>
 
     <div class="mb-6 max-w-[260px]">
@@ -285,8 +285,8 @@ async function confirmReject() {
 
     <EmptyState
       v-else-if="filteredRequests.length === 0"
-      :heading="label({ es: 'Sin solicitudes pendientes', en: 'No pending requests' })"
-      :body="label({ es: 'Las solicitudes de turno aparecen aquí.', en: 'Appointment requests appear here.' })"
+      :heading="t('requests.emptyHeading')"
+      :body="t('requests.emptyBody')"
     />
 
     <ul v-else class="space-y-3">
@@ -313,10 +313,10 @@ async function confirmReject() {
 
           <div class="flex flex-shrink-0 gap-2">
             <AppButton variant="primary" :loading="acting" @click.stop="approve(appt)">
-              {{ label({ es: 'Aprobar', en: 'Approve' }) }}
+              {{ t('calendar.approve') }}
             </AppButton>
             <AppButton variant="destructive" :disabled="acting" @click.stop="rejectTarget = appt">
-              {{ label({ es: 'Rechazar', en: 'Reject' }) }}
+              {{ t('calendar.reject') }}
             </AppButton>
           </div>
         </div>
@@ -325,7 +325,7 @@ async function confirmReject() {
 
     <DetailPanel
       :open="detailOpen"
-      :title="label({ es: 'Detalle de la solicitud', en: 'Request detail' })"
+      :title="t('requests.detailTitle')"
       size="5xl"
       @close="closeDetail"
       @after-leave="onDetailAfterLeave"
@@ -334,7 +334,7 @@ async function confirmReject() {
         <div class="grid gap-6 lg:grid-cols-2">
           <div class="flex flex-col gap-5">
         <section class="flex flex-col gap-2">
-          <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Solicitud', en: 'Request' }) }}</h3>
+          <h3 class="text-sm font-semibold text-neutral">{{ t('requests.requestHeading') }}</h3>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <dt class="text-neutral">{{ t('calendar.dateLabel') }}</dt>
             <dd>{{ formatDateTime(detailAppt.starts_at) }} · {{ detailAppt.duration_minutes }} min</dd>
@@ -345,11 +345,11 @@ async function confirmReject() {
             <dt class="text-neutral">{{ t('calendar.priceLabel') }}</dt>
             <dd>{{ formatARS(detailAppt.price) }}</dd>
             <template v-if="detailAppt.name">
-              <dt class="text-neutral">Título</dt>
+              <dt class="text-neutral">{{ label(appointmentColumns.name.label) }}</dt>
               <dd>{{ detailAppt.name }}</dd>
             </template>
             <template v-if="detailAppt.description">
-              <dt class="text-neutral">Descripción</dt>
+              <dt class="text-neutral">{{ label(appointmentColumns.description.label) }}</dt>
               <dd class="whitespace-pre-line">{{ detailAppt.description }}</dd>
             </template>
           </dl>
@@ -361,7 +361,7 @@ async function confirmReject() {
 
         <template v-else>
           <section class="flex flex-col gap-2 border-t border-border pt-4">
-            <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Cliente', en: 'Client' }) }}</h3>
+            <h3 class="text-sm font-semibold text-neutral">{{ t('calendar.clientLabel') }}</h3>
             <p class="text-base font-semibold text-heading">{{ clientProfile?.display_name ?? clientName(detailAppt) }}</p>
             <p class="text-sm text-neutral">{{ clientProfile?.email ?? '—' }} · {{ clientProfile?.phone ?? '—' }}</p>
           </section>
@@ -371,7 +371,7 @@ async function confirmReject() {
               class="flex items-center justify-between rounded-lg border p-3"
               :class="balancePositive ? 'border-destructive bg-red-50' : 'border-border bg-card'"
             >
-              <span class="text-sm font-semibold text-heading">{{ label({ es: 'Saldo / deuda', en: 'Balance / debt' }) }}</span>
+              <span class="text-sm font-semibold text-heading">{{ t('requests.balanceDebt') }}</span>
               <span
                 class="text-lg font-semibold tabular-nums"
                 :class="balancePositive ? 'text-destructive' : 'text-success'"
@@ -382,17 +382,17 @@ async function confirmReject() {
           </section>
 
           <section class="flex flex-col gap-2">
-            <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Historial', en: 'History' }) }}</h3>
+            <h3 class="text-sm font-semibold text-neutral">{{ t('portal.history') }}</h3>
             <div class="flex flex-wrap gap-2 text-xs">
-              <span class="rounded-full bg-surface px-2 py-1">{{ label({ es: 'Turnos', en: 'Appointments' }) }}: {{ clientAppts.length }}</span>
-              <span class="rounded-full bg-green-100 px-2 py-1 text-success">{{ label({ es: 'Completados', en: 'Completed' }) }}: {{ completedCount }}</span>
-              <span class="rounded-full bg-red-100 px-2 py-1 text-destructive">{{ label({ es: 'Cancelados', en: 'Canceled' }) }}: {{ canceledCount }}</span>
-              <span class="rounded-full bg-yellow-100 px-2 py-1 text-warning">{{ label({ es: 'Ausencias', en: 'No-shows' }) }}: {{ noShowCount }}</span>
+              <span class="rounded-full bg-surface px-2 py-1">{{ t('requests.statAppointments') }}: {{ clientAppts.length }}</span>
+              <span class="rounded-full bg-green-100 px-2 py-1 text-success">{{ t('requests.statCompleted') }}: {{ completedCount }}</span>
+              <span class="rounded-full bg-red-100 px-2 py-1 text-destructive">{{ t('requests.statCanceled') }}: {{ canceledCount }}</span>
+              <span class="rounded-full bg-yellow-100 px-2 py-1 text-warning">{{ t('requests.statNoShows') }}: {{ noShowCount }}</span>
             </div>
 
             <EmptyState
               v-if="detailHistory.length === 0"
-              :heading="label({ es: 'Sin turnos previos', en: 'No previous appointments' })"
+              :heading="t('requests.noPrevious')"
               body=""
             />
             <ul v-else class="divide-y divide-border rounded-lg border border-border">
@@ -412,7 +412,7 @@ async function confirmReject() {
 
           <div class="flex min-h-0 flex-col gap-2 lg:h-[72vh]">
             <h3 class="text-sm font-semibold text-neutral">
-              {{ label({ es: 'Agenda del día', en: "That day's schedule" }) }}
+              {{ t('requests.daySchedule') }}
             </h3>
             <div class="min-h-[420px] flex-1 overflow-hidden rounded-lg border border-border">
               <CalendarView :key="detailAppt.id" :options="dayCalendarOptions" />
@@ -422,10 +422,10 @@ async function confirmReject() {
 
         <div class="flex gap-2 border-t border-border pt-4">
           <AppButton variant="primary" :loading="acting" class="flex-1" @click="approve(detailAppt)">
-            {{ label({ es: 'Aprobar', en: 'Approve' }) }}
+            {{ t('calendar.approve') }}
           </AppButton>
           <AppButton variant="destructive" :disabled="acting" class="flex-1" @click="rejectTarget = detailAppt">
-            {{ label({ es: 'Rechazar', en: 'Reject' }) }}
+            {{ t('calendar.reject') }}
           </AppButton>
         </div>
       </div>
@@ -433,9 +433,9 @@ async function confirmReject() {
 
     <ConfirmDialog
       :open="rejectTarget !== null"
-      :title="label({ es: 'Rechazar solicitud', en: 'Reject request' })"
-      :body="label({ es: '¿Rechazar esta solicitud? Esta acción no se puede deshacer.', en: 'Reject this request? This cannot be undone.' })"
-      :confirm-label="label({ es: 'Rechazar', en: 'Reject' })"
+      :title="t('requests.rejectTitle')"
+      :body="t('requests.rejectBody')"
+      :confirm-label="t('calendar.reject')"
       :destructive="true"
       @confirm="confirmReject"
       @cancel="rejectTarget = null"

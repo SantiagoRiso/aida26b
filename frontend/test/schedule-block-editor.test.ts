@@ -7,6 +7,7 @@ import { en } from '@/i18n/en';
 import { useUiStore } from '@/stores/ui';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import ScheduleBlockEditor from '@/components/schedule/ScheduleBlockEditor.vue';
+import type { OwnerKind } from '@shared/ssot/domain/conflict';
 
 vi.mock('@/api/crud', () => ({
   listRows: vi.fn(),
@@ -23,7 +24,7 @@ const makeI18n = () => createI18n({ legacy: false, locale: 'es', messages: { es,
 
 // The editor modal and confirm dialog are HeadlessUI Dialogs (Teleport + focus management); these
 // tests drive the component's exposed handlers directly, so stub the dialogs' DOM out.
-function mountEditor(owner: { kind: 'professional' | 'resource'; id: number } = { kind: 'professional', id: 1 }) {
+function mountEditor(owner: { kind: OwnerKind; id: number } = { kind: 'professional', id: 1 }) {
   return mount(ScheduleBlockEditor, {
     props: { owner },
     global: { plugins: [makeI18n()], stubs: { BlockEditorModal: true, ConfirmDialog: true } },

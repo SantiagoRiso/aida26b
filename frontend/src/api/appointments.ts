@@ -83,7 +83,7 @@ export async function scheduleAppointment(
   const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.schedule(), {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
   if (!result.ok) return result;
   return { ok: true, data: toScheduleResult(result.data), meta: result.meta };
 }
@@ -95,7 +95,7 @@ export async function approveAppointment(
   const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.approve(id), {
     method: 'POST',
     body: JSON.stringify({ override: override ?? false }),
-  });
+  }, { toastOnForbidden: true });
   if (!result.ok) return result;
   return { ok: true, data: toScheduleResult(result.data), meta: result.meta };
 }
@@ -117,7 +117,7 @@ export async function rescheduleAppointment(
   const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.reschedule(id), {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
   if (!result.ok) return result;
   return { ok: true, data: toScheduleResult(result.data), meta: result.meta };
 }
@@ -140,7 +140,7 @@ export async function requestAppointment(
   const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.request(), {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
   if (!result.ok) return result;
   return { ok: true, data: toScheduleResult(result.data), meta: result.meta };
 }
@@ -152,7 +152,7 @@ export async function transitionAppointment(
   return apiFetch<Appointment>(appointmentPaths.transition(id), {
     method: 'POST',
     body: JSON.stringify({ to }),
-  });
+  }, { toastOnForbidden: true });
 }
 
 // Acknowledge (ignored=true) or re-flag (false) a turno that overlaps time-off. Staff-only.
@@ -163,7 +163,7 @@ export async function ignoreAppointmentConflict(
   return apiFetch<Appointment>(appointmentPaths.ignoreConflict(id), {
     method: 'POST',
     body: JSON.stringify({ ignored }),
-  });
+  }, { toastOnForbidden: true });
 }
 
 export interface PatchBody {
@@ -179,5 +179,5 @@ export async function patchAppointment(
   return apiFetch<Appointment>(appointmentPaths.detail(id), {
     method: 'PATCH',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
 }

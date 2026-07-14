@@ -53,7 +53,7 @@ describe('ProfessionalServicesSection', () => {
     const w = mountSection();
     await flushPromises();
     expect(listRows).toHaveBeenCalledWith('services', { limit: 500 });
-    expect(listRows).toHaveBeenCalledWith('professional_services', { filters: { professional_user_id: 7 }, limit: 200 });
+    expect(listRows).toHaveBeenCalledWith('professional_services', { filters: { professional_user_id: '7' }, limit: 200 });
     expect(w.get<HTMLInputElement>('[data-testid="offering-toggle-1"]').element.checked).toBe(true);
     expect(w.get<HTMLInputElement>('[data-testid="offering-toggle-2"]').element.checked).toBe(false);
   });

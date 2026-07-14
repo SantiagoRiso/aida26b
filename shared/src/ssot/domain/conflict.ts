@@ -2,6 +2,9 @@ import { detectOverlap, toMinutes, mergeIntervals } from './availability';
 import type { TimeInterval } from './availability';
 import { OPEN_APPOINTMENT_STATES } from './appointment-lifecycle';
 
+// The two schedulable owner kinds — professionals and resources (rooms).
+export type OwnerKind = 'professional' | 'resource';
+
 // Language-neutral conflict classes. The frontend localizes from `type` + `entity`; the API
 // never builds a display string.
 export type ConflictType =
@@ -14,7 +17,7 @@ export type ConflictType =
 
 export type Conflict = {
   type: ConflictType;
-  entity: { kind: 'professional' | 'resource'; id: number; name: string };
+  entity: { kind: OwnerKind; id: number; name: string };
   range: { start: string; end: string };
 };
 
@@ -66,7 +69,7 @@ export function evaluateConflicts(input: {
   const pEnd = toMinutes(proposed.end);
   const conflicts: Conflict[] = [];
 
-  const evalOwner = (owner: ConflictOwner, kind: 'professional' | 'resource', checkAlignment: boolean) => {
+  const evalOwner = (owner: ConflictOwner, kind: OwnerKind, checkAlignment: boolean) => {
     const entity = { kind, id: owner.id, name: owner.name };
 
     for (const b of owner.booked) {

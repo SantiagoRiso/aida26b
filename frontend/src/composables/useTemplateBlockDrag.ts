@@ -1,5 +1,6 @@
 import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
 import { otherBlockEdges, type TemplateBlock } from '@/composables/scheduleTemplateGrid';
+import { toMinutes } from '@shared/ssot/domain';
 import type { Weekday } from '@shared/ssot/domain';
 import { placeMove, placeResizeTop, placeResizeBottom, freeWindows, type MinuteInterval } from '@/composables/templateBlockPlacement';
 import { createDragGhost, type DragGhost } from '@/composables/dragGhost';
@@ -49,11 +50,7 @@ interface Session {
   last: { weekday: Weekday; start: number; end: number };
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
+// Not toHHMM: values can be fractional/negative mid-drag, this rounds and clamps before formatting.
 function hhmm(minutes: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const clamped = Math.max(0, Math.round(minutes));

@@ -14,12 +14,15 @@ export interface ApiFetchOptions {
   // 'entry': used for boot /auth/me and /auth/login — a 401 is a normal unauthenticated/bad-cred
   //          case and must NOT flag session-expired or push the expired toast.
   authMode?: 'authenticated' | 'entry';
+  // Opt-in "Acción no permitida" toast on 403. Interactive mutations (button-triggered saves,
+  // transitions, deletes) set it so the user gets feedback; background/probe reads stay silent.
+  toastOnForbidden?: boolean;
 }
 
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
-  { authMode = 'authenticated' }: ApiFetchOptions = {},
+  { authMode = 'authenticated', toastOnForbidden = false }: ApiFetchOptions = {},
 ): Promise<ApiResult<T>> {
   const ui = useUiStore();
 
@@ -50,11 +53,11 @@ export async function apiFetch<T>(
   // A non-enveloped body (e.g. an HTML error page) has no `success` field — fail cleanly rather
   // than dereferencing body.error and throwing an opaque TypeError up through callers.
   if (typeof body !== 'object' || body === null || !('success' in body)) {
-    if (response.status === 403) ui.toast('error', 'notPermitted');
+    if (response.status === 403 && toastOnForbidden) ui.toast('error', 'notPermitted');
     return { ok: false, status: response.status, code: 'bad_response', message: `Unexpected response (${response.status})` };
   }
   if (!body.success) {
-    if (response.status === 403) ui.toast('error', 'notPermitted');
+    if (response.status === 403 && toastOnForbidden) ui.toast('error', 'notPermitted');
     return {
       ok: false,
       status: response.status,

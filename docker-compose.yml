@@ -2,20 +2,30 @@
 # independent of the folder name.
 name: aida26
 
+# One source for the app DB credentials — the database service reads them to create the roles/db
+# on first init (via bootstrap.sh), the backend reads them to connect. Override any per-var in .env.
+x-db-credentials: &db-credentials
+  DB_NAME: ${DB_NAME:-professional_agenda}
+  DB_USER: ${DB_USER:-aida26_user}
+  DB_PASSWORD: ${DB_PASSWORD:-CambiaEsta!}
+  DB_OWNER_USER: ${DB_OWNER_USER:-aida26_owner}
+  DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-CambiaEsta_Owner!}
+
 services:
   database:
     image: postgres:18-alpine
     container_name: aida26_database
     environment:
+      <<: *db-credentials
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERPASS:-CambiaEsta_Super!}
-      # No POSTGRES_DB: the app database is created by bootstrap.sql owned by
-      # DB_owner, so the image must not create it owned by the superuser.
+      # No POSTGRES_DB: the app database is created by bootstrap.sh owned by
+      # DB_OWNER_USER, so the image must not create it owned by the superuser.
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
-      - ./database/bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
+      - ./database/bootstrap.sh:/docker-entrypoint-initdb.d/00-bootstrap.sh:ro
     networks:
       - aida26_network
     healthcheck:
@@ -30,17 +40,13 @@ services:
       dockerfile: backend/Dockerfile
     container_name: aida26_backend
     environment:
+      <<: *db-credentials
       NODE_ENV: ${NODE_ENV:-development}
       PORT: ${PORT:-3000}
       VERSION: ${VERSION:-1.0.0}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DB_HOST: ${DB_HOST:-database}
       DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-professional_agenda}
-      DB_USER: ${DB_USER:-aida26_user}
-      DB_PASSWORD: ${DB_PASSWORD:-CambiaEsta!}
-      DB_OWNER_USER: ${DB_OWNER_USER:-aida26_owner}
-      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-CambiaEsta_Owner!}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-yourpassword}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
@@ -58,13 +64,7 @@ services:
       - ./database/migrations:/app/database/migrations
       - ./tsconfig.base.json:/app/tsconfig.base.json
       - ./shared/src:/app/shared/src
-    command: sh -c "npm run migrate && npm run seed-admin && npm run dev"
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+    # Startup command and healthcheck are owned by backend/Dockerfile.
 
   frontend:
     build:

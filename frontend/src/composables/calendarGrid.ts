@@ -1,5 +1,7 @@
 // Pure geometry for the calendar drag grid. No Vue / FullCalendar deps so it unit-tests in isolation.
 
+import { mergeIntervals, toMinutes } from '@shared/ssot/domain';
+
 export function gcd(a: number, b: number): number {
   a = Math.abs(a);
   b = Math.abs(b);
@@ -13,11 +15,6 @@ export function gcdAll(values: number[]): number {
   return values.reduce((g, v) => gcd(g, v), 0);
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
 // Largest snap step that lands FullCalendar's uniform grid (origin + n·step) on every real slot
 // start AND cleanly subdivides the visual row (slotMinutes). Empty slots → the row size itself.
 export function computeSnapMinutes(
@@ -28,22 +25,6 @@ export function computeSnapMinutes(
   const offsets = slotStartsMinutes.map((s) => Math.abs(s - originMinutes));
   const g = gcdAll([...offsets, slotMinutes]);
   return g > 0 ? g : slotMinutes;
-}
-
-export function mergeIntervals(
-  intervals: { start: number; end: number }[],
-): { start: number; end: number }[] {
-  const sorted = [...intervals].filter((i) => i.end > i.start).sort((a, b) => a.start - b.start);
-  const out: { start: number; end: number }[] = [];
-  for (const cur of sorted) {
-    const last = out[out.length - 1];
-    if (last && cur.start <= last.end) {
-      last.end = Math.max(last.end, cur.end);
-    } else {
-      out.push({ ...cur });
-    }
-  }
-  return out;
 }
 
 // Gaps within [min, max] not covered by the given intervals — the "closed/blocked" spans

@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { ROLE_OPTIONS } from '@shared/ssot/domain';
+import { structure } from '@shared/ssot/structure';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
@@ -20,6 +21,7 @@ const { toast } = useToast();
 const auth = useAuthStore();
 
 const TABLE_KEY = 'users' as const;
+const usersColumns = structure.tables.users.columns;
 
 // Self-deactivation locks the account out and a self "admin reset" bypasses change-password;
 // the backend rejects both — the UI must not offer them.
@@ -64,7 +66,7 @@ async function submitCreate() {
       createPanelOpen.value = false;
       reloadKey.value++;
     } else {
-      createErrors['_'] = result.message ?? label({ es: 'Error creando usuario', en: 'Error creating user' });
+      createErrors['_'] = result.message ?? t('users.createError');
     }
   } finally {
     createSubmitting.value = false;
@@ -121,7 +123,7 @@ async function submitReset() {
     if (result.ok) {
       resetPanelOpen.value = false;
     } else {
-      resetError.value = result.message ?? label({ es: 'Error reseteando contraseña', en: 'Error resetting password' });
+      resetError.value = result.message ?? t('users.resetError');
     }
   } finally {
     resetSubmitting.value = false;
@@ -137,7 +139,7 @@ async function submitReset() {
     >
       <template #header-actions>
         <AppButton @click="openCreate">
-          {{ label({ es: 'Agregar usuario', en: 'Add user' }) }}
+          {{ t('users.addUser') }}
         </AppButton>
       </template>
       <template #row-actions="{ row }">
@@ -147,7 +149,7 @@ async function submitReset() {
             class="mr-3 text-accent hover:underline text-xs"
             @click.stop="openReset(row)"
           >
-            {{ label({ es: 'Resetear contraseña', en: 'Reset password' }) }}
+            {{ t('users.resetPassword') }}
           </button>
           <button
             v-if="row.is_active"
@@ -155,7 +157,7 @@ async function submitReset() {
             class="mr-2 text-destructive hover:underline text-xs"
             @click.stop="requestDeactivate(row)"
           >
-            {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
+            {{ t('users.deactivate') }}
           </button>
         </template>
       </template>
@@ -163,7 +165,7 @@ async function submitReset() {
 
     <DetailPanel
       :open="createPanelOpen"
-      :title="label({ es: 'Nuevo usuario', en: 'New user' })"
+      :title="t('users.newUser')"
       @close="createPanelOpen = false"
     >
       <form class="space-y-4" @submit.prevent="submitCreate" novalidate>
@@ -171,7 +173,7 @@ async function submitReset() {
 
         <div class="flex flex-col gap-1">
           <label for="username" class="text-sm font-semibold">
-            {{ label({ es: 'Usuario', en: 'Username' }) }} <span class="text-destructive">*</span>
+            {{ t('auth.usernameLabel') }} <span class="text-destructive">*</span>
           </label>
           <input
             id="username"
@@ -183,7 +185,7 @@ async function submitReset() {
         </div>
 
         <div class="flex flex-col gap-1">
-          <label for="email" class="text-sm font-semibold">{{ label({ es: 'Email', en: 'Email' }) }}</label>
+          <label for="email" class="text-sm font-semibold">{{ label(usersColumns.email.label) }}</label>
           <input
             id="email"
             v-model="createForm.email"
@@ -194,7 +196,7 @@ async function submitReset() {
 
         <div class="flex flex-col gap-1">
           <label for="password" class="text-sm font-semibold">
-            {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
+            {{ t('auth.passwordLabel') }} <span class="text-destructive">*</span>
           </label>
           <PasswordInput
             id="password"
@@ -206,7 +208,7 @@ async function submitReset() {
 
         <div class="flex flex-col gap-1">
           <label for="role" class="text-sm font-semibold">
-            {{ label({ es: 'Rol', en: 'Role' }) }} <span class="text-destructive">*</span>
+            {{ label(usersColumns.role.label) }} <span class="text-destructive">*</span>
           </label>
           <select
             id="role"
@@ -214,13 +216,13 @@ async function submitReset() {
             class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           >
-            <option value="">{{ label({ es: 'Seleccionar…', en: 'Select…' }) }}</option>
+            <option value="">{{ t('generic.selectPlaceholder') }}</option>
             <option v-for="r in ROLE_OPTIONS" :key="r.value" :value="r.value">{{ label(r.label) }}</option>
           </select>
         </div>
 
         <div class="flex flex-col gap-1">
-          <label for="display_name" class="text-sm font-semibold">{{ label({ es: 'Nombre visible', en: 'Display name' }) }}</label>
+          <label for="display_name" class="text-sm font-semibold">{{ t('fields.displayName') }}</label>
           <input
             id="display_name"
             v-model="createForm.display_name"
@@ -231,10 +233,10 @@ async function submitReset() {
 
         <div class="flex justify-end gap-3 pt-2">
           <AppButton variant="neutral" type="button" @click="createPanelOpen = false">
-            {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+            {{ t('actions.cancel') }}
           </AppButton>
           <AppButton type="submit" :loading="createSubmitting">
-            {{ label({ es: 'Guardar', en: 'Save' }) }}
+            {{ t('actions.save') }}
           </AppButton>
         </div>
       </form>
@@ -242,9 +244,9 @@ async function submitReset() {
 
     <ConfirmDialog
       :open="deactivateConfirmOpen"
-      :title="label({ es: 'Desactivar usuario', en: 'Deactivate user' })"
-      :body="label({ es: `Desactivar a ${pendingDeactivateName}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${pendingDeactivateName}: they won't be able to log in or be assigned to new appointments.` })"
-      :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
+      :title="t('users.deactivateTitle')"
+      :body="t('users.deactivateBody', { name: pendingDeactivateName })"
+      :confirm-label="t('users.deactivate')"
       :destructive="true"
       @confirm="confirmDeactivate"
       @cancel="deactivateConfirmOpen = false"
@@ -252,14 +254,14 @@ async function submitReset() {
 
     <DetailPanel
       :open="resetPanelOpen"
-      :title="label({ es: 'Resetear contraseña', en: 'Reset password' })"
+      :title="t('users.resetPassword')"
       @close="resetPanelOpen = false"
     >
       <form class="space-y-4" @submit.prevent="submitReset" novalidate>
         <FieldError :message="resetError" />
         <div class="flex flex-col gap-1">
           <label for="new-password" class="text-sm font-semibold">
-            {{ label({ es: 'Nueva contraseña', en: 'New password' }) }} <span class="text-destructive">*</span>
+            {{ t('auth.newPasswordLabel') }} <span class="text-destructive">*</span>
           </label>
           <PasswordInput
             id="new-password"
@@ -270,10 +272,10 @@ async function submitReset() {
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <AppButton variant="neutral" type="button" @click="resetPanelOpen = false">
-            {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+            {{ t('actions.cancel') }}
           </AppButton>
           <AppButton type="submit" :loading="resetSubmitting">
-            {{ label({ es: 'Guardar', en: 'Save' }) }}
+            {{ t('actions.save') }}
           </AppButton>
         </div>
       </form>

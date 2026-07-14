@@ -1,5 +1,5 @@
 import type { EventInput } from '@fullcalendar/core';
-import type { ColumnValue } from '@shared/types/types';
+import type { TableRecordMap } from '@shared/ssot/derived';
 
 export type ExceptionKind = 'off' | 'block' | 'extra';
 
@@ -84,10 +84,7 @@ export interface BuildExceptionBodyInput {
   reason?: string | null;
 }
 
-// Loosely typed like GenericForm/ScheduleEditorView's write bodies: TableRecordMap columns are
-// non-nullable, but professional_user_id/resource_id/start_time/end_time/granularity_minutes are
-// nullable at the DB level — callers cast this straight to Partial<TableRecordMap['schedule_exceptions']>.
-export type ExceptionBody = Record<string, ColumnValue | undefined>;
+export type ExceptionBody = Partial<TableRecordMap['schedule_exceptions']>;
 
 export type BuildExceptionBodyResult =
   | { ok: true; body: ExceptionBody }

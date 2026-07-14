@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import type { TableRecordMap } from '@shared/ssot/derived';
@@ -9,7 +9,7 @@ import FieldError from '@/components/shared/FieldError.vue';
 
 const props = defineProps<{ professionalUserId: number | null }>();
 
-const { label } = useLabel();
+const { t } = useI18n();
 const { success, error } = useToast();
 
 interface OfferingRow {
@@ -23,7 +23,7 @@ interface OfferingRow {
   overriding: boolean; // persisted: min or max is non-null → a custom window is set
   editingWindow: boolean;
   windowError: string;
-  busy: boolean; // an in-flight write for this row
+  busy: boolean;
 }
 
 const rows = ref<OfferingRow[]>([]);
@@ -37,7 +37,7 @@ async function load() {
   loading.value = true;
   const [servicesRes, offeringsRes] = await Promise.all([
     listRows('services', { limit: 500 }),
-    listRows('professional_services', { filters: { professional_user_id: forId }, limit: 200 }),
+    listRows('professional_services', { filters: { professional_user_id: String(forId) }, limit: 200 }),
   ]);
   // A newer load() (professional switched) must win; drop this stale response.
   if (props.professionalUserId !== forId) return;
@@ -129,7 +129,7 @@ async function saveWindow(row: OfferingRow) {
   const min = toDays(row.minDays);
   const max = toDays(row.maxDays);
   if (min != null && max != null && max < min) {
-    row.windowError = label({ es: 'La anticipación máxima debe ser mayor o igual a la mínima.', en: 'Max booking days must be greater than or equal to min.' });
+    row.windowError = t('business.maxBelowMin');
     return;
   }
   row.busy = true;
@@ -166,13 +166,13 @@ async function clearWindow(row: OfferingRow) {
 <template>
   <div class="space-y-4">
     <p v-if="professionalUserId == null" class="text-sm text-neutral">
-      {{ label({ es: 'Seleccionar un profesional para ver sus servicios.', en: 'Select a professional to see their services.' }) }}
+      {{ t('professionalServices.selectProfessional') }}
     </p>
 
     <template v-else>
       <div v-if="loading" class="text-sm text-neutral">…</div>
       <p v-else-if="!hasServices" class="text-sm text-neutral">
-        {{ label({ es: 'Primero agregá servicios en la sección Servicios.', en: 'Add services first in the Services section.' }) }}
+        {{ t('professionalServices.noServices') }}
       </p>
       <ul v-else class="divide-y divide-border">
         <li v-for="row in rows" :key="row.serviceId" class="py-2" :data-testid="`offering-row-${row.serviceId}`">
@@ -197,14 +197,14 @@ async function clearWindow(row: OfferingRow) {
               @click="openWindow(row)"
             >
               {{ row.overriding
-                ? label({ es: 'Ventana de reserva: personalizada', en: 'Booking window: custom' })
-                : label({ es: 'Ventana de reserva: por defecto', en: 'Booking window: default' }) }}
+                ? t('professionalServices.windowCustom')
+                : t('professionalServices.windowDefault') }}
             </button>
 
             <div v-else class="space-y-2">
               <div class="flex flex-wrap gap-3">
                 <label class="flex flex-col gap-1">
-                  <span class="text-neutral">{{ label({ es: 'Anticipación mínima (días)', en: 'Min booking days' }) }}</span>
+                  <span class="text-neutral">{{ t('business.minBookingDays') }}</span>
                   <input
                     type="number" min="0" step="1"
                     v-model="row.minDays"
@@ -213,7 +213,7 @@ async function clearWindow(row: OfferingRow) {
                   />
                 </label>
                 <label class="flex flex-col gap-1">
-                  <span class="text-neutral">{{ label({ es: 'Anticipación máxima (días)', en: 'Max booking days' }) }}</span>
+                  <span class="text-neutral">{{ t('business.maxBookingDays') }}</span>
                   <input
                     type="number" min="0" step="1"
                     v-model="row.maxDays"
@@ -225,10 +225,10 @@ async function clearWindow(row: OfferingRow) {
               <FieldError :message="row.windowError" />
               <div class="flex gap-2">
                 <AppButton variant="primary" size="sm" :loading="row.busy" :data-testid="`offering-window-save-${row.serviceId}`" @click="saveWindow(row)">
-                  {{ label({ es: 'Guardar', en: 'Save' }) }}
+                  {{ t('actions.save') }}
                 </AppButton>
                 <AppButton variant="neutral" size="sm" :data-testid="`offering-window-default-${row.serviceId}`" @click="clearWindow(row)">
-                  {{ label({ es: 'Usar por defecto', en: 'Use default' }) }}
+                  {{ t('professionalServices.useDefault') }}
                 </AppButton>
               </div>
             </div>

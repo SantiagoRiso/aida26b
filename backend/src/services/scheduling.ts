@@ -5,6 +5,7 @@ import type {
   ServiceBlock,
   BookedAppointment,
   ConflictVerdict,
+  OwnerKind,
 } from '../../../shared/src/ssot/domain';
 import type { Queryable } from '../db/core';
 import {
@@ -101,7 +102,7 @@ export type OwnerState = {
 export async function loadOwnerState(
   q: Queryable,
   businessId: number,
-  ref: { kind: 'professional' | 'resource'; id: number },
+  ref: { kind: OwnerKind; id: number },
   date: string,
   opts: { serviceId?: number; excludeAppointmentId?: number } = {}
 ): Promise<OwnerState | null> {

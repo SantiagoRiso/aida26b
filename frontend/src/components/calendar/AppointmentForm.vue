@@ -2,14 +2,13 @@
 // Conflict check happens ON SAVE only — no live preview.
 // On requires_override the parent receives the verdict and handles the override dialog.
 
-import { computed, reactive, ref, watch, onMounted } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { scheduleAppointment, rescheduleAppointment } from '@/api/appointments';
 import type { Appointment, ScheduleBody } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import { listRows } from '@/api/crud';
-import { useAuthStore } from '@/stores/auth';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { useBookingOptions } from '@/composables/useBookingOptions';
 import { useToast } from '@/composables/useToast';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -18,11 +17,11 @@ import SlotPicker from './SlotPicker.vue';
 import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
-import { useLabel } from '@/composables/useLabel';
-import { isoDate, addDaysISO, intervalMinutes, offeredServiceIds } from '@/composables/bookingForm';
+import { isoDate, addDaysISO, intervalMinutes } from '@/composables/bookingForm';
 import { useBookingWindow } from '@/composables/useBookingWindow';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
-import type { TableRecordMap } from '@shared/ssot/derived';
+import { structure } from '@shared/ssot/structure';
+import { useLabel } from '@/composables/useLabel';
 
 const props = defineProps<{
   // Presence switches the form to edit/reschedule mode.
@@ -50,7 +49,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { label } = useLabel();
 const toast = useToast();
-const auth = useAuthStore();
+const appointmentColumns = structure.tables.appointments.columns;
 
 interface FormState {
   client_user_id: string;
@@ -121,29 +120,17 @@ const saving = ref(false);
 // is no slot to pick.
 const sobreturno = ref(!!props.appointment || !!props.prefillSobreturno);
 
-// Options carry the DNI so staff can find a client by document number, not just name.
-interface ClientOption { value: string; label: string; dni: string }
-const clientRows = ref<TableRecordMap['clients'][]>([]);
-const clientOptions = computed<ClientOption[]>(() =>
-  clientRows.value.map((c) => ({ value: String(c.id), label: c.display_name, dni: c.dni ?? '' })),
-);
-onMounted(async () => {
-  const res = await listRows('clients', { limit: 200 });
-  if (res.ok) clientRows.value = res.data;
+const {
+  clientOptions,
+  professionalOptions: availableProfessionalOptions,
+  availableServiceOptions,
+} = useBookingOptions({
+  withClients: true,
+  selectedProfessionalId: () => form.professional_user_id || null,
 });
 
 // Locked when booking from a specific client's page — the client isn't a choice here.
 const clientLocked = computed(() => props.prefillClientId != null);
-const { options: professionalOptions } = useForeignKeyOptions({
-  table: 'professionals',
-  valueField: 'id',
-  labelField: 'display_name',
-});
-const { options: serviceOptions } = useForeignKeyOptions({
-  table: 'services',
-  valueField: 'id',
-  labelField: 'name',
-});
 const { options: resourceOptions } = useForeignKeyOptions({
   table: 'resources',
   valueField: 'id',
@@ -153,15 +140,6 @@ const { options: resourceOptions } = useForeignKeyOptions({
 // No client-side duration prefill on service change: server-side resolveBooking is authoritative.
 watch(() => form.service_id, () => {});
 
-// A professional may only book on their own calendar (the backend enforces own-only for
-// professionals). Receptionist grant scoping is server-side: the professionals list they
-// fetch already contains only granted calendars.
-const availableProfessionalOptions = computed(() => {
-  if (auth.user?.role === 'Professional') {
-    return professionalOptions.value.filter((o) => String(o.value) === String(auth.user!.id));
-  }
-  return professionalOptions.value;
-});
 watch(
   availableProfessionalOptions,
   (opts) => {
@@ -173,20 +151,6 @@ watch(
   { immediate: true },
 );
 
-// Which services each professional offers; no mapping / no professional selected → all services.
-const profServiceRows = ref<TableRecordMap['professional_services'][]>([]);
-onMounted(async () => {
-  const result = await listRows('professional_services', { limit: 500 });
-  if (result.ok) profServiceRows.value = result.data;
-});
-
-const availableServiceOptions = computed(() => {
-  const offered = offeredServiceIds(profServiceRows.value, form.professional_user_id || null);
-  if (!offered) return serviceOptions.value;
-  return serviceOptions.value.filter((o) => offered.has(String(o.value)));
-});
-
-// Keep the selected service consistent with the professional's offerings (auto-pick the only one).
 watch(
   availableServiceOptions,
   (opts) => {
@@ -267,8 +231,8 @@ function submit() {
   if (!form.start || !form.duration_minutes) {
     sobreturno.value = true;
     fieldErrors.value = {
-      ...(!form.start ? { start: label({ es: 'Seleccionar un horario', en: 'Select a time' }) } : {}),
-      ...(!form.duration_minutes ? { duration_minutes: label({ es: 'Requerido', en: 'Required' }) } : {}),
+      ...(!form.start ? { start: t('calendar.selectTimeError') } : {}),
+      ...(!form.duration_minutes ? { duration_minutes: t('generic.required') } : {}),
     };
     return;
   }
@@ -287,7 +251,7 @@ function submit() {
         :model-value="form.client_user_id || null"
         :options="clientOptions"
         :extra-search="(o) => o.dni"
-        :placeholder="label({ es: 'Buscar cliente…', en: 'Search client…' })"
+        :placeholder="t('calendar.searchClient')"
         @update:model-value="form.client_user_id = $event ?? ''"
       >
         <template #option="{ option, selected }">
@@ -307,7 +271,7 @@ function submit() {
         searchable
         :model-value="form.professional_user_id || null"
         :options="availableProfessionalOptions"
-        :placeholder="label({ es: 'Buscar profesional…', en: 'Search professional…' })"
+        :placeholder="t('calendar.searchProfessional')"
         @update:model-value="form.professional_user_id = $event ?? ''"
       />
       <FieldError :message="fieldErrors.professional_user_id" />
@@ -319,7 +283,7 @@ function submit() {
         id="appt-service"
         :model-value="form.service_id || null"
         :options="availableServiceOptions"
-        :placeholder="label({ es: '— Seleccionar servicio —', en: '— Select service —' })"
+        :placeholder="t('calendar.selectServicePlaceholder')"
         @update:model-value="form.service_id = $event ?? ''"
       />
       <FieldError :message="fieldErrors.service_id" />
@@ -332,7 +296,7 @@ function submit() {
         v-model="form.resource_id"
         class="rounded border border-border px-3 py-2 text-sm"
       >
-        <option value="">{{ label({ es: '— Sin sala —', en: '— No room —' }) }}</option>
+        <option value="">{{ t('calendar.noRoom') }}</option>
         <option v-for="opt in resourceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
     </div>
@@ -344,7 +308,7 @@ function submit() {
           type="button"
           class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="atMinDate"
-          :aria-label="label({ es: 'Día anterior', en: 'Previous day' })"
+          :aria-label="t('calendar.prevDay')"
           @click="stepDate(-1)"
         >
           <ChevronLeftIcon class="h-5 w-5" />
@@ -361,7 +325,7 @@ function submit() {
           type="button"
           class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="atMaxDate"
-          :aria-label="label({ es: 'Día siguiente', en: 'Next day' })"
+          :aria-label="t('calendar.nextDay')"
           @click="stepDate(1)"
         >
           <ChevronRightIcon class="h-5 w-5" />
@@ -406,7 +370,7 @@ function submit() {
     </div>
 
     <div class="flex flex-col gap-1 sm:col-span-2">
-      <label class="text-sm font-semibold" for="appt-name">{{ label({ es: 'Título', en: 'Title' }) }}</label>
+      <label class="text-sm font-semibold" for="appt-name">{{ label(appointmentColumns.name.label) }}</label>
       <input
         id="appt-name"
         v-model="form.name"
@@ -417,7 +381,7 @@ function submit() {
     </div>
 
     <div class="flex flex-col gap-1 sm:col-span-2">
-      <label class="text-sm font-semibold" for="appt-desc">{{ label({ es: 'Descripción', en: 'Description' }) }}</label>
+      <label class="text-sm font-semibold" for="appt-desc">{{ label(appointmentColumns.description.label) }}</label>
       <textarea
         id="appt-desc"
         v-model="form.description"

@@ -5,7 +5,6 @@ import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import FieldError from '@/components/shared/FieldError.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
-import type { ColumnValue } from '@shared/types/types';
 import type { TableRecordMap } from '@shared/ssot/derived';
 
 // blockMinutes is the block's live length (end − start, from the editor's unsaved textboxes) so the
@@ -135,14 +134,13 @@ function priceOrNull(value: string): string | null {
 
 // duration/price are null when the block inherits the service default, else the block's own values.
 function writeBody(row: ServiceRow, duration: number | null, price: string | null): Partial<TableRecordMap['schedule_block_services']> {
-  const body: Record<string, ColumnValue | undefined> = {
+  return {
     professional_user_id: props.block.professional_user_id,
     schedule_block_id: props.block.id,
     service_id: row.serviceId,
     duration_minutes: duration,
     price_ars: price,
   };
-  return body as Partial<TableRecordMap['schedule_block_services']>;
 }
 
 function clearErrors(serviceId: string) {

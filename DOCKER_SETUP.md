@@ -53,11 +53,11 @@ docker-compose exec database psql -U postgres -d professional_agenda
 
 ## Services Architecture
 
-- **database**: PostgreSQL 15 Alpine
+- **database**: PostgreSQL 18 Alpine
   - Container: aida26_database
   - Port: 5432
   - Persistent data in `postgres_data` volume
-  - Database and initial user are created from `POSTGRES_*` env vars; schema is applied via backend migrations at app startup
+  - The app database and its two roles are created by `database/bootstrap.sh` on first init, from the `DB_*` env vars (not `POSTGRES_*`, which only set the cluster superuser); schema is applied via backend migrations at app startup
 
 - **backend**: Node.js/Express
   - Container: aida26_backend

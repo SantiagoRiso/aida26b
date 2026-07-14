@@ -6,6 +6,7 @@ import AppButton from '@/components/shared/AppButton.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
+import { toMinutes } from '@shared/ssot/domain';
 
 const props = withDefaults(defineProps<{
   open: boolean;
@@ -54,11 +55,6 @@ watch(
   },
   { immediate: true },
 );
-
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : NaN;
-}
 
 // Live length feeds the services panel's slot-fit warning as the times are edited.
 const liveMinutes = computed(() => {

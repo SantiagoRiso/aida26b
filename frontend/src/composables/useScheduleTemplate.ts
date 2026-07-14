@@ -7,6 +7,8 @@ import interactionPlugin from '@fullcalendar/interaction';
 import esLocale from '@fullcalendar/core/locales/es';
 import { useI18n } from 'vue-i18n';
 import { TEMPLATE_BASE_MONDAY, blockToEvent, type TemplateBlock } from './scheduleTemplateGrid';
+import { DAY_MIN_MINUTES, DAY_MAX_MINUTES } from './templateBlockPlacement';
+import { toHHMM } from '@shared/ssot/domain';
 
 export interface TemplateHandlers {
   onSelect: (arg: DateSelectArg) => void;
@@ -30,8 +32,10 @@ export function useScheduleTemplate(
     locale: locale.value === 'en' ? 'en' : esLocale,
     firstDay: 1,
     allDaySlot: false,
-    slotMinTime: '06:00:00',
-    slotMaxTime: '23:00:00',
+    // Bounds live in templateBlockPlacement (DAY_MIN_MINUTES/DAY_MAX_MINUTES) — the drag math's source
+    // of truth for the visible day range; this derives FC's 'HH:MM:00' strings from it.
+    slotMinTime: `${toHHMM(DAY_MIN_MINUTES)}:00`,
+    slotMaxTime: `${toHHMM(DAY_MAX_MINUTES)}:00`,
     slotDuration: '00:30:00',
     snapDuration: '00:01:00',
     slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },

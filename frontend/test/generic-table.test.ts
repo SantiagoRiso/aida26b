@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth';
 import { structure } from '@shared/ssot/structure';
 import type { ColumnDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
+import type { Role } from '@shared/types/roles';
 
 // Mirrors crud.ts buildQuery so the query-string contract is asserted without apiFetch.
 function buildQuery(params: {
@@ -112,7 +113,7 @@ vi.mock('@/api/crud', () => ({
   deleteRow: vi.fn(),
 }));
 
-function makePlugins(role = 'Admin') {
+function makePlugins(role: Role = 'Admin') {
   const pinia = createPinia();
   setActivePinia(pinia);
   const auth = useAuthStore(pinia);
@@ -120,7 +121,7 @@ function makePlugins(role = 'Admin') {
     id: 1,
     username: 'admin',
     email: null,
-    role: role as 'Admin' | 'Professional' | 'Receptionist' | 'Client',
+    role,
     business_id: null,
     is_active: true,
     must_change_password: false,

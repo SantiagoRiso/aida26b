@@ -9,6 +9,7 @@ import type { TableStructure } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { auditOutcomeBadgeClass } from '@/composables/badgeTone';
 import { useAuthStore } from '@/stores/auth';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -49,16 +50,13 @@ const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
 ];
 
 function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
-  if (!opt.tableKey) return label({ es: 'Todos los tipos', en: 'All types' });
+  if (!opt.tableKey) return t('audit.allTypes');
   // Widened to TableStructure: indexing by the generic TableKey union loses the per-table
   // literal type, which makes the optional `title` member inaccessible (mirrors GenericTable.vue).
   return label((structure.tables[opt.tableKey] as TableStructure).title);
 }
 
-const OUTCOMES = [
-  { value: '', label: { es: 'Todos', en: 'All' } },
-  ...AUDIT_OUTCOMES,
-];
+const OUTCOMES = AUDIT_OUTCOMES;
 
 async function load() {
   if (!isAdmin.value) return;
@@ -105,13 +103,13 @@ if (isAdmin.value) {
 <template>
   <div>
     <h1 class="text-2xl font-semibold mb-6">
-      {{ label({ es: 'Auditoría', en: 'Audit Log' }) }}
+      {{ t('audit.title') }}
     </h1>
 
     <template v-if="!isAdmin">
       <EmptyState
-        :heading="label({ es: 'Acceso restringido', en: 'Access restricted' })"
-        :body="label({ es: 'Solo los administradores pueden ver la auditoría.', en: 'Only administrators can view the audit log.' })"
+        :heading="t('audit.accessRestrictedHeading')"
+        :body="t('audit.accessRestrictedBody')"
       />
     </template>
 
@@ -120,7 +118,7 @@ if (isAdmin.value) {
         <select
           v-model="filterEntityType"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :aria-label="label({ es: 'Tipo de entidad', en: 'Entity type' })"
+          :aria-label="t('audit.entityTypeAria')"
         >
           <option
             v-for="opt in ENTITY_TYPES"
@@ -136,26 +134,26 @@ if (isAdmin.value) {
           type="number"
           min="1"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :placeholder="label({ es: 'ID del actor', en: 'Actor ID' })"
+          :placeholder="t('audit.actorIdPlaceholder')"
         />
 
         <input
           v-model="filterEventType"
           type="text"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :placeholder="label({ es: 'Tipo de evento', en: 'Event type' })"
+          :placeholder="t('audit.eventTypePlaceholder')"
         />
 
         <div class="flex items-center gap-2">
           <label for="audit-date-from" class="text-xs font-semibold text-neutral shrink-0">
-            {{ label({ es: 'Desde', en: 'From' }) }}
+            {{ t('generic.from') }}
           </label>
           <DateField id="audit-date-from" v-model="filterDateFrom" />
         </div>
 
         <div class="flex items-center gap-2">
           <label for="audit-date-to" class="text-xs font-semibold text-neutral shrink-0">
-            {{ label({ es: 'Hasta', en: 'To' }) }}
+            {{ t('generic.to') }}
           </label>
           <DateField id="audit-date-to" v-model="filterDateTo" />
         </div>
@@ -163,8 +161,9 @@ if (isAdmin.value) {
         <select
           v-model="filterOutcome"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :aria-label="label({ es: 'Resultado', en: 'Outcome' })"
+          :aria-label="t('audit.outcome')"
         >
+          <option value="">{{ t('generic.all') }}</option>
           <option
             v-for="opt in OUTCOMES"
             :key="opt.value"
@@ -176,10 +175,10 @@ if (isAdmin.value) {
 
         <div class="flex gap-2 xl:col-span-6 justify-end">
           <AppButton variant="neutral" type="button" @click="resetFilters">
-            {{ label({ es: 'Limpiar', en: 'Clear' }) }}
+            {{ t('audit.clear') }}
           </AppButton>
           <AppButton variant="primary" type="submit" :loading="loading">
-            {{ label({ es: 'Buscar', en: 'Search' }) }}
+            {{ t('audit.search') }}
           </AppButton>
         </div>
       </form>
@@ -190,8 +189,8 @@ if (isAdmin.value) {
 
       <div v-else-if="events.length === 0">
         <EmptyState
-          :heading="label({ es: 'Sin eventos', en: 'No events' })"
-          :body="label({ es: 'No hay eventos que coincidan con los filtros.', en: 'No events match the current filters.' })"
+          :heading="t('audit.emptyHeading')"
+          :body="t('audit.emptyBody')"
         />
       </div>
 
@@ -200,19 +199,19 @@ if (isAdmin.value) {
           <thead class="bg-surface">
             <tr>
               <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ label({ es: 'Fecha', en: 'Date' }) }}
+                {{ t('calendar.dateLabel') }}
               </th>
               <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ label({ es: 'Evento', en: 'Event' }) }}
+                {{ t('audit.colEvent') }}
               </th>
               <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ label({ es: 'Entidad', en: 'Entity' }) }}
+                {{ t('audit.colEntity') }}
               </th>
               <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ label({ es: 'Actor', en: 'Actor' }) }}
+                {{ t('audit.colActor') }}
               </th>
               <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ label({ es: 'Resultado', en: 'Outcome' }) }}
+                {{ t('audit.outcome') }}
               </th>
             </tr>
           </thead>
@@ -239,11 +238,7 @@ if (isAdmin.value) {
               <td class="px-4 py-3">
                 <span
                   class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
-                  :class="{
-                    'bg-green-100 text-success':  event.outcome === 'success',
-                    'bg-red-100 text-destructive': event.outcome === 'denied',
-                    'bg-yellow-100 text-warning':  event.outcome === 'failure',
-                  }"
+                  :class="auditOutcomeBadgeClass(event.outcome)"
                 >
                   <span v-if="event.outcome === 'denied'" class="mr-1" aria-hidden="true">⛔</span>
                   {{ event.outcome }}

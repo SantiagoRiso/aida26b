@@ -3,16 +3,13 @@ import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
-import { useLabel } from '@/composables/useLabel';
-import { useTimeOffConflictGate, shortDate } from '@/composables/useTimeOffConflictGate';
+import { useTimeOffConflictGate } from '@/composables/useTimeOffConflictGate';
 import { buildExceptionBody, classifyException, type ExceptionKind, type ExceptionRow } from '@/composables/scheduleExceptions';
 import AppButton from '@/components/shared/AppButton.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
-import type { ColumnValue } from '@shared/types/types';
-import type { TableRecordMap } from '@shared/ssot/derived';
 
 const props = defineProps<{
   prefillDate?: string;
@@ -28,7 +25,6 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { label } = useLabel();
 const toast = useToast();
 const gate = useTimeOffConflictGate();
 
@@ -95,26 +91,19 @@ async function submit() {
   // their booked turnos — warn first. 'extra' adds hours (never conflicts) and resources are out of
   // scope for turno conflicts, so both skip the gate.
   if (props.professionalId != null && (form.kind === 'off' || form.kind === 'block')) {
-    const proceed = await gate.confirmTimeOff(
-      {
-        date: form.date,
-        professional_user_id: props.professionalId,
-        start: form.kind === 'block' ? form.start_time || null : null,
-        end: form.kind === 'block' ? form.end_time || null : null,
-      },
-      (n) => label({
-        es: `Va a dejar ${n} turno${n === 1 ? '' : 's'} en conflicto el ${shortDate(form.date)}. ¿Continuar?`,
-        en: `This will leave ${n} appointment${n === 1 ? '' : 's'} in conflict on ${shortDate(form.date)}. Continue?`,
-      }),
-    );
+    const proceed = await gate.confirmTimeOff({
+      date: form.date,
+      professional_user_id: props.professionalId,
+      start: form.kind === 'block' ? form.start_time || null : null,
+      end: form.kind === 'block' ? form.end_time || null : null,
+    });
     if (!proceed) return;
   }
 
   saving.value = true;
-  const body = built.body as Record<string, ColumnValue | undefined> as Partial<TableRecordMap['schedule_exceptions']>;
   const result = props.exception
-    ? await updateRow('schedule_exceptions', props.exception.id, body)
-    : await createRow('schedule_exceptions', body);
+    ? await updateRow('schedule_exceptions', props.exception.id, built.body)
+    : await createRow('schedule_exceptions', built.body);
   saving.value = false;
 
   if (!result.ok) {
@@ -177,7 +166,7 @@ async function submit() {
 
     <div class="flex gap-2 pt-2">
       <AppButton type="submit" variant="primary" :loading="saving">
-        {{ exception ? label({ es: 'Guardar cambios', en: 'Save changes' }) : t('actions.save') }}
+        {{ exception ? t('actions.saveChanges') : t('actions.save') }}
       </AppButton>
       <AppButton type="button" variant="neutral" @click="emit('cancel')">
         {{ t('actions.cancel') }}
@@ -186,9 +175,9 @@ async function submit() {
 
     <ConfirmDialog
       :open="gate.open.value"
-      :title="label({ es: 'Agregar licencia', en: 'Add time off' })"
+      :title="t('exception.addButton')"
       :body="gate.message.value"
-      :confirm-label="label({ es: 'Continuar', en: 'Continue' })"
+      :confirm-label="t('actions.continue')"
       @confirm="gate.onConfirm"
       @cancel="gate.onCancel"
     />

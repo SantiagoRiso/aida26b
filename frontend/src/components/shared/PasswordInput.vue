@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/outline';
-import { useLabel } from '@/composables/useLabel';
 
 // Reveal is per-render only — never persisted, always starts hidden.
 const model = defineModel<string>({ default: '' });
@@ -13,7 +13,7 @@ defineProps<{
   inputClass?: string | string[];
 }>();
 
-const { label } = useLabel();
+const { t } = useI18n();
 const visible = ref(false);
 </script>
 
@@ -30,9 +30,7 @@ const visible = ref(false);
     <button
       type="button"
       class="absolute inset-y-0 right-0 flex items-center px-3 text-neutral hover:text-accent"
-      :aria-label="visible
-        ? label({ es: 'Ocultar contraseña', en: 'Hide password' })
-        : label({ es: 'Mostrar contraseña', en: 'Show password' })"
+      :aria-label="visible ? t('auth.hidePassword') : t('auth.showPassword')"
       @click="visible = !visible"
     >
       <EyeSlashIcon v-if="visible" class="h-5 w-5" aria-hidden="true" />

@@ -1,5 +1,6 @@
 import type { Appointment } from '@/api/appointments';
 import type { Role } from '@shared/types/roles';
+import type { AppointmentState } from '@shared/ssot/domain/appointment-lifecycle';
 
 export const CURRENT_LEAD_MS = 5 * 60 * 1000;
 
@@ -24,7 +25,7 @@ export function canSettle(
 export type SettleAction = 'paid' | 'unpaid' | 'absent';
 
 // "absent" marks a no_show and never charges; paid/unpaid both complete the turno.
-export function transitionFor(action: SettleAction): 'completed' | 'no_show' {
+export function transitionFor(action: SettleAction): Extract<AppointmentState, 'completed' | 'no_show'> {
   return action === 'absent' ? 'no_show' : 'completed';
 }
 

@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { listClosures, createClosure, updateClosure, deleteClosure, type BusinessClosure } from '@/api/closures';
-import { useTimeOffConflictGate, shortDate } from '@/composables/useTimeOffConflictGate';
+import { useTimeOffConflictGate } from '@/composables/useTimeOffConflictGate';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 
-const { label } = useLabel();
+const { t } = useI18n();
 const { success, error: toastError } = useToast();
 const gate = useTimeOffConflictGate();
 
@@ -21,7 +21,6 @@ const rows = ref<BusinessClosure[]>([]);
 const loading = ref(false);
 const deleteTarget = ref<BusinessClosure | null>(null);
 
-// The bottom "add a holiday" form.
 const form = reactive<ClosureFields>({ date: '', start: '', end: '', reason: '', allDay: true });
 const saving = ref(false);
 const formError = ref('');
@@ -56,10 +55,10 @@ async function load() {
 onMounted(load);
 
 function validate(v: ClosureFields): string | null {
-  if (!v.date) return label({ es: 'Seleccionar una fecha.', en: 'Select a date.' });
+  if (!v.date) return t('closures.selectDate');
   // A partial-day closure needs both endpoints; a full day carries neither.
   if (!v.allDay && (!v.start || !v.end)) {
-    return label({ es: 'Completar desde y hasta, o marcar "Todo el día".', en: 'Fill both from and to, or check "All day".' });
+    return t('closures.fillRange');
   }
   return null;
 }
@@ -73,13 +72,7 @@ function effectiveTimes(v: ClosureFields): { start: string | null; end: string |
 // reversible), it never cancels them. Shared by add and edit.
 function confirmClosure(v: ClosureFields): Promise<boolean> {
   const { start, end } = effectiveTimes(v);
-  return gate.confirmTimeOff(
-    { date: v.date, start, end },
-    (n) => label({
-      es: `Va a dejar ${n} turno${n === 1 ? '' : 's'} en conflicto el ${shortDate(v.date)}. ¿Continuar?`,
-      en: `This will leave ${n} appointment${n === 1 ? '' : 's'} in conflict on ${shortDate(v.date)}. Continue?`,
-    }),
-  );
+  return gate.confirmTimeOff({ date: v.date, start, end });
 }
 
 function bodyOf(v: ClosureFields) {
@@ -87,7 +80,7 @@ function bodyOf(v: ClosureFields) {
   return { exception_date: v.date, start_time: start, end_time: end, reason: v.reason || null };
 }
 
-const saveFailed = () => label({ es: 'No se pudo guardar el día festivo.', en: 'Could not save the holiday.' });
+const saveFailed = () => t('closures.saveFailed');
 
 async function submitAdd() {
   const err = validate(form);
@@ -138,7 +131,7 @@ async function confirmDelete() {
 function rangeLabel(c: BusinessClosure): string {
   return c.start_time && c.end_time
     ? `${c.start_time}–${c.end_time}`
-    : label({ es: 'Todo el día', en: 'All day' });
+    : t('closures.allDay');
 }
 </script>
 
@@ -146,7 +139,7 @@ function rangeLabel(c: BusinessClosure): string {
   <div class="space-y-4">
     <div v-if="loading" class="text-sm text-neutral">…</div>
     <p v-else-if="rows.length === 0" class="text-sm text-neutral">
-      {{ label({ es: 'No hay días festivos.', en: 'No holidays yet.' }) }}
+      {{ t('closures.empty') }}
     </p>
     <ul v-else class="space-y-2">
       <li
@@ -158,32 +151,32 @@ function rangeLabel(c: BusinessClosure): string {
         <div v-if="editingId === c.id" class="space-y-2">
           <div class="flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1 text-sm">
-              <span class="font-medium text-neutral">{{ label({ es: 'Fecha', en: 'Date' }) }}</span>
+              <span class="font-medium text-neutral">{{ t('calendar.dateLabel') }}</span>
               <DateField v-model="editForm.date" />
             </label>
             <label class="flex items-center gap-2 pb-2 text-sm">
               <input type="checkbox" v-model="editForm.allDay" class="h-4 w-4 accent-accent" data-testid="closure-edit-allday" />
-              <span class="font-medium text-neutral">{{ label({ es: 'Todo el día', en: 'All day' }) }}</span>
+              <span class="font-medium text-neutral">{{ t('closures.allDay') }}</span>
             </label>
             <template v-if="!editForm.allDay">
               <label class="flex flex-col gap-1 text-sm">
-                <span class="font-medium text-neutral">{{ label({ es: 'Desde', en: 'From' }) }}</span>
+                <span class="font-medium text-neutral">{{ t('generic.from') }}</span>
                 <TimeField v-model="editForm.start" />
               </label>
               <label class="flex flex-col gap-1 text-sm">
-                <span class="font-medium text-neutral">{{ label({ es: 'Hasta', en: 'To' }) }}</span>
+                <span class="font-medium text-neutral">{{ t('generic.to') }}</span>
                 <TimeField v-model="editForm.end" />
               </label>
             </template>
             <label class="flex min-w-[160px] flex-1 flex-col gap-1 text-sm">
-              <span class="font-medium text-neutral">{{ label({ es: 'Motivo (opcional)', en: 'Reason (optional)' }) }}</span>
+              <span class="font-medium text-neutral">{{ t('fields.reasonOptional') }}</span>
               <input v-model="editForm.reason" type="text" class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
             </label>
             <AppButton variant="primary" :loading="editSaving" @click="submitEdit">
-              {{ label({ es: 'Guardar cambios', en: 'Save changes' }) }}
+              {{ t('actions.saveChanges') }}
             </AppButton>
             <AppButton variant="neutral" @click="cancelEdit">
-              {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+              {{ t('actions.cancel') }}
             </AppButton>
           </div>
           <FieldError :message="editError" />
@@ -197,10 +190,10 @@ function rangeLabel(c: BusinessClosure): string {
           </span>
           <span class="flex items-center gap-2">
             <AppButton variant="neutral" @click="startEdit(c)">
-              {{ label({ es: 'Editar', en: 'Edit' }) }}
+              {{ t('actions.edit') }}
             </AppButton>
             <AppButton variant="destructive" @click="deleteTarget = c">
-              {{ label({ es: 'Quitar', en: 'Remove' }) }}
+              {{ t('closures.remove') }}
             </AppButton>
           </span>
         </div>
@@ -209,38 +202,38 @@ function rangeLabel(c: BusinessClosure): string {
 
     <div class="flex flex-wrap items-end gap-3 border-t border-border pt-4">
       <label class="flex flex-col gap-1 text-sm">
-        <span class="font-medium text-neutral">{{ label({ es: 'Fecha', en: 'Date' }) }}</span>
+        <span class="font-medium text-neutral">{{ t('calendar.dateLabel') }}</span>
         <DateField v-model="form.date" />
       </label>
       <label class="flex items-center gap-2 pb-2 text-sm">
         <input type="checkbox" v-model="form.allDay" class="h-4 w-4 accent-accent" data-testid="closure-add-allday" />
-        <span class="font-medium text-neutral">{{ label({ es: 'Todo el día', en: 'All day' }) }}</span>
+        <span class="font-medium text-neutral">{{ t('closures.allDay') }}</span>
       </label>
       <template v-if="!form.allDay">
         <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium text-neutral">{{ label({ es: 'Desde', en: 'From' }) }}</span>
+          <span class="font-medium text-neutral">{{ t('generic.from') }}</span>
           <TimeField v-model="form.start" />
         </label>
         <label class="flex flex-col gap-1 text-sm">
-          <span class="font-medium text-neutral">{{ label({ es: 'Hasta', en: 'To' }) }}</span>
+          <span class="font-medium text-neutral">{{ t('generic.to') }}</span>
           <TimeField v-model="form.end" />
         </label>
       </template>
       <label class="flex min-w-[160px] flex-1 flex-col gap-1 text-sm">
-        <span class="font-medium text-neutral">{{ label({ es: 'Motivo (opcional)', en: 'Reason (optional)' }) }}</span>
+        <span class="font-medium text-neutral">{{ t('fields.reasonOptional') }}</span>
         <input v-model="form.reason" type="text" class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
       </label>
       <AppButton variant="primary" :loading="saving" data-testid="closure-add-submit" @click="submitAdd">
-        {{ label({ es: 'Agregar día festivo', en: 'Add holiday' }) }}
+        {{ t('closures.addHoliday') }}
       </AppButton>
     </div>
     <FieldError :message="formError" />
 
     <ConfirmDialog
       :open="deleteTarget !== null"
-      :title="label({ es: 'Quitar día festivo', en: 'Remove holiday' })"
-      :body="label({ es: '¿Quitar este día festivo?', en: 'Remove this holiday?' })"
-      :confirm-label="label({ es: 'Quitar', en: 'Remove' })"
+      :title="t('closures.removeTitle')"
+      :body="t('closures.removeBody')"
+      :confirm-label="t('closures.remove')"
       destructive
       @confirm="confirmDelete"
       @cancel="deleteTarget = null"
@@ -248,9 +241,9 @@ function rangeLabel(c: BusinessClosure): string {
 
     <ConfirmDialog
       :open="gate.open.value"
-      :title="label({ es: 'Día festivo', en: 'Holiday' })"
+      :title="t('closures.dialogTitle')"
       :body="gate.message.value"
-      :confirm-label="label({ es: 'Continuar', en: 'Continue' })"
+      :confirm-label="t('actions.continue')"
       @confirm="gate.onConfirm"
       @cancel="gate.onCancel"
     />

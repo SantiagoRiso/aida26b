@@ -3,10 +3,10 @@
 // click-open popover with hour/minute adjusters. Always 24h regardless of browser locale, fully
 // click-and-type editable. Binds 'HH:mm' strings — the API contract is unchanged.
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { ChevronUpIcon, ChevronDownIcon } from '@heroicons/vue/20/solid';
-import { useLabel } from '@/composables/useLabel';
 
-const { label } = useLabel();
+const { t } = useI18n();
 
 const props = defineProps<{
   modelValue: string | null;
@@ -166,24 +166,24 @@ function onBlur(e: FocusEvent) {
     >
       <div class="flex flex-col items-center">
         <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
-          :aria-label="label({ es: '+ hora', en: '+ hour' })" @click="bumpHour(1)">
+          :aria-label="t('timeField.hourUp')" @click="bumpHour(1)">
           <ChevronUpIcon class="h-5 w-5" />
         </button>
         <span class="w-8 text-center text-sm font-semibold tabular-nums">{{ pad(parts.h) }}</span>
         <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
-          :aria-label="label({ es: '- hora', en: '- hour' })" @click="bumpHour(-1)">
+          :aria-label="t('timeField.hourDown')" @click="bumpHour(-1)">
           <ChevronDownIcon class="h-5 w-5" />
         </button>
       </div>
       <span class="text-sm font-semibold text-neutral">:</span>
       <div class="flex flex-col items-center">
         <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
-          :aria-label="label({ es: '+ minutos', en: '+ minutes' })" @click="bumpMinute(1)">
+          :aria-label="t('timeField.minuteUp')" @click="bumpMinute(1)">
           <ChevronUpIcon class="h-5 w-5" />
         </button>
         <span class="w-8 text-center text-sm font-semibold tabular-nums">{{ pad(parts.m) }}</span>
         <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
-          :aria-label="label({ es: '- minutos', en: '- minutes' })" @click="bumpMinute(-1)">
+          :aria-label="t('timeField.minuteDown')" @click="bumpMinute(-1)">
           <ChevronDownIcon class="h-5 w-5" />
         </button>
       </div>

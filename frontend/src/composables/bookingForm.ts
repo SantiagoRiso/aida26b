@@ -2,6 +2,8 @@
 // Both step a date, derive a slot's duration, and scope services to a professional's offerings;
 // these keep that logic in one place instead of each form reimplementing it.
 
+import { toMinutes } from '@shared/ssot/domain/availability';
+
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 // A Date → local 'YYYY-MM-DD'. Uses the browser's local day: new Date('YYYY-MM-DD') parses as UTC and
@@ -16,11 +18,8 @@ export function addDaysISO(iso: string, days: number): string {
   return isoDate(new Date(y, m - 1, d + days));
 }
 
-// Minutes between two 'HH:mm' wall-clock times (a slot's length).
 export function intervalMinutes(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number);
-  const [eh, em] = end.split(':').map(Number);
-  return (eh * 60 + em) - (sh * 60 + sm);
+  return toMinutes(end) - toMinutes(start);
 }
 
 // The set of service ids a professional offers, or null when there is no professional selected or no

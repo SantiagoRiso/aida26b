@@ -23,6 +23,12 @@ const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour12: false,
 });
 
+const TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 // Date-only strings must parse as LOCAL dates: new Date('YYYY-MM-DD') is UTC midnight,
 // which renders as the previous day in Argentina (UTC-3).
 function toLocalDate(iso: string | Date): Date {
@@ -56,5 +62,9 @@ export function useCurrency() {
     return DATETIME_FORMATTER.format(toLocalDate(iso));
   }
 
-  return { formatARS, formatDate, formatDateTime };
+  function formatTime(iso: string | Date): string {
+    return TIME_FORMATTER.format(toLocalDate(iso));
+  }
+
+  return { formatARS, formatDate, formatDateTime, formatTime };
 }

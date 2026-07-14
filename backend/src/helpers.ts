@@ -17,8 +17,7 @@ function guardRoute(
         if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
         return;
       }
-      // App errors that carry their own HTTP mapping (httpError / the conflict recheck's
-      // "owner gone mid-transaction") — handlers no longer re-map these by hand.
+      // App errors that carry their own HTTP mapping
       const structured = httpForStructuredError(error);
       if (structured) {
         if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);

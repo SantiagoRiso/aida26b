@@ -3,6 +3,7 @@ import type { Appointment } from '@/api/appointments';
 import { snapDragMinutes } from '@/composables/calendarGrid';
 import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
 import { createDragGhost, type DragGhost } from '@/composables/dragGhost';
+import { isoDate } from '@/composables/bookingForm';
 
 // A drag we drive ourselves instead of FullCalendar's. FC moves an event by a snapped delta from its
 // original start, so a block that begins off the lattice (a sobreturno) can never step onto real slots
@@ -152,7 +153,6 @@ export function useCustomDrag(deps: CustomDragDeps): {
   function start(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
     if (ev.button !== 0) return;
     const startDate = new Date(appt.starts_at);
-    const pad = (n: number) => String(n).padStart(2, '0');
     session = {
       appt,
       el,
@@ -164,7 +164,7 @@ export function useCustomDrag(deps: CustomDragDeps): {
       ghost: null,
       lastLeft: 0,
       lastWidth: 0,
-      lastDate: `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`,
+      lastDate: isoDate(startDate),
       lastStart: startDate.getHours() * 60 + startDate.getMinutes(),
       validTarget: true,
     };

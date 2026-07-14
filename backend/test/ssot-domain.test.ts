@@ -21,6 +21,8 @@ import {
   TRANSITION_MAP,
   assertValidTransition,
   LEDGER_ENTRY_TYPES,
+  BUSINESS_TZ,
+  ARGENTINA_OFFSET_MS,
 } from '../../shared/src/ssot/domain';
 import type { BookedAppointment, LedgerEntryType } from '../../shared/src/ssot/domain';
 import type {
@@ -213,7 +215,7 @@ describe('ordinary vs protected CRUD boundaries', () => {
     expect(getCrudPolicy('schedule_block_services')?.delete).toBe(true);
   });
 
-  // The service catalog is admin-owned config (D3): receptionists consume services through the
+  // The service catalog is admin-owned config: receptionists consume services through the
   // booking form, they do not curate the catalog. Read stays open to every booking role.
   it('services catalog is admin-only for mutations', () => {
     const rr = structure.tables.services.roleRequired!;
@@ -639,6 +641,28 @@ describe('owner-scheduled tables are derived from schedulable capabilities', () 
     expect(isOwnerScheduledTable('schedule_exceptions')).toBe(true);
     expect(isOwnerScheduledTable('appointments')).toBe(false);
     expect(isOwnerScheduledTable('services')).toBe(false);
+  });
+});
+
+describe('BUSINESS_TZ ↔ ARGENTINA_OFFSET_MS drift guard', () => {
+  // The real UTC offset the IANA database assigns BUSINESS_TZ at a given instant.
+  function ianaOffsetMs(at: Date): number {
+    const name = new Intl.DateTimeFormat('en-US', { timeZone: BUSINESS_TZ, timeZoneName: 'longOffset' })
+      .formatToParts(at)
+      .find((p) => p.type === 'timeZoneName')!.value;
+    if (name === 'GMT') return 0;
+    const m = name.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/);
+    if (!m) throw new Error(`unparseable offset for ${BUSINESS_TZ}: ${name}`);
+    const sign = m[1] === '-' ? -1 : 1;
+    return sign * (Number(m[2]) * 60 + Number(m[3] ?? 0)) * 60 * 1000;
+  }
+
+  it('the fixed offset matches the IANA zone in both halves of the current year (no DST)', () => {
+    // Argentina abolished DST in 2009; validate.ts's date math relies on the offset being
+    // constant. Probing summer and winter of the running year catches a tzdata change in CI.
+    const year = new Date().getUTCFullYear();
+    expect(ianaOffsetMs(new Date(Date.UTC(year, 0, 15)))).toBe(ARGENTINA_OFFSET_MS);
+    expect(ianaOffsetMs(new Date(Date.UTC(year, 6, 15)))).toBe(ARGENTINA_OFFSET_MS);
   });
 });
 

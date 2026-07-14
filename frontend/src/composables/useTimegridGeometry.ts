@@ -2,6 +2,8 @@
 // drags by a snapped delta and can't place an off-lattice block onto real slots, so we run our own
 // drag (useCustomDrag) and need this bridge between screen pixels and minutes-of-day / day columns.
 
+import { toMinutes } from '@shared/ssot/domain';
+
 // Pure arithmetic, split out so it unit-tests without a DOM. `pxPerMinute` and a single reference
 // lane (its top edge in client px + its minutes-of-day) define the linear screen↔time mapping.
 export function minutesAtClientY(
@@ -42,11 +44,6 @@ export interface TimegridGeometry {
   pxPerMinute: () => number | null;
 }
 
-function isoTimeToMinutes(iso: string): number {
-  const [h, m] = iso.split(':').map(Number);
-  return h * 60 + m;
-}
-
 // Distinct body slot lanes, sorted top-down. Deduped by time so a repeated lane (axis mirror) can't
 // skew the px/minute derivation.
 function readLanes(root: ParentNode): Lane[] {
@@ -54,7 +51,7 @@ function readLanes(root: ParentNode): Lane[] {
   root.querySelectorAll<HTMLElement>('.fc-timegrid-slot-lane[data-time]').forEach((el) => {
     const iso = el.getAttribute('data-time');
     if (!iso) return;
-    const minutes = isoTimeToMinutes(iso);
+    const minutes = toMinutes(iso);
     if (!byMinutes.has(minutes)) {
       byMinutes.set(minutes, { top: el.getBoundingClientRect().top, minutes });
     }

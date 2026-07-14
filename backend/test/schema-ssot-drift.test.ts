@@ -11,8 +11,8 @@ import {
   AUDIT_OUTCOME_VALUES,
   WEEKDAYS,
   schedulerTables,
+  BUSINESS_TZ,
 } from '../../shared/src/ssot/domain';
-import { BUSINESS_TZ } from '../src/time';
 
 // Migrations are immutable (forward-only, checksummed), so the SQL side cannot derive from the
 // SSOT — these value sets are duplicated by necessity. This guard fails the moment they drift:

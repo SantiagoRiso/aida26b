@@ -3,13 +3,13 @@ import { ref, computed, watch } from 'vue';
 import { useI18n, Translation as I18nT } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
-import { listRows } from '@/api/crud';
 import { checkConflict } from '@/api/scheduling';
-import { requestAppointment, listAppointments } from '@/api/appointments';
+import { requestAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { useCurrency } from '@/composables/useCurrency';
-import { addDaysISO, intervalMinutes, offeredServiceIds } from '@/composables/bookingForm';
+import { addDaysISO, intervalMinutes } from '@/composables/bookingForm';
+import { useBookingOptions } from '@/composables/useBookingOptions';
 import { useBookingWindow } from '@/composables/useBookingWindow';
 import SlotPicker from '@/components/calendar/SlotPicker.vue';
 import Selector from '@/components/shared/Selector.vue';
@@ -17,7 +17,6 @@ import AppButton from '@/components/shared/AppButton.vue';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import DateField from '@/components/shared/DateField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
-import { useLabel } from '@/composables/useLabel';
 import { useStateLabel } from '@/composables/useStateLabel';
 
 const emit = defineEmits<{
@@ -29,112 +28,43 @@ const { stateLabel } = useStateLabel();
 const auth = useAuthStore();
 const ui = useUiStore();
 const { formatARS, formatDate } = useCurrency();
-const { label } = useLabel();
 
 type Step = 1 | 2 | 3;
 const step = ref<Step>(1);
 
-type ProfRow = TableRecordMap['professionals'];
 type ServiceRow = TableRecordMap['services'];
-
-const professionals = ref<ProfRow[]>([]);
-const services = ref<ServiceRow[]>([]);
-const profServices = ref<TableRecordMap['professional_services'][]>([]);
-// The client's own appointment history — drives the recency ordering of professionals.
-const myAppointments = ref<Appointment[]>([]);
-const loadingOptions = ref(false);
 
 const selectedProfId = ref<number | null>(null);
 const selectedServiceId = ref<string | null>(null);
+
+const {
+  loading: loadingOptions,
+  professionals,
+  services,
+  rankedProfessionals,
+  serviceNamesByProfessional,
+  availableServices,
+} = useBookingOptions({
+  rankByRecency: true,
+  selectedProfessionalId: () => (selectedProfId.value != null ? String(selectedProfId.value) : null),
+});
+
 const selectedService = computed<ServiceRow | null>(() =>
   selectedServiceId.value == null
     ? null
     : services.value.find((s) => s.id === selectedServiceId.value) ?? null,
 );
 
-async function loadOptions() {
-  loadingOptions.value = true;
-  // Services and the professional↔service map are readable by all roles; the appointments list
-  // is server-scoped to the calling client.
-  const [profRes, svcRes, psRes, apptRes] = await Promise.all([
-    listRows('professionals'),
-    listRows('services'),
-    listRows('professional_services', { limit: 500 }),
-    listAppointments({ limit: 200 }),
-  ]);
-  loadingOptions.value = false;
-  if (profRes.ok) professionals.value = profRes.data;
-  if (svcRes.ok) services.value = svcRes.data;
-  if (psRes.ok) profServices.value = psRes.data;
-  if (apptRes.ok) myAppointments.value = apptRes.data;
-}
-
-loadOptions();
-
-const serviceNameById = computed(() => {
-  const m = new Map<string, string>();
-  for (const s of services.value) m.set(s.id, s.name);
-  return m;
-});
-
-const serviceNamesByProf = computed(() => {
-  const m = new Map<string, string[]>();
-  for (const ps of profServices.value) {
-    const name = serviceNameById.value.get(ps.service_id);
-    if (!name) continue;
-    const key = ps.professional_user_id;
-    const list = m.get(key);
-    if (list) list.push(name);
-    else m.set(key, [name]);
-  }
-  return m;
-});
-
-// Most-recent interaction (requested or attended) per professional within the last 365 days,
-// as an epoch timestamp — higher means more recent, used to rank the picker.
-const recencyByProf = computed(() => {
-  const cutoff = Date.now() - 365 * 86400000;
-  const m = new Map<string, number>();
-  for (const a of myAppointments.value) {
-    const t = new Date(a.starts_at).getTime();
-    if (t < cutoff) continue;
-    const key = a.professional_user_id;
-    const prev = m.get(key);
-    if (prev == null || t > prev) m.set(key, t);
-  }
-  return m;
-});
-
 interface ProfOption { value: string; label: string; bio: string | null; services: string }
 
-const professionalOptions = computed<ProfOption[]>(() => {
-  const recency = recencyByProf.value;
-  const ranked = professionals.value.map((p) => {
-    const key = p.id;
-    return {
-      value: key,
-      label: p.display_name,
-      bio: p.bio ?? null,
-      services: (serviceNamesByProf.value.get(key) ?? []).join(', '),
-      recency: recency.get(key) ?? null,
-    };
-  });
-  ranked.sort((a, b) => {
-    if (a.recency != null && b.recency != null) return b.recency - a.recency;
-    if (a.recency != null) return -1;
-    if (b.recency != null) return 1;
-    return a.label.localeCompare(b.label);
-  });
-  return ranked.map(({ recency: _r, ...rest }) => rest);
-});
-
-// The service list is scoped to what the chosen professional offers (mirrors the staff form);
-// with no professional selected, or a professional with no mapping, fall back to every service.
-const availableServices = computed<ServiceRow[]>(() => {
-  const offered = offeredServiceIds(profServices.value, selectedProfId.value != null ? String(selectedProfId.value) : null);
-  if (!offered) return services.value;
-  return services.value.filter((s) => offered.has(s.id));
-});
+const professionalOptions = computed<ProfOption[]>(() =>
+  rankedProfessionals.value.map((p) => ({
+    value: p.id,
+    label: p.display_name,
+    bio: p.bio ?? null,
+    services: (serviceNamesByProfessional.value.get(p.id) ?? []).join(', '),
+  })),
+);
 
 // Options for the Selector; the component renders a lone service as a read-only label and auto-picks it.
 const serviceSelectOptions = computed(() =>
@@ -155,13 +85,11 @@ const selectedDate = ref<string>('');
 const selectedStart = ref<string | null>(null);
 const selectedSlotDuration = ref<number>(0);
 
-// Effective booking window (concrete dates) for the chosen professional+service; clamps the picker.
 const { windowMax, minDate } = useBookingWindow(
   selectedProfId,
   computed(() => (selectedService.value ? Number(selectedService.value.id) : null)),
 );
 
-// Reset the picked date/slot whenever the professional or service changes.
 watch([selectedProfId, selectedService], () => {
   selectedDate.value = '';
   selectedStart.value = null;
@@ -348,7 +276,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
             type="button"
             class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="atMinDate"
-            :aria-label="label({ es: 'Día anterior', en: 'Previous day' })"
+            :aria-label="t('calendar.prevDay')"
             @click="stepDate(-1)"
           >
             <ChevronLeftIcon class="h-5 w-5" />
@@ -358,7 +286,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
             type="button"
             class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded border border-border text-neutral hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="atMaxDate"
-            :aria-label="label({ es: 'Día siguiente', en: 'Next day' })"
+            :aria-label="t('calendar.nextDay')"
             @click="stepDate(1)"
           >
             <ChevronRightIcon class="h-5 w-5" />

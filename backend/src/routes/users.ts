@@ -20,12 +20,105 @@ import {
   enableClientLogin,
 } from '../db/users';
 import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = new RegExp(EMAIL_PATTERN);
 
 // eslint-disable-next-line no-restricted-syntax -- catch-boundary: narrows an unverified thrown error into DbError
 function isUniqueViolation(error: unknown): error is DbError {
   return error instanceof DbError && error.pgCode === '23505';
+}
+
+// Single unique-violation → 409 responder. The per-business DNI constraint is shared by
+// every user write, so it is named here; the fallback names the field the caller was
+// inserting (email vs username) so the form can react to the right input.
+// Anything else rethrows for guardRoute to map (unexpected DbError → mapped code, else 500).
+function sendUniqueConflict(res: express.Response, error: unknown, fallbackMessage: string) {
+  if (!isUniqueViolation(error)) throw error;
+  const message =
+    error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : fallbackMessage;
+  return sendError(res, 409, 'conflict', message);
+}
+
+type CreateUserInput = {
+  username: string;
+  emailRaw: string | null;
+  password: string | null;
+  role: string;
+  displayName: string;
+  dni: string | null;
+};
+
+// Contact-only client (walk-in / phone booking): no username or password supplied.
+// Bookable immediately; login is enabled later via /enable-login.
+async function createContactOnlyClient(
+  pool: Pool,
+  audit: AuditWriter,
+  req: express.Request,
+  res: express.Response,
+  input: CreateUserInput,
+) {
+  const { emailRaw, displayName, dni, role } = input;
+
+  const businessId = requireBusinessContext(req, res);
+  if (businessId == null) return;
+
+  if (!displayName || !emailRaw || !EMAIL_RE.test(emailRaw)) {
+    return sendError(res, 400, 'invalid_request', 'Valid display name and email are required');
+  }
+
+  try {
+    const newUserId = await withTransaction(pool, async (tx) => {
+      const inserted = await insertContactOnlyClient(tx, {
+        email: emailRaw, displayName, dni, businessId,
+      });
+      return Number(inserted!.id);
+    });
+
+    await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+
+    return sendData(res, { id: newUserId, role }, 201);
+  } catch (error) {
+    return sendUniqueConflict(res, error, 'Email already exists');
+  }
+}
+
+async function createCredentialedUser(
+  pool: Pool,
+  audit: AuditWriter,
+  req: express.Request,
+  res: express.Response,
+  input: CreateUserInput,
+) {
+  const { username, emailRaw, password, role, displayName, dni } = input;
+
+  if (!username || !password || !isRole(role)) {
+    return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required');
+  }
+
+  // A null business_id means "see/act across all businesses"; stamping it onto a new
+  // user would mint a cross-tenant account. User creation requires a concrete business.
+  const businessId = requireBusinessContext(req, res);
+  if (businessId == null) return;
+  const email = emailRaw ?? `${username}@noemail.local`;
+  const { passwordHash, passwordSalt } = await auth.hashPassword(password);
+
+  try {
+    // All person attributes (display_name, dni, phone, bio, notes) live on auth.users directly.
+    const newUserId = await withTransaction(pool, async (tx) => {
+      const inserted = await insertUser(tx, {
+        username, email, displayName, dni,
+        passwordHash, passwordSalt, role, businessId,
+      });
+      return Number(inserted!.id);
+    });
+
+    await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+
+    return sendData(res, { id: newUserId, username, role }, 201);
+  } catch (error) {
+    return sendUniqueConflict(res, error, 'Username already exists');
+  }
 }
 
 export function mountUserAdminRoutes(
@@ -77,80 +170,13 @@ export function mountUserAdminRoutes(
         return sendError(res, 403, 'forbidden', 'Forbidden');
       }
 
-      // Contact-only client (walk-in / phone booking): no username or password supplied.
-      // Bookable immediately; login is enabled later via /enable-login.
+      const input: CreateUserInput = { username, emailRaw, password, role, displayName, dni };
+
       if (role === 'Client' && !username && !password) {
-        const businessId = requireBusinessContext(req, res);
-        if (businessId == null) return;
-
-        const contactDisplayName =
-          typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
-
-        if (!contactDisplayName || !emailRaw || !EMAIL_RE.test(emailRaw)) {
-          return sendError(res, 400, 'invalid_request', 'Valid display name and email are required');
-        }
-
-        try {
-          const newUserId = await withTransaction(pool, async (tx) => {
-            const inserted = await insertContactOnlyClient(tx, {
-              email: emailRaw, displayName: contactDisplayName, dni, businessId,
-            });
-            return Number(inserted!.id);
-          });
-
-          await audit(req, 'user_created', 'success', { user_id: newUserId, role });
-
-          return sendData(res, { id: newUserId, role }, 201);
-        } catch (error) {
-          if (isUniqueViolation(error)) {
-            return sendError(
-              res,
-              409,
-              'conflict',
-              error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : 'Email already exists',
-            );
-          }
-          throw error;
-        }
+        return createContactOnlyClient(pool, audit, req, res, input);
       }
 
-      if (!username || !password || !isRole(role)) {
-        return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required');
-      }
-
-      // A null business_id means "see/act across all businesses"; stamping it onto a new
-      // user would mint a cross-tenant account. User creation requires a concrete business.
-      const businessId = requireBusinessContext(req, res);
-      if (businessId == null) return;
-      const email = emailRaw ?? `${username}@noemail.local`;
-      const { passwordHash, passwordSalt } = await auth.hashPassword(password);
-
-      try {
-        // All person attributes (display_name, dni, phone, bio, notes) live on auth.users directly.
-        const newUserId = await withTransaction(pool, async (tx) => {
-          const inserted = await insertUser(tx, {
-            username, email, displayName, dni,
-            passwordHash, passwordSalt, role, businessId,
-          });
-          return Number(inserted!.id);
-        });
-
-        await audit(req, 'user_created', 'success', { user_id: newUserId, role });
-
-        return sendData(res, { id: newUserId, username, role }, 201);
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          // dni is also unique per business; name the right conflict so the form can react.
-          return sendError(
-            res,
-            409,
-            'conflict',
-            error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : 'Username already exists',
-          );
-        }
-        // guardRoute maps anything else (unexpected DbError → mapped code, else 500).
-        throw error;
-      }
+      return createCredentialedUser(pool, audit, req, res, input);
     }),
   );
 
@@ -286,10 +312,7 @@ export function mountUserAdminRoutes(
 
         return sendData(res, { id: enabled.id, username: enabled.username });
       } catch (error) {
-        if (isUniqueViolation(error)) {
-          return sendError(res, 409, 'conflict', 'Username already exists');
-        }
-        throw error;
+        return sendUniqueConflict(res, error, 'Username already exists');
       }
     }),
   );

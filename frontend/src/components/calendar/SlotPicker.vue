@@ -4,6 +4,8 @@
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getAvailability } from '@/api/scheduling';
+import { addDaysISO } from '@/composables/bookingForm';
+import { toMinutes } from '@shared/ssot/domain/availability';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
 
 const props = defineProps<{
@@ -34,13 +36,6 @@ const loading = ref(false);
 type DayAvail = { slots: TimeInterval[]; open: boolean; outsideWindow: boolean };
 let cache = new Map<string, DayAvail>();
 let cacheKey = '';
-
-function addDaysISO(iso: string, days: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const nd = new Date(y, m - 1, d + days);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${nd.getFullYear()}-${p(nd.getMonth() + 1)}-${p(nd.getDate())}`;
-}
 
 async function fetchDay(profId: number, serviceId: number, date: string): Promise<DayAvail | null> {
   const hit = cache.get(date);
@@ -106,9 +101,7 @@ function select(slot: TimeInterval) {
 }
 
 function slotDuration(slot: TimeInterval): number {
-  const [sh, sm] = slot.start.split(':').map(Number);
-  const [eh, em] = slot.end.split(':').map(Number);
-  return (eh * 60 + em) - (sh * 60 + sm);
+  return toMinutes(slot.end) - toMinutes(slot.start);
 }
 </script>
 

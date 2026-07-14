@@ -23,13 +23,13 @@ export function createUser(body: AdminUserPayload): Promise<ApiResult<AdminUserR
   return apiFetch<AdminUserResult>(adminUserPaths.create(), {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
 }
 
 export function deactivateUser(id: string | number): Promise<ApiResult<{ user: AdminUserResult }>> {
   return apiFetch<{ user: AdminUserResult }>(adminUserPaths.deactivate(id), {
     method: 'POST',
-  });
+  }, { toastOnForbidden: true });
 }
 
 export function resetPassword(
@@ -39,7 +39,7 @@ export function resetPassword(
   return apiFetch<{ user: AdminUserResult }>(adminUserPaths.resetPassword(id), {
     method: 'POST',
     body: JSON.stringify({ password }),
-  });
+  }, { toastOnForbidden: true });
 }
 
 // Turns a contact-only client (no username) into one who can log in.
@@ -50,5 +50,5 @@ export function enableClientLogin(
   return apiFetch<{ user: AdminUserResult }>(adminUserPaths.enableLogin(id), {
     method: 'POST',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
 }

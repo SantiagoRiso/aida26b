@@ -7,6 +7,7 @@ import { type AuthedRequest } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { LEDGER_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
+import { AMOUNT_PATTERN } from '../../../shared/src/ssot/domain/catalog';
 import {
   assertLedgerWriteAllowed,
   assertLedgerReadAllowed,
@@ -23,8 +24,8 @@ import {
 import { parsePagination } from './pagination';
 import { LEDGER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
-// Amount must be non-negative with at most two decimal places (mirrors amount_ars CHECK in DB).
-const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
+// Non-negative, at most two decimals — the SSoT pattern carries its own anchors.
+const AMOUNT_RE = new RegExp(AMOUNT_PATTERN);
 
 // Plain string set avoids type narrowing issues on user input.
 const VALID_ENTRY_TYPES: Set<string> = new Set(LEDGER_ENTRY_TYPES.map((t) => t.value));

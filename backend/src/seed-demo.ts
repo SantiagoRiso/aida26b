@@ -874,11 +874,38 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   });
 }
 
+// Zero every app table (public + auth schemas, minus the migrations ledger), reset identity
+// sequences, then rebuild the demo baseline — reproducing the exact `migrate && seed:demo` state
+// the e2e suite is written against. Owner-only: TRUNCATE needs table ownership. Destructive.
+export async function resetDemo(pool: PoolLike): Promise<void> {
+  await pool.query(`
+    DO $$
+    DECLARE stmt text;
+    BEGIN
+      SELECT 'TRUNCATE TABLE '
+             || string_agg(format('%I.%I', schemaname, tablename), ', ')
+             || ' RESTART IDENTITY CASCADE'
+        INTO stmt
+        FROM pg_tables
+       WHERE schemaname IN ('public', 'auth')
+         AND NOT (schemaname = 'public' AND tablename = 'schema_migrations');
+      IF stmt IS NOT NULL THEN EXECUTE stmt; END IF;
+    END $$;
+  `);
+  await seedDemo(pool);
+}
+
 async function main() {
+  const reset = process.argv.includes('--reset');
   const pool = createOwnerPool();
   try {
-    await seedDemo(pool);
-    console.log('Demo seed complete.');
+    if (reset) {
+      await resetDemo(pool);
+      console.log('Demo reset complete (zeroed + reseeded).');
+    } else {
+      await seedDemo(pool);
+      console.log('Demo seed complete.');
+    }
   } finally {
     await pool.end();
   }

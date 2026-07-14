@@ -18,7 +18,7 @@ export function createClosure(body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetch<BusinessClosure>(closurePaths.list(), { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<BusinessClosure>(closurePaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function updateClosure(id: number | string, body: {
@@ -27,9 +27,9 @@ export function updateClosure(id: number | string, body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetch<BusinessClosure>(closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) });
+  return apiFetch<BusinessClosure>(closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function deleteClosure(id: number | string): Promise<ApiResult<{ id: string; deleted: boolean }>> {
-  return apiFetch<{ id: string; deleted: boolean }>(closurePaths.detail(id), { method: 'DELETE' });
+  return apiFetch<{ id: string; deleted: boolean }>(closurePaths.detail(id), { method: 'DELETE' }, { toastOnForbidden: true });
 }

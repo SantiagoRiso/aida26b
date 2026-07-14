@@ -6,6 +6,7 @@ import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
+import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { structure } from '@shared/ssot/structure';
 import type { ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
@@ -122,28 +123,18 @@ function onPageChange(p: number) {
   reload();
 }
 
-// Resolved once per table switch: FK columns render the referenced row's label, not its id.
-const fkLabelMaps = ref<Record<string, Map<string, string>>>({});
+// FK columns render the referenced row's label, not its id. Lookups come from the shared
+// useForeignKeyOptions cache (one fetch per referenced table app-wide); the resolvers read
+// reactive options, so labels fill in whether rows or options arrive first.
+const fkLabelFns = ref<Record<string, (id: string | number | null | undefined) => string | null>>({});
 
-async function loadFkLabels() {
+function bindFkResolvers() {
   const cols = tableSpec.value.columns as Record<string, ColumnDef>;
-  const fkTables = new Map<string, { valueField: string; labelField: string }>();
+  const fns: Record<string, (id: string | number | null | undefined) => string | null> = {};
   for (const col of Object.values(cols)) {
-    if (col.foreignKey) fkTables.set(col.foreignKey.table, { valueField: col.foreignKey.valueField, labelField: col.foreignKey.labelField });
+    if (col.foreignKey) fns[col.foreignKey.table] = useForeignKeyOptions(col.foreignKey).labelFor;
   }
-  const maps: Record<string, Map<string, string>> = {};
-  await Promise.all([...fkTables].map(async ([table, { valueField, labelField }]) => {
-    const res = await listRows(table as TableKey, { limit: 500 });
-    const m = new Map<string, string>();
-    if (res.ok) {
-      for (const r of res.data as Array<Record<string, ColumnValue>>) {
-        const v = r[valueField]; const l = r[labelField];
-        if (v != null && l != null) m.set(String(v), String(l));
-      }
-    }
-    maps[table] = m;
-  }));
-  fkLabelMaps.value = maps;
+  fkLabelFns.value = fns;
 }
 
 watch(() => props.tableKey, () => {
@@ -153,14 +144,14 @@ watch(() => props.tableKey, () => {
   rows.value = [];
   total.value = 0;
   reload();
-  loadFkLabels();
+  bindFkResolvers();
 }, { immediate: true });
 
 const addLabel = computed(() => {
   const tbl = tableSpec.value;
   return 'addButtonLabel' in tbl && tbl.addButtonLabel
     ? label(tbl.addButtonLabel as { es: string; en: string })
-    : label({ es: 'Nuevo', en: 'New' });
+    : i18n.global.t('generic.newButton');
 });
 
 const tableTitle = computed(() => {
@@ -175,7 +166,7 @@ const hasActionsColumn = computed(() => canUpdate() || canDelete() || !!slots['r
 
 function formatCell(value: ColumnValue | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
-  if (typeof value === 'boolean') return value ? label({ es: 'Sí', en: 'Yes' }) : label({ es: 'No', en: 'No' });
+  if (typeof value === 'boolean') return value ? i18n.global.t('generic.yes') : i18n.global.t('generic.no');
   return String(value);
 }
 
@@ -190,7 +181,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
   if (col.foreignKey) {
     const v = cellValue(row, key);
     if (v == null || v === '') return '—';
-    return fkLabelMaps.value[col.foreignKey.table]?.get(String(v)) ?? `#${v}`;
+    return fkLabelFns.value[col.foreignKey.table]?.(String(v)) || `#${v}`;
   }
   return formatCell(cellValue(row, key));
 }
@@ -248,8 +239,8 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
             <tr>
               <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <EmptyState
-                  :heading="label({ es: `No hay ${tableTitle} para mostrar`, en: `No ${tableTitle} to show` })"
-                  :body="label({ es: 'No hay resultados para los filtros aplicados.', en: 'No results for the current filters.' })"
+                  :heading="i18n.global.t('emptyState.noItemsToShowHeading', { entity: tableTitle })"
+                  :body="i18n.global.t('emptyState.noItemsBody')"
                 />
               </td>
             </tr>

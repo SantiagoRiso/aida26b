@@ -2,12 +2,14 @@
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
+import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { useLabel } from '@/composables/useLabel';
+import { structure } from '@shared/ssot/structure';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 
@@ -24,6 +26,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const ui = useUiStore();
 const { label } = useLabel();
+const ledgerColumns = structure.tables.ledger_entries.columns;
 
 const entryType = ref('');
 const amountArs = ref('');
@@ -83,15 +86,15 @@ async function submit() {
   fieldErrors.value = {};
 
   if (!entryType.value) {
-    fieldErrors.value.entry_type = label({ es: 'Tipo requerido', en: 'Type required' });
+    fieldErrors.value.entry_type = t('ledger.typeRequired');
     return;
   }
   if (!amountArs.value && !(showAppointmentPicker.value && appointmentId.value)) {
-    fieldErrors.value.amount_ars = label({ es: 'Monto requerido', en: 'Amount required' });
+    fieldErrors.value.amount_ars = t('ledger.amountRequired');
     return;
   }
   if (appointmentRequired.value && !appointmentId.value) {
-    fieldErrors.value.appointment_id = label({ es: 'Turno requerido para recepcionistas', en: 'Appointment required for receptionists' });
+    fieldErrors.value.appointment_id = t('ledger.appointmentRequired');
     return;
   }
 
@@ -124,14 +127,14 @@ async function submit() {
   <form class="space-y-4" @submit.prevent="submit">
     <div>
       <label class="block text-sm font-semibold text-heading mb-1">
-        {{ label({ es: 'Tipo', en: 'Type' }) }}
+        {{ t('portal.type') }}
       </label>
       <select
         v-model="entryType"
         class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         required
       >
-        <option value="">{{ label({ es: 'Seleccionar un tipo', en: 'Select a type' }) }}</option>
+        <option value="">{{ t('ledger.selectType') }}</option>
         <option
           v-for="type in availableTypes"
           :key="type.value"
@@ -145,7 +148,7 @@ async function submit() {
 
     <div v-if="showAppointmentPicker">
       <label class="block text-sm font-semibold text-heading mb-1">
-        {{ label({ es: 'Turno', en: 'Appointment' }) }}
+        {{ label(ledgerColumns.appointment_id.label) }}
         <span v-if="appointmentRequired" class="text-destructive"> *</span>
       </label>
       <select
@@ -153,7 +156,7 @@ async function submit() {
         class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :required="appointmentRequired"
       >
-        <option :value="null">{{ label({ es: 'Sin turno', en: 'No appointment' }) }}</option>
+        <option :value="null">{{ t('ledger.noAppointment') }}</option>
         <option
           v-for="appt in appointments"
           :key="appt.id"
@@ -167,22 +170,22 @@ async function submit() {
 
     <div>
       <label class="block text-sm font-semibold text-heading mb-1">
-        {{ label({ es: 'Monto (ARS)', en: 'Amount (ARS)' }) }}
+        {{ label(ledgerColumns.amount_ars.label) }}
       </label>
       <input
         v-model="amountArs"
         type="text"
         inputmode="decimal"
-        pattern="^\d+(\.\d{1,2})?$"
+        :pattern="AMOUNT_PATTERN"
         class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent font-variant-numeric tabular-nums"
-        :placeholder="label({ es: 'Ej: 1500.00', en: 'E.g. 1500.00' })"
+        :placeholder="t('ledger.amountPlaceholder')"
       />
       <FieldError :message="fieldErrors.amount_ars" />
     </div>
 
     <div>
       <label class="block text-sm font-semibold text-heading mb-1">
-        {{ label({ es: 'Descripción', en: 'Description' }) }}
+        {{ label(ledgerColumns.description.label) }}
       </label>
       <textarea
         v-model="description"

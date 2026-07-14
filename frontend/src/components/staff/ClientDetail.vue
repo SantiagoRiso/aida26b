@@ -1,25 +1,18 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { getRow, deleteRow } from '@/api/crud';
-import { enableClientLogin } from '@/api/admin-users';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
-import { getBalance, getLedger } from '@/api/ledger';
-import type { LedgerEntry } from '@/api/ledger';
-import { listAppointments, transitionAppointment } from '@/api/appointments';
-import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import { isOpenAppointmentState } from '@shared/ssot/domain';
+import { useClientProfile } from '@/composables/useClientProfile';
+import { useClientAppointments } from '@/composables/useClientAppointments';
+import { useClientLedger } from '@/composables/useClientLedger';
+import { useClientAccount } from '@/composables/useClientAccount';
 import { useLedgerLabel } from '@/composables/useLedgerLabel';
 import { useCurrency } from '@/composables/useCurrency';
-import { useLabel } from '@/composables/useLabel';
 import { useStateLabel } from '@/composables/useStateLabel';
-import { useToast } from '@/composables/useToast';
 import { useConflictOverride } from '@/composables/useConflictOverride';
-import { useAuthStore } from '@/stores/auth';
-import { roleAllowedFor } from '@/router/access';
-import type { Role } from '@shared/types/roles';
-import type { TableRecordMap } from '@shared/ssot/derived';
+import { useLabel } from '@/composables/useLabel';
+import { structure } from '@shared/ssot/structure';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -41,85 +34,48 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { formatARS, formatDateTime } = useCurrency();
-const { label } = useLabel();
 const { stateLabel } = useStateLabel();
-const toast = useToast();
-const auth = useAuthStore();
+const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
+const { label } = useLabel();
+const clientColumns = structure.tables.clients.columns;
+const ledgerColumns = structure.tables.ledger_entries.columns;
+const appointmentColumns = structure.tables.appointments.columns;
 
 const clientId = props.clientId;
 
-const client = ref<TableRecordMap['clients'] | null>(null);
-const balance = ref<string | null>(null);
-const entries = ref<LedgerEntry[]>([]);
-const appointments = ref<Appointment[]>([]);
+const { client, loadProfile, showEditProfile, canEditProfile, onProfileSaved } =
+  useClientProfile(clientId, () => emit('changed'));
+
+const {
+  appointments, loadAppointments, pendingAppointments, historyAppointments,
+  cancelConfirmOpen, requestCancel, confirmCancel,
+} = useClientAppointments(clientId);
+
+const {
+  balance, entries, loadLedger, ledgerAccessible, balancePositive,
+  canCreateLedger, showEntryForm, onEntrySaved,
+} = useClientLedger(clientId, appointments);
+
+const {
+  canDeactivate, canEnableLogin, deactivateConfirmOpen, confirmDeactivate,
+  showEnableLogin, enableLoginSubmitting, enableLoginError, enableLoginForm, submitEnableLogin,
+} = useClientAccount(clientId, {
+  client,
+  reloadProfile: loadProfile,
+  onChanged: () => emit('changed'),
+  onClose: () => emit('close'),
+});
+
 const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
-const loading = ref(true);
-
-const showEntryForm = ref(false);
-const showBookForm = ref(false);
-const showEditProfile = ref(false);
-const showEnableLogin = ref(false);
-const enableLoginSubmitting = ref(false);
-const enableLoginError = ref('');
-const enableLoginForm = reactive({ username: '', password: '' });
-
-const cancelId = ref<number | string | null>(null);
-const cancelConfirmOpen = ref(false);
-const deactivateConfirmOpen = ref(false);
-
-const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverrideCancel } =
-  useConflictOverride();
-
-const role = computed(() => auth.user?.role as Role | undefined);
-const canCreateLedger = computed(() => !!role.value && roleAllowedFor(['Admin', 'Receptionist', 'Professional'], role.value));
-const canEditProfile = computed(() => !!role.value && roleAllowedFor(['Admin', 'Receptionist'], role.value));
-const canDeactivate = computed(() => !!role.value && roleAllowedFor(['Admin'], role.value));
-// Contact-only client (no username) — offer to turn it into a logging-in account.
-const canEnableLogin = computed(() => client.value != null && client.value.username == null);
-
-// Ledger reads are server-scoped: an Admin sees any client in the business, but a Professional or
-// Receptionist only clients they've actually seen. Gate the whole Cuenta Corriente section on that
-// so we never fire (and toast on) a read we aren't allowed to make.
-const ledgerAccessible = computed(() => role.value === 'Admin' || appointments.value.length > 0);
-
-const balancePositive = computed(() => balance.value != null && parseFloat(balance.value) > 0);
-
-// Pending = still actionable (requested or scheduled); these can be cancelled.
-const pendingAppointments = computed(() =>
-  appointments.value
-    .filter((a) => isOpenAppointmentState(a.state))
-    .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
-);
-
-// Closed/past appointments only — the pending ones are already shown in the "Pendientes"
-// list above, so the history table must not repeat them.
-const historyAppointments = computed(() =>
-  appointments.value
-    .filter((a) => !isOpenAppointmentState(a.state))
-    .sort((a, b) => b.starts_at.localeCompare(a.starts_at)),
-);
-
-const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
-
 const professionalName = (id: number | string) => professionalLabelFor(id) ?? `#${id}`;
 const serviceName = (id: number | string) => serviceLabelFor(id) ?? `#${id}`;
 
-async function loadProfile() {
-  const res = await getRow('clients', clientId);
-  if (res.ok) client.value = res.data;
-}
+const loading = ref(true);
+const showBookForm = ref(false);
 
-async function loadLedger() {
-  const [bal, led] = await Promise.all([getBalance(clientId), getLedger(clientId, 1, 50)]);
-  balance.value = bal.ok ? bal.data.balance_ars : null;
-  entries.value = led.ok ? led.data : [];
-}
-
-async function loadAppointments() {
-  const res = await listAppointments({ client_user_id: clientId, limit: 500 });
-  appointments.value = res.ok ? res.data : [];
-}
+const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverrideCancel } =
+  useConflictOverride();
 
 async function load() {
   loading.value = true;
@@ -127,17 +83,6 @@ async function load() {
   await Promise.all([loadProfile(), loadAppointments()]);
   if (ledgerAccessible.value) await loadLedger();
   loading.value = false;
-}
-
-function onEntrySaved() {
-  showEntryForm.value = false;
-  loadLedger();
-}
-
-function onProfileSaved() {
-  showEditProfile.value = false;
-  loadProfile();
-  emit('changed');
 }
 
 async function onBookSaved() {
@@ -150,56 +95,6 @@ async function onBookSaved() {
 
 function onFormConflict(verdict: ConflictVerdict, retryFn: (override: boolean) => Promise<void>) {
   raiseConflict(verdict, retryFn);
-}
-
-function requestCancel(id: number | string) {
-  cancelId.value = id;
-  cancelConfirmOpen.value = true;
-}
-
-async function confirmCancel() {
-  cancelConfirmOpen.value = false;
-  if (cancelId.value == null) return;
-  const res = await transitionAppointment(cancelId.value, 'canceled');
-  cancelId.value = null;
-  if (res.ok) {
-    toast.success('appointmentCanceled');
-    loadAppointments();
-  } else {
-    toast.error('genericError');
-  }
-}
-
-async function confirmDeactivate() {
-  deactivateConfirmOpen.value = false;
-  const res = await deleteRow('clients', clientId);
-  if (res.ok) {
-    emit('changed');
-    emit('close');
-  } else {
-    toast.error('genericError');
-  }
-}
-
-async function submitEnableLogin() {
-  enableLoginSubmitting.value = true;
-  enableLoginError.value = '';
-  try {
-    const res = await enableClientLogin(clientId, {
-      username: enableLoginForm.username,
-      password: enableLoginForm.password,
-    });
-    if (res.ok) {
-      showEnableLogin.value = false;
-      toast.success('saved');
-      emit('changed');
-      await loadProfile();
-    } else {
-      enableLoginError.value = res.message ?? label({ es: 'Error creando usuario', en: 'Error creating user' });
-    }
-  } finally {
-    enableLoginSubmitting.value = false;
-  }
 }
 
 onMounted(load);
@@ -216,19 +111,19 @@ onMounted(load);
         <div>
           <h1 class="text-2xl font-semibold">{{ client.display_name }}</h1>
           <p class="text-sm text-neutral">
-            <span v-if="client.dni">{{ label({ es: 'DNI', en: 'DNI' }) }} {{ client.dni }} · </span>{{ client.email ?? '—' }} · {{ client.phone ?? '—' }}
+            <span v-if="client.dni">{{ label(clientColumns.dni.label) }} {{ client.dni }} · </span>{{ client.email ?? '—' }} · {{ client.phone ?? '—' }}
           </p>
           <p v-if="client.notes" class="mt-1 text-sm text-neutral italic">{{ client.notes }}</p>
         </div>
         <div class="flex gap-2">
           <AppButton v-if="canEnableLogin" variant="neutral" @click="showEnableLogin = true">
-            {{ label({ es: 'Crear usuario', en: 'Create user' }) }}
+            {{ t('clients.createUser') }}
           </AppButton>
           <AppButton v-if="canEditProfile" variant="neutral" @click="showEditProfile = true">
-            {{ label({ es: 'Editar perfil', en: 'Edit profile' }) }}
+            {{ t('users.editProfile') }}
           </AppButton>
           <AppButton v-if="canDeactivate" variant="destructive" @click="deactivateConfirmOpen = true">
-            {{ label({ es: 'Desactivar', en: 'Deactivate' }) }}
+            {{ t('users.deactivate') }}
           </AppButton>
         </div>
       </div>
@@ -236,9 +131,9 @@ onMounted(load);
       <div class="grid gap-6 lg:grid-cols-2">
       <section v-if="ledgerAccessible" class="space-y-3">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold">{{ label({ es: 'Cuenta corriente', en: 'Ledger' }) }}</h2>
+          <h2 class="text-lg font-semibold">{{ t('clients.ledgerHeading') }}</h2>
           <AppButton v-if="canCreateLedger" variant="primary" @click="showEntryForm = true">
-            {{ label({ es: 'Cargar pago / ajustar saldo', en: 'Load payment / adjust balance' }) }}
+            {{ t('clients.loadPayment') }}
           </AppButton>
         </div>
 
@@ -246,7 +141,7 @@ onMounted(load);
           class="rounded-lg border p-4 flex items-center justify-between"
           :class="balancePositive ? 'border-destructive bg-red-50' : 'border-border bg-card'"
         >
-          <span class="text-sm font-semibold text-heading">{{ label({ es: 'Saldo', en: 'Balance' }) }}</span>
+          <span class="text-sm font-semibold text-heading">{{ t('clients.balance') }}</span>
           <span
             class="text-xl font-semibold tabular-nums"
             :class="balancePositive ? 'text-destructive' : 'text-success'"
@@ -257,18 +152,18 @@ onMounted(load);
 
         <div v-if="entries.length === 0">
           <EmptyState
-            :heading="label({ es: 'Sin movimientos', en: 'No entries' })"
-            :body="label({ es: 'No hay movimientos registrados para este cliente.', en: 'No ledger entries for this client.' })"
+            :heading="t('clients.noEntriesHeading')"
+            :body="t('clients.noEntriesBody')"
           />
         </div>
         <div v-else class="overflow-x-auto rounded-lg border border-border">
           <table class="min-w-full divide-y divide-border text-sm">
             <thead class="bg-surface">
               <tr>
-                <th class="px-4 py-3 text-left font-semibold">{{ label({ es: 'Fecha', en: 'Date' }) }}</th>
-                <th class="px-4 py-3 text-left font-semibold">{{ label({ es: 'Tipo', en: 'Type' }) }}</th>
-                <th class="px-4 py-3 text-right font-semibold">{{ label({ es: 'Monto', en: 'Amount' }) }}</th>
-                <th class="px-4 py-3 text-left font-semibold">{{ label({ es: 'Descripción', en: 'Description' }) }}</th>
+                <th class="px-4 py-3 text-left font-semibold">{{ t('calendar.dateLabel') }}</th>
+                <th class="px-4 py-3 text-left font-semibold">{{ t('portal.type') }}</th>
+                <th class="px-4 py-3 text-right font-semibold">{{ t('fields.amount') }}</th>
+                <th class="px-4 py-3 text-left font-semibold">{{ label(ledgerColumns.description.label) }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-border bg-card">
@@ -292,9 +187,9 @@ onMounted(load);
 
       <section class="space-y-3">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold">{{ label({ es: 'Turnos pendientes', en: 'Pending appointments' }) }}</h2>
+          <h2 class="text-lg font-semibold">{{ t('clients.pendingAppointments') }}</h2>
           <AppButton variant="primary" @click="showBookForm = true">
-            {{ label({ es: 'Agendar turno', en: 'Book appointment' }) }}
+            {{ t('clients.bookAppointment') }}
           </AppButton>
         </div>
 
@@ -320,26 +215,26 @@ onMounted(load);
 
         <EmptyState
           v-if="appointments.length === 0"
-          :heading="label({ es: 'Sin turnos', en: 'No appointments' })"
-          :body="label({ es: 'Este cliente todavía no tiene turnos.', en: 'This client has no appointments yet.' })"
+          :heading="t('clients.noAppointmentsHeading')"
+          :body="t('clients.noAppointmentsBody')"
         />
         <p v-else-if="pendingAppointments.length === 0" class="text-sm text-neutral">
-          {{ label({ es: 'Sin turnos pendientes.', en: 'No upcoming appointments.' }) }}
+          {{ t('clients.noPending') }}
         </p>
       </section>
       </div>
 
       <!-- Historial — full width so the table fits without a horizontal scrollbar. -->
       <section v-if="historyAppointments.length > 0" class="space-y-2">
-        <h3 class="text-sm font-semibold text-neutral">{{ label({ es: 'Historial', en: 'History' }) }}</h3>
+        <h3 class="text-sm font-semibold text-neutral">{{ t('portal.history') }}</h3>
         <div class="overflow-x-auto rounded-lg border border-border">
           <table class="min-w-full divide-y divide-border text-sm">
             <thead class="bg-surface">
               <tr>
-                <th class="px-4 py-3 text-left font-semibold">{{ label({ es: 'Fecha', en: 'Date' }) }}</th>
+                <th class="px-4 py-3 text-left font-semibold">{{ t('calendar.dateLabel') }}</th>
                 <th class="px-4 py-3 text-left font-semibold">{{ t('calendar.serviceLabel') }}</th>
                 <th class="px-4 py-3 text-left font-semibold">{{ t('calendar.professionalLabel') }}</th>
-                <th class="px-4 py-3 text-left font-semibold">{{ label({ es: 'Estado', en: 'State' }) }}</th>
+                <th class="px-4 py-3 text-left font-semibold">{{ label(appointmentColumns.state.label) }}</th>
                 <th class="px-4 py-3 text-right font-semibold">{{ t('calendar.priceLabel') }}</th>
               </tr>
             </thead>
@@ -359,16 +254,16 @@ onMounted(load);
 
     <template v-else>
       <EmptyState
-        :heading="label({ es: 'Cliente no encontrado', en: 'Client not found' })"
-        :body="label({ es: 'No se pudo cargar este cliente.', en: 'Could not load this client.' })"
+        :heading="t('clients.notFoundHeading')"
+        :body="t('clients.notFoundBody')"
       />
     </template>
 
-    <DetailPanel :open="showEntryForm" :title="label({ es: 'Nuevo movimiento', en: 'New entry' })" @close="showEntryForm = false">
+    <DetailPanel :open="showEntryForm" :title="t('clients.newEntry')" @close="showEntryForm = false">
       <LedgerEntryForm :client-user-id="clientId" @saved="onEntrySaved" @cancelled="showEntryForm = false" />
     </DetailPanel>
 
-    <DetailPanel :open="showBookForm" size="3xl" :title="label({ es: 'Agendar turno', en: 'Book appointment' })" @close="showBookForm = false">
+    <DetailPanel :open="showBookForm" size="3xl" :title="t('clients.bookAppointment')" @close="showBookForm = false">
       <AppointmentForm
         :prefill-client-id="clientId"
         @saved="onBookSaved"
@@ -377,7 +272,7 @@ onMounted(load);
       />
     </DetailPanel>
 
-    <DetailPanel :open="showEditProfile" :title="label({ es: 'Editar perfil', en: 'Edit profile' })" @close="showEditProfile = false">
+    <DetailPanel :open="showEditProfile" :title="t('users.editProfile')" @close="showEditProfile = false">
       <GenericForm
         v-if="client"
         table-key="clients"
@@ -388,13 +283,13 @@ onMounted(load);
       />
     </DetailPanel>
 
-    <DetailPanel :open="showEnableLogin" :title="label({ es: 'Crear usuario', en: 'Create user' })" @close="showEnableLogin = false">
+    <DetailPanel :open="showEnableLogin" :title="t('clients.createUser')" @close="showEnableLogin = false">
       <form class="space-y-4" @submit.prevent="submitEnableLogin" novalidate>
         <FieldError :message="enableLoginError" />
 
         <div class="flex flex-col gap-1">
           <label for="enable-login-username" class="text-sm font-semibold">
-            {{ label({ es: 'Usuario', en: 'Username' }) }} <span class="text-destructive">*</span>
+            {{ t('auth.usernameLabel') }} <span class="text-destructive">*</span>
           </label>
           <input
             id="enable-login-username"
@@ -407,7 +302,7 @@ onMounted(load);
 
         <div class="flex flex-col gap-1">
           <label for="enable-login-password" class="text-sm font-semibold">
-            {{ label({ es: 'Contraseña', en: 'Password' }) }} <span class="text-destructive">*</span>
+            {{ t('auth.passwordLabel') }} <span class="text-destructive">*</span>
           </label>
           <PasswordInput
             id="enable-login-password"
@@ -419,10 +314,10 @@ onMounted(load);
 
         <div class="flex justify-end gap-3 pt-2">
           <AppButton variant="neutral" type="button" @click="showEnableLogin = false">
-            {{ label({ es: 'Cancelar', en: 'Cancel' }) }}
+            {{ t('actions.cancel') }}
           </AppButton>
           <AppButton type="submit" :loading="enableLoginSubmitting">
-            {{ label({ es: 'Guardar', en: 'Save' }) }}
+            {{ t('actions.save') }}
           </AppButton>
         </div>
       </form>
@@ -437,9 +332,9 @@ onMounted(load);
 
     <ConfirmDialog
       :open="cancelConfirmOpen"
-      :title="label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
-      :body="label({ es: '¿Cancelar este turno?', en: 'Cancel this appointment?' })"
-      :confirm-label="label({ es: 'Cancelar turno', en: 'Cancel appointment' })"
+      :title="t('calendar.cancel')"
+      :body="t('clients.cancelBody')"
+      :confirm-label="t('calendar.cancel')"
       :destructive="true"
       @confirm="confirmCancel"
       @cancel="cancelConfirmOpen = false"
@@ -447,9 +342,9 @@ onMounted(load);
 
     <ConfirmDialog
       :open="deactivateConfirmOpen"
-      :title="label({ es: 'Desactivar cliente', en: 'Deactivate client' })"
-      :body="label({ es: `Desactivar a ${client?.display_name ?? ''}: no podrá iniciar sesión ni ser asignado a nuevos turnos.`, en: `Deactivate ${client?.display_name ?? ''}: they won't be able to log in or be assigned to new appointments.` })"
-      :confirm-label="label({ es: 'Desactivar', en: 'Deactivate' })"
+      :title="t('clients.deactivateTitle')"
+      :body="t('users.deactivateBody', { name: client?.display_name ?? '' })"
+      :confirm-label="t('users.deactivate')"
       :destructive="true"
       @confirm="confirmDeactivate"
       @cancel="deactivateConfirmOpen = false"

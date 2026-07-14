@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useLabel } from '@/composables/useLabel';
+import { useI18n } from 'vue-i18n';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ProfessionalDetail from '@/components/staff/ProfessionalDetail.vue';
 
-const { label } = useLabel();
+const { t } = useI18n();
 
 // Professionals are deactivated, never created here or hard-deleted.
 const TABLE_KEY = 'professionals' as const;
@@ -34,7 +34,7 @@ function onChanged() {
     <DetailPanel
       :open="detailOpen"
       size="4xl"
-      :title="label({ es: 'Detalle del profesional', en: 'Professional detail' })"
+      :title="t('professionals.detailTitle')"
       @close="detailOpen = false"
       @after-leave="selectedId = null"
     >

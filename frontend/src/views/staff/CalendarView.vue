@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
+import type { DateSelectArg, EventClickArg, EventDropArg } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCustomDrag } from '@/composables/useCustomDrag';
@@ -17,24 +17,20 @@ import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
 import { getAvailability } from '@/api/scheduling';
 import { listClosures, type BusinessClosure } from '@/api/closures';
-import { nextDay } from '@/composables/scheduleExceptions';
 import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { toMinutes, toHHMM } from '@shared/ssot/domain/availability';
-import CalendarViewComponent from '@/components/calendar/CalendarView.vue';
-import CalendarFilters from '@/components/calendar/CalendarFilters.vue';
+import CalendarSurface from '@/components/calendar/CalendarSurface.vue';
+import type { DayAvailability } from '@/components/calendar/CalendarSurface.vue';
+import CalendarFilterBar from '@/components/calendar/CalendarFilterBar.vue';
 import type { FilterState } from '@/components/calendar/CalendarFilters.vue';
-import AppointmentDetailPanel from '@/components/calendar/AppointmentDetailPanel.vue';
-import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
+import CalendarDialogs from '@/components/calendar/CalendarDialogs.vue';
 import ExceptionList from '@/components/calendar/ExceptionList.vue';
-import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
-import DetailPanel from '@/components/shared/DetailPanel.vue';
-import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import { useCurrency } from '@/composables/useCurrency';
-import { tileFreeWindows, resolveDrop, exceedsEndOfDay, mergeIntervals, complementIntervals } from '@/composables/calendarGrid';
+import { tileFreeWindows, resolveDrop, exceedsEndOfDay } from '@/composables/calendarGrid';
 import { useProfessionalBlocks } from '@/composables/useProfessionalBlocks';
-import { dayISO, bookedIntervalsByDate, availabilityWashEvents, pastWashEvent, slotOutlineEventsForDay, DAY_END_MINUTES } from '@/composables/availabilityShading';
+import { dayISO, bookedIntervalsByDate } from '@/composables/availabilityShading';
 import type { BookedDay } from '@/composables/availabilityShading';
 
 const { t } = useI18n();
@@ -46,8 +42,8 @@ const appointments = ref<Appointment[]>([]);
 const loading = ref(false);
 
 
-// Ref to the calendar facade — exposes the rendered root element the custom drag reads (via geometry).
-const calendarRef = ref<InstanceType<typeof CalendarViewComponent> | null>(null);
+// Ref to the calendar surface — exposes the rendered root element the custom drag reads (via geometry).
+const calendarRef = ref<InstanceType<typeof CalendarSurface> | null>(null);
 
 const visibleRange = ref<{ from: string; to: string }>({
   from: dayISO(new Date(), 0),
@@ -81,10 +77,6 @@ const detailAppt = ref<Appointment | null>(null);
 const detailOpen = ref(false);
 
 const formOpen = ref(false);
-// Keep the form mounted through the close animation (cleared on @after-leave) so the panel
-// doesn't blank mid-close; opening flips it true via the watcher below.
-const formMounted = ref(false);
-watch(formOpen, (open) => { if (open) formMounted.value = true; });
 const formAppt = ref<Appointment | undefined>(undefined);
 const formPrefillDate = ref<string | undefined>();
 const formPrefillStart = ref<string | undefined>();
@@ -164,7 +156,7 @@ watch(canSobreturno, (ok) => { if (!ok) fineDrag.value = false; });
 // Duration-aware valid drop targets for the appointment currently being dragged, keyed by day.
 // Populated on drag start (excluding the dragged appointment), cleared on drag stop.
 const highlightStartsByDay = ref<Map<string, string[]>>(new Map());
-let dragDurationMinutes = 0;
+const dragDurationMinutes = ref(0);
 
 // Fetch a professional's free slots for each visible day, all days in parallel so a hover pulls
 // the week in ~one round-trip. `exclude` frees the dragged block's own span so it can be nudged
@@ -229,26 +221,6 @@ const bookedByDate = computed<Map<string, BookedDay>>(() => {
   );
 });
 
-// One dotted outline per real schedule slot, always shown. Timegrid only. Sobreturno mode books
-// off the lattice, so the grid is hidden there — the free-click placement replaces it.
-// Past slots aren't outlined (the grey past wash carries the day), and only slots the day's
-// availability still offers qualify — this drops booked slots (the appointment block covers them)
-// AND time-off (a licencia/feriado), so a holiday no longer advertises bookable slots.
-const slotOutlineEvents = computed<EventInput[]>(() => {
-  const profId = filters.value.professional_user_id;
-  if (fineDrag.value || profId == null || !professionalBlocks.value.length || !currentViewType.value.startsWith('timeGrid')) return [];
-  const out: EventInput[] = [];
-  let d = new Date(`${visibleRange.value.from}T00:00:00`);
-  const end = new Date(`${visibleRange.value.to}T00:00:00`);
-  while (d < end) {
-    const date = dayISO(d, 0);
-    out.push(...slotOutlineEventsForDay(date, professionalBlocks.value,
-      (s, e) => !cellElapsed(date, e) && slotBookableByAvailability(date, s, e)));
-    d = new Date(d.getTime() + 86400000);
-  }
-  return out;
-});
-
 async function loadResourceAvailability() {
   const resId = filters.value.resource_id;
   if (resId == null) { resourceFreeByDay.value = new Map(); return; }
@@ -264,9 +236,7 @@ async function loadResourceAvailability() {
 }
 
 // Per-day availability for the visible month grid, only when a single professional is in view.
-// Drives the "no availability" graying and gates click-to-book on empty days. 'closed' (doesn't
-// work that day) and 'full' (works, no free slots) are told apart so the block message is honest.
-type DayAvailability = 'free' | 'full' | 'closed';
+// Drives the "no availability" graying and gates click-to-book on empty days.
 const monthAvailability = ref<Map<string, DayAvailability>>(new Map());
 
 async function loadMonthAvailability() {
@@ -292,42 +262,12 @@ async function loadMonthAvailability() {
   monthAvailability.value = map;
 }
 
-// Valid drop targets for the in-flight drag, one distinct box per open slot. Each box spans the
-// professional's slot size (falling back to the appointment length in the mixed view). Empty
-// except while dragging.
-const backgroundEvents = computed<EventInput[]>(() => {
-  const boxMinutes = slotMinutes.value ?? dragDurationMinutes;
-  const out: EventInput[] = [];
-  for (const [date, starts] of highlightStartsByDay.value) {
-    for (const start of starts) {
-      const endMin = toMinutes(start) + boxMinutes;
-      out.push({
-        start: `${date}T${start}:00`,
-        end: `${date}T${toHHMM(endMin)}:00`,
-        display: 'background',
-        classNames: ['fc-slot-free'],
-      });
-    }
-  }
-  return out;
-});
-
 // The slot the drag is currently over, highlighted brighter than the open-slot boxes.
 const dragTarget = ref<{ date: string; minutes: number } | null>(null);
 
 // A completed drag emits a trailing click; swallow it once so it doesn't also open the detail panel.
 // Cleared on the next event press, so it can never suppress an unrelated later click.
 let suppressEventClick = false;
-const targetEvents = computed<EventInput[]>(() => {
-  if (!dragTarget.value) return [];
-  const { date, minutes } = dragTarget.value;
-  return [{
-    start: `${date}T${toHHMM(minutes)}:00`,
-    end: `${date}T${toHHMM(minutes + dragDurationMinutes)}:00`,
-    display: 'background',
-    classNames: ['fc-slot-target'],
-  }];
-});
 
 // Slot clicked/placed on the grid → the new-appointment form prefilled with that slot
 // (date, start, owner, sobreturno seed).
@@ -349,7 +289,7 @@ const highlightsReady = ref(false);
 // Duration-aware valid slots for the dragged appointment across the visible days (its own span freed).
 async function loadHighlights(appt: Appointment) {
   highlightsReady.value = false;
-  dragDurationMinutes = appt.duration_minutes;
+  dragDurationMinutes.value = appt.duration_minutes;
   const byDay = await loadSlotsByDay(appt.professional_user_id, appt.id);
   const targets = new Map<string, string[]>();
   for (const [date, slots] of byDay) {
@@ -386,36 +326,6 @@ const { calendarOptions } = useAppointmentCalendar(
   { fallbackTitle: clientNameFor, tooltip: tooltipFor },
 );
 
-// Resource availability overlay: green = free windows, grey hatch = closed/blocked (the complement
-// within the visible working range). Timegrid only — background fills are meaningless in month view.
-// No free windows on a day → the whole range reads as blocked, which is the "no availability" cue.
-// The minute of today where "past" ends and "present" begins — the START of the cell containing now
-// (now floored to the slot grid), NOT the exact minute. This keeps the current cell whole: it reads
-// as present (striped if unavailable, white/booked if available) instead of being split flat/striped
-// by a mid-cell boundary. Falls back to the exact minute when no grid is known (mixed 'Todos' view).
-const todayShadeFloor = computed(() => {
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const gran = slotMinutes.value;
-  const starts = slotStartsMinutes.value;
-  if (!gran || !starts || starts.length === 0) return nowMin;
-  const anchor = Math.min(...starts);
-  if (nowMin <= anchor) return nowMin;
-  return anchor + Math.floor((nowMin - anchor) / gran) * gran;
-});
-
-// Lower bound (minutes from midnight) below which availability shading is suppressed: past time
-// reads plain, since it can't be booked. A fully-past day returns null (skip it entirely). Today
-// transitions at the current cell's start so the current cell isn't split. The upper bound is the
-// full day — FullCalendar clips background events to the visible grid, and the grid's lattice-aligned
-// top can sit below the working-hours bound, so covering to 24h avoids an ungrayed strip.
-function shadeFloorMinutes(date: string): number | null {
-  const today = dayISO(new Date(), 0);
-  if (date < today) return null;
-  if (date === today) return todayShadeFloor.value;
-  return 0;
-}
-
 // A cell is fully elapsed (not bookable) if its whole day has passed, or — today — it ENDS at or
 // before now. Compare the END, not the start, so the cell that currently contains "now" stays
 // bookable even though it began a few minutes ago. (Background shading still greys up to now.)
@@ -427,134 +337,16 @@ function cellElapsed(date: string, endMin: number): boolean {
   return false;
 }
 
-const resourceBgEvents = computed<EventInput[]>(() => {
-  if (filters.value.resource_id == null || !currentViewType.value.startsWith('timeGrid')) return [];
-  const out: EventInput[] = [];
-  for (const [date, slots] of resourceFreeByDay.value) {
-    const floor = shadeFloorMinutes(date);
-    if (floor == null) continue;
-    for (const w of mergeIntervals(slots)) {
-      const start = Math.max(w.start, floor);
-      if (start < w.end) {
-        out.push({ start: `${date}T${toHHMM(start)}:00`, end: `${date}T${toHHMM(w.end)}:00`, display: 'background', classNames: ['fc-res-free'] });
-      }
-    }
-    for (const g of complementIntervals(slots, floor, DAY_END_MINUTES)) {
-      out.push({ start: `${date}T${toHHMM(g.start)}:00`, end: `${date}T${toHHMM(g.end)}:00`, display: 'background', classNames: ['fc-res-closed'] });
-    }
-  }
-  return out;
-});
-
-// Grey the selected professional's unavailable time (closed hours, holidays, gaps) in the week/day
-// grid — the complement of their free slots. Resource overlay takes precedence when a resource is
-// filtered; no professional selected ('Todos') → nothing to shade.
-const professionalBgEvents = computed<EventInput[]>(() => {
-  if (filters.value.resource_id != null) return [];
-  if (filters.value.professional_user_id == null || !currentViewType.value.startsWith('timeGrid')) return [];
-  const out: EventInput[] = [];
-  for (const [date, freeSlots] of professionalFreeByDay.value) {
-    const floor = shadeFloorMinutes(date);
-    if (floor == null) continue;
-    const booked = bookedByDate.value.get(date) ?? { occupied: [], requested: [] };
-    out.push(...availabilityWashEvents(date, freeSlots, booked, floor));
-  }
-  return out;
-});
-
-// Grey past time with a FLAT wash — distinct from the striped availability overlay. Past can't be
-// booked, so it's de-emphasized rather than marked "closed": whole past days, and today up to the
-// START of the current cell (same transition as the availability shading, so the current cell isn't
-// split). Every timegrid view, independent of the professional/resource filter.
-const pastBgEvents = computed<EventInput[]>(() => {
-  if (!currentViewType.value.startsWith('timeGrid')) return [];
-  const today = dayISO(new Date(), 0);
-  const out: EventInput[] = [];
-  let d = new Date(`${visibleRange.value.from}T00:00:00`);
-  const end = new Date(`${visibleRange.value.to}T00:00:00`);
-  while (d < end) {
-    const ev = pastWashEvent(dayISO(d, 0), today, todayShadeFloor.value);
-    if (ev) out.push(ev);
-    d = new Date(d.getTime() + 86400000);
-  }
-  return out;
-});
-
-// Business closures as background bands — full-day (00:00–24:00) or the partial [start, end) window.
-// Rendered on every view/filter (feriados close the whole business); appointments stay on top as
-// foreground events. Distinct class from the per-owner exception overlay so a clinic holiday reads
-// apart from one professional's day off.
-const closureBgEvents = computed<EventInput[]>(() => {
-  const { from, to } = visibleRange.value;
-  const out: EventInput[] = [];
-  for (const c of businessClosures.value) {
-    if (c.exception_date < from || c.exception_date >= to) continue;
-    const base = { display: 'background' as const, classNames: ['fc-closure'], title: c.reason ?? '', extendedProps: { closure: c } };
-    if (!c.start_time || !c.end_time) {
-      out.push({ ...base, start: `${c.exception_date}T00:00:00`, end: `${nextDay(c.exception_date)}T00:00:00` });
-    } else {
-      out.push({ ...base, start: `${c.exception_date}T${c.start_time.slice(0, 5)}:00`, end: `${c.exception_date}T${c.end_time.slice(0, 5)}:00` });
-    }
-  }
-  return out;
-});
-
-// Must stay a computed (not a plain spread object) — FullCalendar's Vue wrapper only
-// re-diffs options when the prop reference changes; a plain object built once at setup
-// freezes `events` to whatever appointments held at that instant.
-const fullOptions = computed<typeof calendarOptions.value>(() => {
-  // Read here so the computed re-runs (and FC re-renders the graying) when the map is replaced.
-  const monthAvail = monthAvailability.value;
-  // Sobreturno mode makes full days bookable, so they must not read as disabled/greyed either.
-  const fine = fineDrag.value;
-  const baseViews: NonNullable<CalendarOptions['views']> = calendarOptions.value.views ?? {};
-  return {
-    ...calendarOptions.value,
-    // Fill the flex-1 calendar slot (see template) so the coarse appointment-sized rows expand to use
-    // the available vertical space instead of leaving a gap below a short grid.
-    height: '100%',
-    events: [
-      ...((calendarOptions.value.events as EventInput[]) ?? []),
-      ...pastBgEvents.value,
-      ...resourceBgEvents.value,
-      ...professionalBgEvents.value,
-      ...slotOutlineEvents.value,
-      ...exceptions.bgEvents.value,
-      ...closureBgEvents.value,
-      ...hoverEvents.value,
-      ...hoverPreviewEvents.value,
-      ...backgroundEvents.value,
-      ...targetEvents.value,
-    ],
-    views: {
-      ...baseViews,
-      // Timegrid booking goes through our own slot click/hover (useGridInteraction), so FC's native cell
-      // select is off here — it would otherwise fire on click with a 30-min-cell time (not the real
-      // slot) and draw its own cell highlight over the dotted slot. Month keeps select (day click).
-      timeGridWeek: { selectable: false },
-      timeGridDay: { selectable: false },
-      dayGridMonth: {
-        ...(baseViews.dayGridMonth ?? {}),
-        // Dim days the selected professional has no free slots on (closed or fully booked),
-        // except in sobreturno mode where those days stay bookable.
-        dayCellClassNames: (arg: { date: Date }) => {
-          const s = monthAvail.get(dayISO(arg.date, 0));
-          return !fine && (s === 'full' || s === 'closed') ? ['fc-day-unavailable'] : [];
-        },
-      },
-    },
-    datesSet: (info: { startStr: string; endStr: string; view: { type: string } }) => {
-      currentViewType.value = info.view.type;
-      // FullCalendar re-fires datesSet on every re-render (e.g. a grid re-layout), not only on
-      // navigation. Ignore same-range fires so they don't refetch or reset the hover-aligned grid.
-      const from = info.startStr.slice(0, 10);
-      const to = info.endStr.slice(0, 10);
-      if (visibleRange.value.from === from && visibleRange.value.to === to) return;
-      visibleRange.value = { from, to };
-      void fetchAppointments();
-    },
-  };
-});
+function onDatesSet(info: { startStr: string; endStr: string; view: { type: string } }) {
+  currentViewType.value = info.view.type;
+  // FullCalendar re-fires datesSet on every re-render (e.g. a grid re-layout), not only on
+  // navigation. Ignore same-range fires so they don't refetch or reset the hover-aligned grid.
+  const from = info.startStr.slice(0, 10);
+  const to = info.endStr.slice(0, 10);
+  if (visibleRange.value.from === from && visibleRange.value.to === to) return;
+  visibleRange.value = { from, to };
+  void fetchAppointments();
+}
 
 function handleSelect(arg: DateSelectArg) {
   const day = arg.startStr.slice(0, 10);
@@ -790,71 +582,71 @@ function onFiltersUpdate(f: FilterState) {
       </AppButton>
     </div>
 
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <CalendarFilters @update:filters="onFiltersUpdate" />
-
-      <label v-if="canSobreturno" class="inline-flex items-center gap-2 text-sm font-medium cursor-pointer">
-        <input v-model="fineDrag" type="checkbox" class="h-4 w-4 accent-accent" />
-        {{ t('calendar.fineMode') }}
-      </label>
-    </div>
+    <CalendarFilterBar
+      v-model:fine-drag="fineDrag"
+      :can-sobreturno="canSobreturno"
+      @update:filters="onFiltersUpdate"
+    />
 
     <div v-if="loading && appointments.length === 0" class="text-sm text-neutral">
       {{ t('loading') }}
     </div>
-    <div class="flex min-h-0 flex-1 flex-col rounded-lg border border-border bg-card p-3 shadow-sm">
-      <CalendarViewComponent ref="calendarRef" :options="fullOptions" class="min-h-0 flex-1" />
-    </div>
+    <CalendarSurface
+      ref="calendarRef"
+      :base-options="calendarOptions"
+      :fine-drag="fineDrag"
+      :current-view-type="currentViewType"
+      :visible-range="visibleRange"
+      :professional-id="filters.professional_user_id"
+      :resource-id="filters.resource_id"
+      :professional-blocks="professionalBlocks"
+      :business-closures="businessClosures"
+      :month-availability="monthAvailability"
+      :resource-free-by-day="resourceFreeByDay"
+      :professional-free-by-day="professionalFreeByDay"
+      :booked-by-date="bookedByDate"
+      :highlight-starts-by-day="highlightStartsByDay"
+      :drag-target="dragTarget"
+      :drag-duration-minutes="dragDurationMinutes"
+      :slot-minutes="slotMinutes"
+      :slot-starts-minutes="slotStartsMinutes"
+      :exception-bg-events="exceptions.bgEvents.value"
+      :hover-events="hoverEvents"
+      :hover-preview-events="hoverPreviewEvents"
+      :cell-elapsed="cellElapsed"
+      :slot-bookable-by-availability="slotBookableByAvailability"
+      @dates-set="onDatesSet"
+    />
 
     <ExceptionList v-if="canAddException" :rows="exceptions.rows.value" @deleted="onExceptionDeleted" />
 
-    <AppointmentDetailPanel
-      :appointment="detailAppt"
-      :open="detailOpen"
-      @close="detailOpen = false"
-      @mutated="onDetailMutated"
+    <CalendarDialogs
+      :detail-appointment="detailAppt"
+      :detail-open="detailOpen"
+      :form-open="formOpen"
+      :form-appointment="formAppt"
+      :prefill-date="formPrefillDate"
+      :prefill-start="formPrefillStart"
+      :prefill-professional-id="formPrefillProfId"
+      :prefill-resource-id="formPrefillResourceId"
+      :prefill-sobreturno="formPrefillSobreturno"
+      :prefill-duration="formPrefillDuration"
+      :move-confirm-open="moveConfirmOpen"
+      :move-confirm-body="moveConfirmBody"
+      :conflict-open="conflictOpen"
+      :conflict-verdict="conflictVerdict"
+      :conflict-revert="conflictRevert"
+      @detail-close="detailOpen = false"
+      @detail-mutated="onDetailMutated"
       @reschedule="onReschedule"
       @approve="(appt) => handleApproveRequest(appt)"
-    />
-
-    <DetailPanel
-      :open="formOpen"
-      :title="formAppt ? t('calendar.reschedule') : t('calendar.newAppointment')"
-      variant="side"
-      size="2xl"
-      @close="formOpen = false"
-      @after-leave="formMounted = false"
-    >
-      <AppointmentForm
-        v-if="formMounted"
-        :appointment="formAppt"
-        :prefill-date="formPrefillDate"
-        :prefill-start="formPrefillStart"
-        :prefill-professional-id="formPrefillProfId"
-        :prefill-resource-id="formPrefillResourceId"
-        :prefill-sobreturno="formPrefillSobreturno"
-        :prefill-duration="formPrefillDuration"
-        @saved="onFormSaved"
-        @conflict-detected="onFormConflict"
-        @cancel="formOpen = false"
-      />
-    </DetailPanel>
-
-    <ConfirmDialog
-      :open="moveConfirmOpen"
-      :title="t('calendar.reschedule')"
-      :body="moveConfirmBody"
-      :confirm-label="t('actions.confirm')"
-      @confirm="onMoveConfirm"
-      @cancel="onMoveCancel"
-    />
-
-    <ConflictOverrideDialog
-      :open="conflictOpen"
-      :verdict="conflictVerdict"
-      :revert="conflictRevert"
-      @confirm="onOverrideConfirm"
-      @cancel="onOverrideCancel"
+      @form-close="formOpen = false"
+      @form-saved="onFormSaved"
+      @form-conflict="onFormConflict"
+      @move-confirm="onMoveConfirm"
+      @move-cancel="onMoveCancel"
+      @override-confirm="onOverrideConfirm"
+      @override-cancel="onOverrideCancel"
     />
   </div>
 </template>

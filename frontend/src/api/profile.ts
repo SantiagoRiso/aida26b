@@ -23,5 +23,5 @@ export function updateMyProfile(
   return apiFetch<{ profile: SelfProfile; user: AuthUser }>(authPaths.meProfile(), {
     method: 'PATCH',
     body: JSON.stringify(body),
-  });
+  }, { toastOnForbidden: true });
 }

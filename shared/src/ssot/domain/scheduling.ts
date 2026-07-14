@@ -1,8 +1,17 @@
-import type { TableStructure } from '../../types/types';
-import { pkColumn } from './business';
+import type { BusinessJoinDescriptor, TableStructure } from '../../types/types';
+import { pkColumn, businessForeignKey } from './business';
+import { receptionistGrantScope } from './people';
 import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
 import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, WEEKDAY_OPTIONS } from './availability';
 import { APPOINTMENT_STATES } from './appointment-lifecycle';
+
+// Business is derived via whichever owner is set (professional XOR resource).
+const dualOwnerBusinessJoin: BusinessJoinDescriptor = {
+  paths: [
+    { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
+    { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
+  ],
+};
 
 export const schedulingTables = {
   // One working block for exactly one owner (professional XOR resource, DB-enforced). Several
@@ -59,19 +68,9 @@ export const schedulingTables = {
     title: { es: 'Bloques de horario', en: 'Schedule Blocks' },
     addButtonLabel: { es: 'Agregar bloque', en: 'Add Block' },
     crud: { create: true, read: true, update: true, delete: true },
-    businessJoin: {
-      paths: [
-        { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
-        { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
-      ],
-    },
+    businessJoin: dualOwnerBusinessJoin,
     ownership: { ownerColumn: 'professional_user_id', role: 'Professional' },
-    grantScope: {
-      role: 'Receptionist',
-      grantTable: 'calendar_grants',
-      grantRowColumn: 'professional_user_id',
-      granteeColumn: 'grantee_user_id',
-    },
+    grantScope: receptionistGrantScope,
     roleRequired: {
       create: ['Admin', 'Professional', 'Receptionist'],
       read:   ['Admin', 'Professional', 'Receptionist'],
@@ -140,12 +139,7 @@ export const schedulingTables = {
       paths: [{ parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' }],
     },
     ownership: { ownerColumn: 'professional_user_id', role: 'Professional' },
-    grantScope: {
-      role: 'Receptionist',
-      grantTable: 'calendar_grants',
-      grantRowColumn: 'professional_user_id',
-      granteeColumn: 'grantee_user_id',
-    },
+    grantScope: receptionistGrantScope,
     roleRequired: {
       create: ['Admin', 'Professional', 'Receptionist'],
       read:   ['Admin', 'Professional', 'Receptionist'],
@@ -187,7 +181,7 @@ export const schedulingTables = {
         validator: { nullable: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'businesses', valueField: 'id', labelField: 'name' },
+        foreignKey: businessForeignKey,
       },
       exception_date: {
         type: 'string',
@@ -241,13 +235,7 @@ export const schedulingTables = {
     title: { es: 'Licencias', en: 'Time off' },
     addButtonLabel: { es: 'Agregar licencia', en: 'Add time off' },
     crud: { create: true, read: true, update: true, delete: true },
-    // Business is derived via whichever owner is set (professional or resource).
-    businessJoin: {
-      paths: [
-        { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
-        { parentTable: 'resources',  localFk: 'resource_id',           parentPk: 'id' },
-      ],
-    },
+    businessJoin: dualOwnerBusinessJoin,
     roleRequired: {
       create: ['Admin', 'Professional', 'Receptionist'],
       read:   ['Admin', 'Professional', 'Receptionist', 'Client'],
