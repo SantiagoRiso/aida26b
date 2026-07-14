@@ -1,18 +1,19 @@
-import type { SoftDeletePolicy, TableStructure } from '../../types/types';
+import type { TableStructure } from '../../types/types';
 import { pkColumn, businessIdColumn } from './business';
+import { softDelete } from './people';
 
-const softDelete: SoftDeletePolicy = {
-  deletedAtColumn: 'deleted_at',
-  deletedByColumn: 'deleted_by_user_id',
-};
+// Shared by every decimal money column (services, block/client price overrides, appointments,
+// ledger) so the "up to 2 decimals, non-negative" rule can't drift between them.
+export const AMOUNT_PATTERN = '^\\d+(\\.\\d{1,2})?$';
+export const AMOUNT_PATTERN_MESSAGE = 'must be a non-negative amount';
 
 const priceColumn = {
   type: 'string',
   label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
   validator: {
     required: true,
-    pattern: '^\\d+(\\.\\d{1,2})?$',
-    patternMessage: 'must be a non-negative amount',
+    pattern: AMOUNT_PATTERN,
+    patternMessage: AMOUNT_PATTERN_MESSAGE,
   },
   filterable: false,
   sortable: true,
@@ -75,7 +76,7 @@ export const catalogTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'clients', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'clients', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Client',
       },
       professional_user_id: {
@@ -85,7 +86,7 @@ export const catalogTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
       },
       service_id: {
@@ -116,8 +117,8 @@ export const catalogTables = {
   } satisfies TableStructure,
 
   // Which services a professional offers. A pure link table; business derived via the professional.
-  // Update is scoped to the per-service booking-window override only (FKs are editable:false);
-  // reassigning owner/service is still remove + add, not an update.
+  // Update is scoped to the per-service booking-window override only (the FK pair is readonlyOnEdit:
+  // set at create, frozen after); reassigning owner/service is still remove + add, not an update.
   professional_services: {
     columns: {
       id: pkColumn,
@@ -128,9 +129,8 @@ export const catalogTables = {
         validator: { required: true },
         filterable: true,
         sortable: false,
-        foreignKey: { table: 'professionals', valueField: 'user_id', labelField: 'display_name' },
+        foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
         referencesUserRole: 'Professional',
-        editable: false,
         readonlyOnEdit: true,
       },
       service_id: {
@@ -141,7 +141,6 @@ export const catalogTables = {
         filterable: true,
         sortable: false,
         foreignKey: { table: 'services', valueField: 'id', labelField: 'name' },
-        editable: false,
         readonlyOnEdit: true,
       },
       // Per-service booking-window override; null → falls back to the business window.

@@ -59,6 +59,15 @@ async function putRaw(id: string, body: Record<string, string | number | boolean
   return res.status;
 }
 
+async function postCreate(body: Record<string, string | number | boolean | null>) {
+  const res = await fetch(`${baseUrl}/api/professional_services`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.status;
+}
+
 // The real window edit sends ONLY the editable columns — exactly what the frontend GenericForm
 // submits (it drops editable:false / readonlyOnEdit columns from the edit payload). The owner is
 // read from the existing row by the guard, so the caller's identity decides authz. Sending a
@@ -177,5 +186,26 @@ describe('professional_services per-service window edit authz', () => {
       await putRaw(bindingId, { service_id: svc2, min_booking_days: 1, max_booking_days: 10 }),
     ).toBe(400);
     expect((await readBinding(bindingId)).service_id).toBe(svc1); // unchanged
+  });
+
+  // The FK pair is readonlyOnEdit — frozen after create, but it MUST be settable AT create, else no
+  // offering can be made. This exercises the generic POST that the frontend's offer checklist calls.
+  test('Admin may CREATE an offering with the full object (FK pair settable at create)', async () => {
+    currentUser = asUser(900000, 'Admin');
+    expect(
+      await postCreate({ professional_user_id: String(pro2), service_id: svc2, min_booking_days: null, max_booking_days: null }),
+    ).toBe(201);
+    const r = await pool.query(
+      `SELECT 1 FROM professional_services WHERE professional_user_id = $1 AND service_id = $2`,
+      [pro2, svc2],
+    );
+    expect(r.rowCount).toBe(1);
+  });
+
+  test('create still requires the full object (a missing service FK is rejected)', async () => {
+    currentUser = asUser(900000, 'Admin');
+    expect(
+      await postCreate({ professional_user_id: String(pro1), min_booking_days: null, max_booking_days: null }),
+    ).toBe(400);
   });
 });

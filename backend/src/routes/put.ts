@@ -10,24 +10,23 @@ import {
 } from '../helpers';
 
 import { query as runQuery } from '../db/core';
-import { DbError } from '../db/errors';
 import { getScheduleOwnerRow } from '../db/scheduling';
 import { buildUpdateStatement } from '../db/generic';
 import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
-import type { AuthUser } from '../auth';
+import { type AuthedRequest } from '../session';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
 import { tableOf } from '../../../shared/src/utils/utils';
-import type { ColumnDef, ColumnValue, SqlParam, TableKey, TableRecordMap } from '../../../shared/src/types/types';
+import type { ColumnDef, ColumnValue } from '../../../shared/src/types/types';
+import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
+import type { SqlParam } from '../db/core';
 import { structure } from '../../../shared/src/ssot/structure';
 
 import {
-  validateFullObject,
+  validateForUpdate,
   validateOnlyPk,
   sendErrorsIfInvalid,
 } from '../validation/validate';
-
-type AuthedRequest = express.Request & { user?: AuthUser };
 
 // clients/professionals are logical views over auth.users. Even if the SSOT ever marks one
 // of these editable, generic writes must never touch privileged auth columns — enforced here
@@ -80,7 +79,7 @@ export async function putHandler(
     );
   }
 
-  const validatedBody = validateFullObject(tableName, req.body);
+  const validatedBody = validateForUpdate(tableName, req.body);
 
   if (sendErrorsIfInvalid(res, validatedBody)) {
     return;
@@ -141,8 +140,11 @@ export async function putHandler(
   const fieldsToUpdate = getNotDerivableFields(tableName).filter(
     (fieldName) =>
       !pkFields.includes(fieldName) &&
-      // Exclude columns marked editable:false — those are read-only through generic PUT.
+      // Read-only through generic PUT: editable:false (never writable) or readonlyOnEdit (frozen
+      // after create). validateForUpdate already rejects these from the body; keep them out of the
+      // SET list too so a stray value can never reach the UPDATE.
       columns[fieldName]?.editable !== false &&
+      !columns[fieldName]?.readonlyOnEdit &&
       !(physicalTable === 'auth.users' && AUTH_USERS_PROTECTED.has(fieldName)),
   );
 
@@ -168,19 +170,12 @@ export async function putHandler(
     allowed,
   );
 
-  try {
-    const rows = await runQuery<GenericRow>(pool, text, values);
+  // Constraint violations (unique, FK) propagate to guardRoute's central SQLSTATE mapping.
+  const rows = await runQuery<GenericRow>(pool, text, values);
 
-    if (rows.length === 0) {
-      return sendError(res, 404, 'not_found', `${entityName} not found`);
-    }
-
-    return sendData(res, rows[0], 202);
-  } catch (err) {
-    if (err instanceof DbError && err.pgCode === '23505') {
-      return sendError(res, 409, 'conflict', `${entityName} already exists`);
-    }
-    console.error(`Error updating ${entityName}:`, err);
-    return sendError(res, 500, 'internal_error', 'Internal server error');
+  if (rows.length === 0) {
+    return sendError(res, 404, 'not_found', `${entityName} not found`);
   }
+
+  return sendData(res, rows[0], 202);
 }

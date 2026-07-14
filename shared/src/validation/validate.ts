@@ -1,6 +1,7 @@
 import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
-import type { ColumnDef, ColumnValidator, ColumnValue, TableKey, TableRecordMap } from '../types/types';
+import type { ColumnDef, ColumnValidator, ColumnValue } from '../types/types';
+import type { TableKey, TableRecordMap } from '../ssot/derived';
 
 export type FieldErrors = Record<string, string>;
 
@@ -102,9 +103,20 @@ function normalizeValue(col: ColumnDef, value: ColumnValue | undefined): ColumnV
     : value;
 }
 
+// Columns a client may set when creating a row: everything not server-owned (editable !== false),
+// including readonlyOnEdit columns (settable once, at create).
 function editableColumns(table: TableKey): string[] {
   return Object.entries(structure.tables[table].columns as Record<string, ColumnDef>)
     .filter(([, col]) => col.editable !== false)
+    .map(([key]) => key);
+}
+
+// Columns a client may set when updating: the creatable set minus columns frozen after create.
+// readonlyOnEdit marks identity-ish fields (e.g. a link table's FK pair) — settable at create,
+// immutable thereafter (reassignment is remove + add, not an update).
+function updatableColumns(table: TableKey): string[] {
+  return Object.entries(structure.tables[table].columns as Record<string, ColumnDef>)
+    .filter(([, col]) => col.editable !== false && !col.readonlyOnEdit)
     .map(([key]) => key);
 }
 
@@ -152,6 +164,11 @@ function validate<T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>
 
 export const validateFullObject = <T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>): ParseResult<T> =>
   validate(table, data, editableColumns(table));
+
+// Update-mode validation: rejects (and never requires) readonlyOnEdit columns, so a link table's
+// identity FKs cannot be reassigned through a generic PUT.
+export const validateForUpdate = <T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>): ParseResult<T> =>
+  validate(table, data, updatableColumns(table));
 
 export const validateOnlyPk = <T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>): ParseResult<T> =>
   validate(table, data, getPkFields(table));
