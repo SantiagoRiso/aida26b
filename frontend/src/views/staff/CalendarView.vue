@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { DateSelectArg, EventClickArg, EventDropArg } from '@fullcalendar/core';
+import type { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCustomDrag } from '@/composables/useCustomDrag';
@@ -15,7 +15,7 @@ import { useToast } from '@/composables/useToast';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
-import { getAvailability } from '@/api/scheduling';
+import { getAvailabilityRange } from '@/api/scheduling';
 import { listClosures, type BusinessClosure } from '@/api/closures';
 import type { Appointment } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
@@ -40,6 +40,7 @@ const { formatDate } = useCurrency();
 
 const appointments = ref<Appointment[]>([]);
 const loading = ref(false);
+let appointmentRequest = 0;
 
 
 // Ref to the calendar surface — exposes the rendered root element the custom drag reads (via geometry).
@@ -98,6 +99,7 @@ const moveConfirmProceed = ref<(() => Promise<void>) | null>(null);
 const moveConfirmRevert = ref<(() => void) | null>(null);
 
 async function fetchAppointments() {
+  const request = ++appointmentRequest;
   loading.value = true;
   const result = await listAppointments({
     date_from: visibleRange.value.from,
@@ -106,6 +108,7 @@ async function fetchAppointments() {
     resource_id: filters.value.resource_id ?? undefined,
     limit: 200,
   });
+  if (request !== appointmentRequest) return;
   loading.value = false;
   if (result.ok) {
     appointments.value = result.data as Appointment[];
@@ -162,15 +165,9 @@ const dragDurationMinutes = ref(0);
 // the week in ~one round-trip. `exclude` frees the dragged block's own span so it can be nudged
 // near its current position.
 async function loadSlotsByDay(profId: string | number, exclude?: string): Promise<Map<string, { start: string; end: string }[]>> {
-  const base = new Date(`${visibleRange.value.from}T00:00:00`);
-  const dates = Array.from({ length: 7 }, (_, i) => dayISO(base, i));
-  // Staff calendar has no chosen service → service-agnostic working windows; `exclude` is the 4th arg.
-  const results = await Promise.all(dates.map((date) => getAvailability(`prof:${profId}`, date, undefined, exclude)));
+  const result = await getAvailabilityRange(`prof:${profId}`, visibleRange.value.from, visibleRange.value.to, exclude);
   const byDay = new Map<string, { start: string; end: string }[]>();
-  dates.forEach((date, i) => {
-    const res = results[i];
-    if (res.ok) byDay.set(date, res.data.slots);
-  });
+  if (result.ok) result.data.forEach((day) => byDay.set(day.date, day.slots));
   return byDay;
 }
 
@@ -224,13 +221,10 @@ const bookedByDate = computed<Map<string, BookedDay>>(() => {
 async function loadResourceAvailability() {
   const resId = filters.value.resource_id;
   if (resId == null) { resourceFreeByDay.value = new Map(); return; }
-  const base = new Date(`${visibleRange.value.from}T00:00:00`);
-  const dates = Array.from({ length: 7 }, (_, i) => dayISO(base, i));
-  const results = await Promise.all(dates.map((date) => getAvailability(`res:${resId}`, date)));
+  const result = await getAvailabilityRange(`res:${resId}`, visibleRange.value.from, visibleRange.value.to);
   const byDay = new Map<string, { start: number; end: number }[]>();
-  dates.forEach((date, i) => {
-    const r = results[i];
-    if (r.ok) byDay.set(date, r.data.slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) })));
+  if (result.ok) result.data.forEach((day) => {
+    byDay.set(day.date, day.slots.map((slot) => ({ start: toMinutes(slot.start), end: toMinutes(slot.end) })));
   });
   resourceFreeByDay.value = byDay;
 }
@@ -245,25 +239,116 @@ async function loadMonthAvailability() {
     if (monthAvailability.value.size) monthAvailability.value = new Map();
     return;
   }
-  const dates: string[] = [];
-  let d = new Date(`${visibleRange.value.from}T00:00:00`);
-  const end = new Date(`${visibleRange.value.to}T00:00:00`);
-  // A month grid is at most 6 weeks; the cap is a safety bound, not a functional limit.
-  while (d < end && dates.length < 42) {
-    dates.push(dayISO(d, 0));
-    d = new Date(d.getTime() + 86400000);
-  }
-  const results = await Promise.all(dates.map((date) => getAvailability(`prof:${profId}`, date)));
+  const result = await getAvailabilityRange(`prof:${profId}`, visibleRange.value.from, visibleRange.value.to);
   const map = new Map<string, DayAvailability>();
-  dates.forEach((date, i) => {
-    const r = results[i];
-    if (r.ok) map.set(date, r.data.slots.length > 0 ? 'free' : r.data.open ? 'full' : 'closed');
+  if (result.ok) result.data.forEach((day) => {
+    map.set(day.date, day.slots.length > 0 ? 'free' : day.open ? 'full' : 'closed');
   });
   monthAvailability.value = map;
 }
 
 // The slot the drag is currently over, highlighted brighter than the open-slot boxes.
-const dragTarget = ref<{ date: string; minutes: number } | null>(null);
+const dragOrigin = ref<{ date: string; minutes: number; duration: number } | null>(null);
+let dragTargetOverlay: HTMLElement | null = null;
+let draggedAppointment: Appointment | null = null;
+const DRAG_LAYOUT_PREVIEW_ID = '__drag-layout-preview';
+const dragLayoutPreviewEvents = ref<EventInput[]>([]);
+let layoutPreviewKey = '';
+let layoutPreviewFrame: number | null = null;
+
+function removeLayoutPreview() {
+  if (layoutPreviewFrame != null) cancelAnimationFrame(layoutPreviewFrame);
+  layoutPreviewFrame = null;
+  layoutPreviewKey = '';
+  dragLayoutPreviewEvents.value = [];
+}
+
+function conflictKey(date: string, minutes: number): string {
+  const dragged = draggedAppointment;
+  if (!dragged) return '';
+  const end = minutes + dragged.duration_minutes;
+  return appointments.value
+    .filter((appointment) => {
+      if (appointment.id === dragged.id) return false;
+      if (String(appointment.professional_user_id) !== String(dragged.professional_user_id)) return false;
+      const start = new Date(appointment.starts_at);
+      const appointmentStart = start.getHours() * 60 + start.getMinutes();
+      return dayISO(start, 0) === date
+        && minutes < appointmentStart + appointment.duration_minutes
+        && appointmentStart < end;
+    })
+    .map((appointment) => String(appointment.id))
+    .sort()
+    .join(',');
+}
+
+function syncLayoutPreview(date: string, minutes: number, magnetized: boolean) {
+  const dragged = draggedAppointment;
+  if (!dragged) return;
+  const conflicts = conflictKey(date, minutes);
+  const key = magnetized ? `${date}:${minutes}:${conflicts}` : `${date}:${conflicts}`;
+  if (key === layoutPreviewKey) return;
+  layoutPreviewKey = key;
+  const start = `${date}T${toHHMM(minutes)}:00`;
+  const end = `${date}T${toHHMM(minutes + dragged.duration_minutes)}:00`;
+  dragLayoutPreviewEvents.value = [{
+    id: DRAG_LAYOUT_PREVIEW_ID,
+    start,
+    end,
+    display: 'block',
+    classNames: ['fc-drag-layout-preview'],
+  }];
+
+  if (layoutPreviewFrame != null) cancelAnimationFrame(layoutPreviewFrame);
+  const alignGhostToPreview = (attemptsLeft: number) => {
+    layoutPreviewFrame = null;
+    const root = calendarRef.value?.getRootEl();
+    const previewElement = root?.querySelector<HTMLElement>('.fc-drag-layout-preview');
+    const ghost = root?.querySelector<HTMLElement>('.fc-drag-ghost');
+    if (!previewElement || !ghost) {
+      if (attemptsLeft > 0) layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(attemptsLeft - 1));
+      return;
+    }
+    const rect = previewElement.getBoundingClientRect();
+    ghost.style.left = `${rect.left}px`;
+    ghost.style.width = `${rect.width}px`;
+    if (dragTargetOverlay) {
+      dragTargetOverlay.style.left = `${rect.left}px`;
+      dragTargetOverlay.style.width = `${rect.width}px`;
+    }
+  };
+  layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(2));
+}
+
+function clearDragTargetOverlay() {
+  dragTargetOverlay?.remove();
+  dragTargetOverlay = null;
+  removeLayoutPreview();
+}
+
+function renderDragTargetOverlay(date: string | null, minutes: number | null, elapsed = false, magnetized = false) {
+  if (!date || minutes == null) { clearDragTargetOverlay(); return; }
+  const root = calendarRef.value?.getRootEl();
+  const column = geometry.columns().find((candidate) => candidate.date === date);
+  const top = geometry.yForMinutes(minutes);
+  const pxPerMinute = geometry.pxPerMinute();
+  if (!root || !column || top == null || pxPerMinute == null) { clearDragTargetOverlay(); return; }
+  const overlay = dragTargetOverlay ?? document.createElement('div');
+  if (!dragTargetOverlay) {
+    Object.assign(overlay.style, { position: 'fixed', margin: '0', pointerEvents: 'none', zIndex: '4' });
+    root.appendChild(overlay);
+    dragTargetOverlay = overlay;
+  }
+  overlay.className = `fc-slot-target fc-drag-target-overlay${elapsed ? ' fc-drag-target-invalid' : ''}`;
+  const ghostRect = root.querySelector<HTMLElement>('.fc-drag-ghost')?.getBoundingClientRect();
+  Object.assign(overlay.style, {
+    top: `${ghostRect?.top ?? top}px`,
+    left: `${ghostRect?.left ?? column.left + 2}px`,
+    width: `${ghostRect?.width ?? column.width - 4}px`,
+    height: `${ghostRect?.height ?? dragDurationMinutes.value * pxPerMinute}px`,
+  });
+  syncLayoutPreview(date, minutes, magnetized);
+}
 
 // A completed drag emits a trailing click; swallow it once so it doesn't also open the detail panel.
 // Cleared on the next event press, so it can never suppress an unrelated later click.
@@ -292,8 +377,17 @@ async function loadHighlights(appt: Appointment) {
   dragDurationMinutes.value = appt.duration_minutes;
   const byDay = await loadSlotsByDay(appt.professional_user_id, appt.id);
   const targets = new Map<string, string[]>();
+  const origin = new Date(appt.starts_at);
+  const originDate = dayISO(origin, 0);
+  const originMinutes = origin.getHours() * 60 + origin.getMinutes();
   for (const [date, slots] of byDay) {
-    targets.set(date, tileFreeWindows(slots, appt.duration_minutes));
+    targets.set(date, tileFreeWindows(slots, appt.duration_minutes).filter(
+      (start) => {
+        const minutes = toMinutes(start);
+        return !(date === originDate && minutes === originMinutes)
+          && !cellElapsed(date, minutes + appt.duration_minutes);
+      },
+    ));
   }
   highlightStartsByDay.value = targets;
   highlightsReady.value = true;
@@ -305,11 +399,21 @@ const customDrag = useCustomDrag({
   ghostParent: () => calendarRef.value?.getRootEl() ?? null,
   validStartsFor: (date) => (highlightStartsByDay.value.get(date) ?? []).map(toMinutes),
   ready: () => highlightsReady.value,
-  onBegin: (appt) => { isDragging.value = true; hoverTarget.value = null; void loadHighlights(appt); },
-  onEnd: () => { isDragging.value = false; highlightStartsByDay.value = new Map(); dragTarget.value = null; suppressEventClick = true; suppressNextGridClick(); },
-  onTarget: (date, minutes) => {
-    dragTarget.value = date && minutes != null ? { date, minutes } : null;
+  targetElapsed: (date, start, duration) => cellElapsed(date, start + duration),
+  onBegin: (appt) => {
+    const origin = new Date(appt.starts_at);
+    dragOrigin.value = {
+      date: dayISO(origin, 0),
+      minutes: origin.getHours() * 60 + origin.getMinutes(),
+      duration: appt.duration_minutes,
+    };
+    draggedAppointment = appt;
+    isDragging.value = true;
+    hoverTarget.value = null;
+    void loadHighlights(appt);
   },
+  onEnd: () => { isDragging.value = false; highlightStartsByDay.value = new Map(); clearDragTargetOverlay(); draggedAppointment = null; dragOrigin.value = null; suppressEventClick = true; suppressNextGridClick(); },
+  onTarget: renderDragTargetOverlay,
   onCommit: (appt, target) => { requestMove(appt, target, () => {}); },
 });
 
@@ -505,6 +609,9 @@ async function doReschedule(
   if (!payload.saved) {
     raiseConflict(payload.verdict, (ov: boolean) => doReschedule(id, body, revertFn, ov), revertFn);
   } else {
+    appointments.value = appointments.value.map((appointment) => (
+      appointment.id === payload.appointment.id ? payload.appointment : appointment
+    ));
     await fetchAppointments();
   }
 }
@@ -606,13 +713,14 @@ function onFiltersUpdate(f: FilterState) {
       :professional-free-by-day="professionalFreeByDay"
       :booked-by-date="bookedByDate"
       :highlight-starts-by-day="highlightStartsByDay"
-      :drag-target="dragTarget"
+      :drag-origin="dragOrigin"
       :drag-duration-minutes="dragDurationMinutes"
       :slot-minutes="slotMinutes"
       :slot-starts-minutes="slotStartsMinutes"
       :exception-bg-events="exceptions.bgEvents.value"
       :hover-events="hoverEvents"
       :hover-preview-events="hoverPreviewEvents"
+      :drag-layout-preview-events="dragLayoutPreviewEvents"
       :cell-elapsed="cellElapsed"
       :slot-bookable-by-availability="slotBookableByAvailability"
       @dates-set="onDatesSet"

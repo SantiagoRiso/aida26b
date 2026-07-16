@@ -32,6 +32,14 @@ const emit = defineEmits<{
   afterLeave: [];
 }>();
 
+function hasForegroundDialog(): boolean {
+  return document.querySelector('[data-confirm-dialog="true"]') !== null;
+}
+
+function handleDialogClose() {
+  if (!hasForegroundDialog()) emit('close');
+}
+
 const modalMaxWidth = computed(
   () =>
     ({
@@ -50,7 +58,7 @@ const modalMaxWidth = computed(
 
 <template>
   <TransitionRoot :show="open" as="template" @after-leave="emit('afterLeave')">
-    <Dialog class="relative z-40" @close="emit('close')">
+    <Dialog class="relative z-40" @close="handleDialogClose">
       <TransitionChild
         as="template"
         enter="ease-out duration-200"

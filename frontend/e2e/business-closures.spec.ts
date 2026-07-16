@@ -79,7 +79,7 @@ test.describe('Business closures — add / edit / delete (no conflict)', () => {
     await expect(row).toContainText(es.closures.allDay);
   });
 
-  test('adds a partial-range closure, shown with an HH:MM–HH:MM range label', async ({ page }) => {
+  test('adds a partial-range closure, shown with an HH:MM-HH:MM range label', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await openScreen(page, es.nav.business);
     const section = closuresSection(page);

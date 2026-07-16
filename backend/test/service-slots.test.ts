@@ -30,7 +30,7 @@ describe('computeServiceSlots', () => {
 
   it('drops a trailing partial slot that would exceed the block', () => {
     const slots = computeServiceSlots({ blocks: [{ start: '09:00', end: '10:00', slot_minutes: 40 }] });
-    expect(slots).toEqual([{ start: '09:00', end: '09:40' }]); // 09:40–10:20 would exceed → excluded
+    expect(slots).toEqual([{ start: '09:00', end: '09:40' }]); // 09:40-10:20 would exceed → excluded
   });
 
   it('subtracts a full-day unavailable exception', () => {

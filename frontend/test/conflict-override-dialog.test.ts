@@ -73,6 +73,7 @@ describe('ConflictOverrideDialog', () => {
 
     expect(w.text()).toContain(es.calendar.conflictTitle);
     expect(w.text()).toContain(es.calendar.conflictBody);
+    expect(w.text()).toContain(es.calendar.conflictOverrideSobreturno);
 
     const expectedLine = es.conflicts.professionalOverlap
       .replace('{entity}', 'Dra. Pérez')

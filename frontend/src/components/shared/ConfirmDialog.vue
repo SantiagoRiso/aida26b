@@ -40,7 +40,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true));
 
 <template>
   <TransitionRoot :show="open" as="template">
-    <Dialog class="relative z-50" @close="emit('cancel')">
+    <Dialog class="relative z-50" data-confirm-dialog="true" @close="emit('cancel')">
       <TransitionChild
         as="template"
         enter="ease-out duration-200"

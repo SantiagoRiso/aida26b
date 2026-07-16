@@ -365,7 +365,7 @@ describe('resolveBooking — effective price + duration', () => {
 
 describe('evaluateConflicts — structured conflict verdict', () => {
   const MONDAY = '2026-06-29';
-  // Grid: 12 back-to-back 15-min slots 09:00–12:00.
+  // Grid: 12 back-to-back 15-min slots 09:00-12:00.
   const grid = computeServiceSlots({
     blocks: [{ start: '09:00', end: '12:00', slot_minutes: 15 }],
   });

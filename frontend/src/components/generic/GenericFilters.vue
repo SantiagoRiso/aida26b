@@ -120,7 +120,7 @@ function onValueChange() {
           :placeholder="i18n.global.t('generic.minPlaceholder')"
           @input="onValueChange"
         />
-        <span class="text-xs text-neutral">–</span>
+        <span class="text-xs text-neutral">-</span>
         <input
           v-model="f.max"
           type="number"

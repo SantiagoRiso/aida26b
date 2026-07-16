@@ -70,13 +70,14 @@ describe('CalendarSurface', () => {
       professionalFreeByDay: new Map(),
       bookedByDate: new Map(),
       highlightStartsByDay: new Map(),
-      dragTarget: null,
+      dragOrigin: null,
       dragDurationMinutes: 0,
       slotMinutes: null,
       slotStartsMinutes: null,
       exceptionBgEvents: [],
       hoverEvents: [],
       hoverPreviewEvents: [],
+      dragLayoutPreviewEvents: [],
       cellElapsed: () => false,
       slotBookableByAvailability: () => true,
     };
@@ -97,6 +98,54 @@ describe('CalendarSurface', () => {
     expect(closure).toBeDefined();
     expect(closure?.start).toBe('2099-01-02T00:00:00');
     expect(closure?.end).toBe('2099-01-03T00:00:00');
+  });
+
+  it('keeps the drag layout preview when hover layers refresh', async () => {
+    const wrapper = mount(CalendarSurface, {
+      props: {
+        ...surfaceProps(),
+        dragLayoutPreviewEvents: [{
+          id: '__drag-layout-preview',
+          start: '2099-01-02T14:40:00',
+          end: '2099-01-02T15:30:00',
+          classNames: ['fc-drag-layout-preview'],
+        }],
+      },
+      global: { stubs: { CalendarViewComponent: true } },
+    });
+
+    await wrapper.setProps({ hoverEvents: [{ start: '2099-01-02T15:00:00', display: 'background' }] });
+    const events = wrapper.findComponent(CalendarViewComponent).props('options').events as EventInput[];
+    expect(events.some((event) => event.id === '__drag-layout-preview')).toBe(true);
+  });
+
+  it('shows the cancel origin and hides drop boxes that overlap bookings', () => {
+    const props = {
+      ...surfaceProps(),
+      dragDurationMinutes: 60,
+      dragOrigin: { date: '2099-01-02', minutes: 9 * 60, duration: 60 },
+      highlightStartsByDay: new Map([['2099-01-02', ['09:00', '11:00']]]),
+      bookedByDate: new Map([['2099-01-02', {
+        occupied: [{ start: 9 * 60 + 30, end: 10 * 60 + 30 }],
+        requested: [],
+      }]]),
+    };
+
+    const wrapper = mount(CalendarSurface, {
+      props,
+      global: { stubs: { CalendarViewComponent: true } },
+    });
+    const events = wrapper.findComponent(CalendarViewComponent).props('options').events as EventInput[];
+    const free = events.filter((event) => {
+      const classes = event.classNames as string[] | undefined;
+      return classes?.includes('fc-slot-free') && !classes.includes('fc-slot-origin');
+    });
+    const origin = events.find((event) => (event.classNames as string[] | undefined)?.includes('fc-slot-origin'));
+
+    expect(free).toHaveLength(1);
+    expect(free[0]?.start).toBe('2099-01-02T11:00:00');
+    expect(origin?.start).toBe('2099-01-02T09:00:00');
+    expect(origin?.end).toBe('2099-01-02T10:00:00');
   });
 
   it('disables native select in timegrid views and keeps height at 100%', () => {

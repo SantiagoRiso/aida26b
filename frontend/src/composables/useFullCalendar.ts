@@ -83,7 +83,7 @@ export interface CalendarDecorators {
   tooltip?: (appt: Appointment) => string;
 }
 
-function apptToEvent(appt: Appointment, decorators?: CalendarDecorators): EventInput {
+function apptToEvent(appt: Appointment, decorators?: CalendarDecorators, showConflictCues = true): EventInput {
   const colors = colorForProfessional(appt.professional_user_id);
   return {
     id: String(appt.id),
@@ -98,8 +98,8 @@ function apptToEvent(appt: Appointment, decorators?: CalendarDecorators): EventI
     // active time-off (a closure or the professional's exception); ringed so it stands out for triage.
     classNames: [
       `appt-state-${appt.state}`,
-      ...(appt.override_conflict ? ['appt-sobreturno'] : []),
-      ...(appt.in_conflict ? ['appt-in-conflict'] : []),
+      ...(showConflictCues && appt.override_conflict ? ['appt-sobreturno'] : []),
+      ...(showConflictCues && appt.in_conflict ? ['appt-in-conflict'] : []),
     ],
     extendedProps: { appointment: appt },
   };
@@ -186,7 +186,7 @@ export function useAppointmentCalendar(
     eventStartEditable: false,
     eventDurationEditable: false,
 
-    events: visibleAppointments.value.map((a) => apptToEvent(a, decorators)),
+    events: visibleAppointments.value.map((a) => apptToEvent(a, decorators, viewer.value?.role !== 'Client')),
 
     select: handlers.onSelect,
     eventClick: handlers.onEventClick,
@@ -202,15 +202,17 @@ export function useAppointmentCalendar(
       if (appt) {
         info.el.setAttribute('data-testid', `appt-${appt.id}`);
         info.el.setAttribute('data-appt-state', appt.state);
-        if (appt.in_conflict) info.el.setAttribute('data-in-conflict', 'true');
+        const showConflictCues = viewer.value?.role !== 'Client';
+        if (showConflictCues && appt.in_conflict) info.el.setAttribute('data-in-conflict', 'true');
         const tip = decorators?.tooltip?.(appt);
-        const conflictTip = appt.in_conflict ? i18n.global.t('calendar.inConflictTooltip') : '';
+        const conflictTip = showConflictCues && appt.in_conflict ? i18n.global.t('calendar.inConflictTooltip') : '';
         const fullTip = [tip, conflictTip].filter(Boolean).join(' · ');
         if (fullTip) info.el.setAttribute('title', fullTip);
         if (handlers.onEventPointerDown) {
-          info.el.addEventListener('pointerdown', (ev) =>
-            handlers.onEventPointerDown!(appt, ev as PointerEvent, info.el),
-          );
+          info.el.addEventListener('pointerdown', (ev) => {
+            const current = appointments.value.find((candidate) => candidate.id === appt.id);
+            if (current) handlers.onEventPointerDown!(current, ev as PointerEvent, info.el);
+          });
         }
         return;
       }

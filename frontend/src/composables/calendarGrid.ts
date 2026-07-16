@@ -127,28 +127,18 @@ export function snapConfig(
   };
 }
 
-// Where a live drag should land. Coarse (default) snaps onto the professional's real slot starts —
-// any distance, so a block dragged from off the lattice (an existing sobreturno) is pulled back onto
-// it. Fine (sobreturno mode) rounds to the nearest 5 min, off the lattice. With no slots to snap to,
-// coarse also falls back to 5-min so the drag stays usable.
+// Where a live drag should land. Movement is always free at 5-minute precision; coarse mode only
+// magnetizes to a real slot when the pointer is close enough. This keeps the block under the pointer
+// while availability is loading and avoids jumps across large gaps in a schedule.
 export function snapDragMinutes(
   targetMinutes: number,
   validStartsMinutes: number[],
   fine: boolean,
+  thresholdMinutes = 20,
 ): number {
-  if (fine || validStartsMinutes.length === 0) {
-    return Math.round(targetMinutes / 5) * 5;
-  }
-  let best = validStartsMinutes[0];
-  let bestDist = Infinity;
-  for (const v of validStartsMinutes) {
-    const d = Math.abs(v - targetMinutes);
-    if (d < bestDist) {
-      bestDist = d;
-      best = v;
-    }
-  }
-  return best;
+  const free = Math.round(targetMinutes / 5) * 5;
+  if (fine) return free;
+  return resolveDrop(validStartsMinutes, targetMinutes, thresholdMinutes) ?? free;
 }
 
 // Same-day rule: an appointment must start and finish on the same calendar day. Midnight (24:00)

@@ -110,7 +110,7 @@ function mockListRowsPerBlock() {
   });
 }
 
-// block A is 09:00–12:00 = 180 min by default; callers pass a length that (in)divides a service
+// block A is 09:00-12:00 = 180 min by default; callers pass a length that (in)divides a service
 // duration to exercise the slot-fit warning.
 async function mountPanel(blockMinutes = 180) {
   const wrapper = mount(BlockServicesPanel, {

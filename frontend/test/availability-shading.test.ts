@@ -57,14 +57,14 @@ describe('availabilityWashEvents', () => {
   it('emits occupied/requested washes and the closed complement over the working range', () => {
     const out = availabilityWashEvents(
       '2026-07-13',
-      [{ start: 540, end: 720 }], // free 09:00–12:00
-      { occupied: [{ start: 720, end: 780 }], requested: [{ start: 480, end: 540 }] }, // 12:00–13:00, 08:00–09:00
+      [{ start: 540, end: 720 }], // free 09:00-12:00
+      { occupied: [{ start: 720, end: 780 }], requested: [{ start: 480, end: 540 }] }, // 12:00-13:00, 08:00-09:00
       0,
     );
     expect(spans(out)).toEqual([
       { start: '2026-07-13T12:00:00', end: '2026-07-13T13:00:00', cls: 'fc-slot-occupied' },
       { start: '2026-07-13T08:00:00', end: '2026-07-13T09:00:00', cls: 'fc-slot-requested-bg' },
-      // Working = free ∪ booked = 08:00–13:00; the rest of the day is the closed hatch.
+      // Working = free ∪ booked = 08:00-13:00; the rest of the day is the closed hatch.
       { start: '2026-07-13T00:00:00', end: '2026-07-13T08:00:00', cls: 'fc-res-closed' },
       { start: '2026-07-13T13:00:00', end: '2026-07-13T24:00:00', cls: 'fc-res-closed' },
     ]);
@@ -73,8 +73,8 @@ describe('availabilityWashEvents', () => {
   it('clips washes to the floor and starts the closed hatch there', () => {
     const out = availabilityWashEvents(
       '2026-07-13',
-      [{ start: 540, end: 660 }], // free 09:00–11:00
-      { occupied: [{ start: 540, end: 600 }], requested: [] }, // 09:00–10:00
+      [{ start: 540, end: 660 }], // free 09:00-11:00
+      { occupied: [{ start: 540, end: 600 }], requested: [] }, // 09:00-10:00
       570, // now = 09:30
     );
     expect(spans(out)).toEqual([
@@ -144,13 +144,13 @@ describe('slotOutlineEventsForDay', () => {
   it('tiles a block by its own slot size and drops the trailing partial', () => {
     const out = slotOutlineEventsForDay(
       monday,
-      [{ weekday: 'mon', start: 540, end: 615, slotMinutes: 30 }], // 09:00–10:15
+      [{ weekday: 'mon', start: 540, end: 615, slotMinutes: 30 }], // 09:00-10:15
       () => true,
     );
     expect(spans(out)).toEqual([
       { start: '2026-07-13T09:00:00', end: '2026-07-13T09:30:00', cls: 'fc-slot-outline' },
       { start: '2026-07-13T09:30:00', end: '2026-07-13T10:00:00', cls: 'fc-slot-outline' },
-      // 10:00–10:30 would overrun the block end (10:15) — dropped, not clipped.
+      // 10:00-10:30 would overrun the block end (10:15) — dropped, not clipped.
     ]);
   });
 
@@ -181,10 +181,10 @@ describe('slotOutlineEventsForDay', () => {
   });
 
   it('only outlines slots the bookable predicate accepts', () => {
-    const taken = [{ start: 570, end: 600 }]; // 09:30–10:00 booked
+    const taken = [{ start: 570, end: 600 }]; // 09:30-10:00 booked
     const out = slotOutlineEventsForDay(
       monday,
-      [{ weekday: 'mon', start: 540, end: 660, slotMinutes: 30 }], // 09:00–11:00
+      [{ weekday: 'mon', start: 540, end: 660, slotMinutes: 30 }], // 09:00-11:00
       (s, e) => !taken.some((k) => s < k.end && k.start < e),
     );
     expect(out.map((e) => e.start)).toEqual([

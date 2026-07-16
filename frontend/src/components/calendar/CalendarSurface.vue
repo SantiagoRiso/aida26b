@@ -31,13 +31,14 @@ const props = defineProps<{
   professionalFreeByDay: Map<string, MinuteInterval[]>;
   bookedByDate: Map<string, BookedDay>;
   highlightStartsByDay: Map<string, string[]>;
-  dragTarget: { date: string; minutes: number } | null;
+  dragOrigin: { date: string; minutes: number; duration: number } | null;
   dragDurationMinutes: number;
   slotMinutes: number | null;
   slotStartsMinutes: number[] | null;
   exceptionBgEvents: EventInput[];
   hoverEvents: EventInput[];
   hoverPreviewEvents: EventInput[];
+  dragLayoutPreviewEvents: EventInput[];
   cellElapsed: (date: string, endMin: number) => boolean;
   slotBookableByAvailability: (date: string, startMin: number, endMin: number) => boolean;
 }>();
@@ -70,11 +71,16 @@ const slotOutlineEvents = computed<EventInput[]>(() => {
 // professional's slot size (falling back to the appointment length in the mixed view). Empty
 // except while dragging.
 const backgroundEvents = computed<EventInput[]>(() => {
-  const boxMinutes = props.slotMinutes ?? props.dragDurationMinutes;
+  const boxMinutes = props.dragDurationMinutes;
   const out: EventInput[] = [];
   for (const [date, starts] of props.highlightStartsByDay) {
     for (const start of starts) {
-      const endMin = toMinutes(start) + boxMinutes;
+      const startMin = toMinutes(start);
+      const endMin = startMin + boxMinutes;
+      const booked = props.bookedByDate.get(date);
+      const overlapsBooking = [...(booked?.occupied ?? []), ...(booked?.requested ?? [])]
+        .some((interval) => startMin < interval.end && interval.start < endMin);
+      if (overlapsBooking) continue;
       out.push({
         start: `${date}T${start}:00`,
         end: `${date}T${toHHMM(endMin)}:00`,
@@ -86,15 +92,16 @@ const backgroundEvents = computed<EventInput[]>(() => {
   return out;
 });
 
-// The slot the drag is currently over, highlighted brighter than the open-slot boxes.
-const targetEvents = computed<EventInput[]>(() => {
-  if (!props.dragTarget) return [];
-  const { date, minutes } = props.dragTarget;
+// The dragged appointment's old position is always a safe no-op destination, even if it is now
+// elapsed or otherwise invalid. Keep it visually separate from actual save targets.
+const originEvent = computed<EventInput[]>(() => {
+  if (!props.dragOrigin) return [];
+  const { date, minutes, duration } = props.dragOrigin;
   return [{
     start: `${date}T${toHHMM(minutes)}:00`,
-    end: `${date}T${toHHMM(minutes + props.dragDurationMinutes)}:00`,
+    end: `${date}T${toHHMM(minutes + duration)}:00`,
     display: 'background',
-    classNames: ['fc-slot-target'],
+    classNames: ['fc-slot-free', 'fc-slot-origin'],
   }];
 });
 
@@ -181,7 +188,7 @@ const pastBgEvents = computed<EventInput[]>(() => {
   return out;
 });
 
-// Business closures as background bands — full-day (00:00–24:00) or the partial [start, end) window.
+// Business closures as background bands — full-day (00:00-24:00) or the partial [start, end) window.
 // Rendered on every view/filter (feriados close the whole business); appointments stay on top as
 // foreground events. Distinct class from the per-owner exception overlay so a clinic holiday reads
 // apart from one professional's day off.
@@ -224,8 +231,9 @@ const fullOptions = computed<CalendarOptions>(() => {
       ...closureBgEvents.value,
       ...props.hoverEvents,
       ...props.hoverPreviewEvents,
+      ...props.dragLayoutPreviewEvents,
       ...backgroundEvents.value,
-      ...targetEvents.value,
+      ...originEvent.value,
     ],
     views: {
       ...baseViews,
@@ -254,6 +262,7 @@ const fullOptions = computed<CalendarOptions>(() => {
 // timegrid DOM (columns, slot lanes) through it to map pointer position to calendar time.
 const calendar = ref<InstanceType<typeof CalendarViewComponent> | null>(null);
 defineExpose({
+  getApi: () => calendar.value?.getApi(),
   getRootEl: (): HTMLElement | null => calendar.value?.getRootEl() ?? null,
 });
 </script>

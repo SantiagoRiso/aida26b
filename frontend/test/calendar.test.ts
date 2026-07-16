@@ -256,6 +256,48 @@ describe('useAppointmentCalendar hides non-events', () => {
     const { timeBounds } = useAppointmentCalendar(appointments, viewer, handlers);
     expect(timeBounds.value.min).toBe('07:00:00');
   });
+
+  it('resolves the latest appointment when FullCalendar reuses an event element', () => {
+    const original = appt(1, 'scheduled', '2026-07-20T13:50:00', '2026-07-20T14:40:00');
+    const appointments = ref<Appointment[]>([original]);
+    const onEventPointerDown = vi.fn();
+    const { calendarOptions } = useAppointmentCalendar(appointments, viewer, {
+      ...handlers,
+      onEventPointerDown,
+    });
+    const element = document.createElement('div');
+    const eventDidMount = calendarOptions.value.eventDidMount as (info: unknown) => void;
+    eventDidMount({
+      el: element,
+      event: { extendedProps: { appointment: original } },
+    });
+
+    appointments.value = [{ ...original, starts_at: '2026-07-20T14:40:00', ends_at: '2026-07-20T15:30:00' }];
+    appointments.value = [{ ...appointments.value[0]!, starts_at: '2026-07-20T15:30:00', ends_at: '2026-07-20T16:20:00' }];
+    element.dispatchEvent(new Event('pointerdown'));
+
+    expect(onEventPointerDown).toHaveBeenCalledWith(
+      expect.objectContaining({ starts_at: '2026-07-20T15:30:00' }),
+      expect.any(Event),
+      element,
+    );
+  });
+
+  it('does not expose staff conflict cues to clients', () => {
+    const conflicted = { ...appt(1, 'scheduled'), override_conflict: true, in_conflict: true };
+    const appointments = ref<Appointment[]>([conflicted]);
+    const clientViewer = ref<AuthUser | null>({ id: 8, role: 'Client', business_id: 1 } as AuthUser);
+    const { calendarOptions } = useAppointmentCalendar(appointments, clientViewer, handlers);
+    const event = (calendarOptions.value.events as { classNames?: string[] }[])[0]!;
+    expect(event.classNames).not.toContain('appt-sobreturno');
+    expect(event.classNames).not.toContain('appt-in-conflict');
+
+    const element = document.createElement('div');
+    const eventDidMount = calendarOptions.value.eventDidMount as (info: unknown) => void;
+    eventDidMount({ el: element, event: { extendedProps: { appointment: conflicted } } });
+    expect(element.hasAttribute('data-in-conflict')).toBe(false);
+    expect(element.getAttribute('title') ?? '').not.toContain('conflict');
+  });
 });
 
 describe('useConflictVerdict.describe', () => {

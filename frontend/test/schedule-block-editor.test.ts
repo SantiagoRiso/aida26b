@@ -184,7 +184,7 @@ describe('ScheduleBlockEditor', () => {
     (wrapper.vm as any).calendarOptions.eventClick({ event: { id: '1' } });
     await flushPromises();
 
-    // Per-minute textbox edit (09:05–11:35) within block '1''s own span → no overlap with itself.
+    // Per-minute textbox edit (09:05-11:35) within block '1''s own span → no overlap with itself.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ok = await (wrapper.vm as any).saveTimes({ startTime: '09:05', endTime: '11:35' });
     await flushPromises();

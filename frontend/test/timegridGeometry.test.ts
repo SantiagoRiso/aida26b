@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { minutesAtClientY, clientYForMinutes } from '@/composables/useTimegridGeometry';
+import { describe, it, expect, vi } from 'vitest';
+import { minutesAtClientY, clientYForMinutes, useTimegridGeometry } from '@/composables/useTimegridGeometry';
 
 // Reference lane: 09:00 (540 min) at client-y 100px, with 2px per minute (a 30-min row = 60px).
 const LANE_TOP = 100;
@@ -30,5 +30,40 @@ describe('clientYForMinutes', () => {
     const y = 233;
     const min = minutesAtClientY(y, LANE_TOP, LANE_MIN, PX_PER_MIN);
     expect(clientYForMinutes(min, LANE_TOP, LANE_MIN, PX_PER_MIN)).toBeCloseTo(y);
+  });
+});
+
+describe('interaction geometry', () => {
+  it('reuses one layout snapshot until the interaction ends', () => {
+    const root = document.createElement('div');
+    const lane = (time: string, top: number) => {
+      const el = document.createElement('div');
+      el.className = 'fc-timegrid-slot-lane';
+      el.dataset.time = time;
+      el.getBoundingClientRect = vi.fn(() => ({ top, left: 0, width: 0, height: 30 } as DOMRect));
+      root.appendChild(el);
+      return el;
+    };
+    const firstLane = lane('09:00:00', 100);
+    const secondLane = lane('09:30:00', 160);
+    const column = document.createElement('div');
+    column.className = 'fc-timegrid-col';
+    column.dataset.date = '2026-07-14';
+    column.getBoundingClientRect = vi.fn(() => ({ top: 0, left: 50, width: 100, height: 0 } as DOMRect));
+    root.appendChild(column);
+
+    const geometry = useTimegridGeometry(() => root);
+    geometry.beginInteraction?.();
+    geometry.minutesAt(130);
+    geometry.yForMinutes(570);
+    geometry.columnAt(75);
+
+    expect(firstLane.getBoundingClientRect).toHaveBeenCalledTimes(1);
+    expect(secondLane.getBoundingClientRect).toHaveBeenCalledTimes(1);
+    expect(column.getBoundingClientRect).toHaveBeenCalledTimes(1);
+
+    geometry.endInteraction?.();
+    geometry.minutesAt(130);
+    expect(firstLane.getBoundingClientRect).toHaveBeenCalledTimes(2);
   });
 });

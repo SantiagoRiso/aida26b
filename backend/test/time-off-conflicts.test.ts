@@ -119,7 +119,7 @@ beforeAll(async () => {
   );
   serviceId = Number(svc.rows[0].id);
 
-  // Future open turnos on the same date: pro1 and pro2 at 10:00–11:00 local.
+  // Future open turnos on the same date: pro1 and pro2 at 10:00-11:00 local.
   futurePro1Id = await insertAppt(pro1, `${FUTURE_DATE} 10:00:00-03`, 60, 'scheduled');
   await insertAppt(pro2, `${FUTURE_DATE} 10:00:00-03`, 60, 'scheduled');
   // Past turno (must never count / flag) and a terminal one (not open).
@@ -160,9 +160,9 @@ describe('time-off conflict preview', () => {
   });
 
   test('partial time-off overlaps by wall-clock; end-exclusive at the boundary', async () => {
-    // 10:30–11:30 overlaps the 10:00–11:00 turno.
+    // 10:30-11:30 overlaps the 10:00-11:00 turno.
     expect(await preview({ date: FUTURE_DATE, professional_user_id: pro1, start: '10:30', end: '11:30' })).toBe(1);
-    // 11:00–12:00 starts exactly at the turno's end → no overlap.
+    // 11:00-12:00 starts exactly at the turno's end → no overlap.
     expect(await preview({ date: FUTURE_DATE, professional_user_id: pro1, start: '11:00', end: '12:00' })).toBe(0);
   });
 

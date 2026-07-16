@@ -8,7 +8,7 @@ import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { countAppointmentsHitByTimeOff } from '../db/scheduling';
 import { assertOwnScheduleAllowed } from './crud-policy';
-import { BUSINESS_TZ, DATE_RE } from '../time';
+import { BUSINESS_TZ, DATE_RE, addDaysISO } from '../time';
 import {
   loadOwnerState,
   resolveBookingWindow,
@@ -75,11 +75,23 @@ export function mountSchedulingRoutes(
 
     const ownerToken = typeof req.query.owner === 'string' ? req.query.owner : '';
     const date = typeof req.query.date === 'string' ? req.query.date : '';
+    const dateFrom = typeof req.query.date_from === 'string' ? req.query.date_from : '';
+    const dateTo = typeof req.query.date_to === 'string' ? req.query.date_to : '';
+    const rangeRequested = dateFrom !== '' || dateTo !== '';
 
     const fields: Record<string, string> = {};
     const owner = /^(prof|res):(\d+)$/.exec(ownerToken);
     if (!owner) fields.owner = 'must be prof:<id> or res:<id>';
-    if (!DATE_RE.test(date)) fields.date = 'must be YYYY-MM-DD';
+    if (rangeRequested) {
+      if (date !== '') fields.date = 'cannot be combined with date_from/date_to';
+      if (!DATE_RE.test(dateFrom)) fields.date_from = 'must be YYYY-MM-DD';
+      if (!DATE_RE.test(dateTo)) fields.date_to = 'must be YYYY-MM-DD';
+      if (DATE_RE.test(dateFrom) && DATE_RE.test(dateTo) && dateTo <= dateFrom) {
+        fields.date_to = 'must be after date_from';
+      }
+    } else if (!DATE_RE.test(date)) {
+      fields.date = 'must be YYYY-MM-DD';
+    }
     if (Object.keys(fields).length > 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid availability query', fields);
     }
@@ -91,6 +103,35 @@ export function mountSchedulingRoutes(
     // working windows are returned for the staff calendar's service-agnostic shading and snap grid.
     const excludeRaw = typeof req.query.exclude === 'string' ? Number(req.query.exclude) : NaN;
     const exclude = Number.isInteger(excludeRaw) && excludeRaw > 0 ? excludeRaw : undefined;
+
+    if (rangeRequested) {
+      if (user.role === 'Client') {
+        return sendError(res, 403, 'forbidden', 'Availability ranges are staff-only');
+      }
+      const dates: string[] = [];
+      for (let current = dateFrom; current < dateTo && dates.length <= 42; current = addDaysISO(current, 1)) {
+        dates.push(current);
+      }
+      if (dates.length > 42) {
+        return sendError(res, 422, 'invalid_request', 'Availability range may not exceed 42 days');
+      }
+      const states = await Promise.all(dates.map((day) => loadOwnerState(
+        pool,
+        businessId,
+        { kind, id: Number(owner![2]) },
+        day,
+        { excludeAppointmentId: exclude },
+      )));
+      if (states.some((state) => state == null)) {
+        return sendError(res, 404, 'not_found', 'Owner not found in this business');
+      }
+      return sendData(res, states.map((state, index) => ({
+        date: dates[index],
+        slots: state!.freeSlots,
+        open: state!.gridSlots.length > 0,
+      })));
+    }
+
     const state = await loadOwnerState(pool, businessId, { kind, id: Number(owner![2]) }, date, {
       serviceId,
       excludeAppointmentId: exclude,

@@ -118,6 +118,11 @@ defineExpose({
   box-shadow: none !important;
 }
 
+:deep(.fc-drag-layout-preview) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 /* Valid drop target while dragging: a distinct dotted, rounded box per open slot. */
 :deep(.fc-slot-free) {
   background: rgba(16, 185, 129, 0.12) !important;
@@ -134,6 +139,15 @@ defineExpose({
   border-radius: 8px;
   margin: 1.5px 3px;
   opacity: 1 !important;
+}
+
+:deep(.fc-drag-target-overlay) {
+  box-sizing: border-box;
+}
+
+:deep(.fc-drag-target-invalid) {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border-color: rgb(220, 38, 38) !important;
 }
 
 /* Resource availability overlay (filtering by a resource): free windows tinted green,

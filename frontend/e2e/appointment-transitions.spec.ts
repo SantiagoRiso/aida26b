@@ -34,7 +34,7 @@ const PAST = isoDaysFromNow(-6);
 const FUTURE = isoDaysFromNow(21);
 // The client request endpoint cannot override conflicts, so the reject fixture needs a genuinely
 // free, slot-aligned slot on Lisa's working day. shiftSeedDate keeps the authored Tuesday 08:00
-// (she works Mon–Thu) aligned with the seed's shift, landing past the dense-fill window and inside
+// (she works Mon-Thu) aligned with the seed's shift, landing past the dense-fill window and inside
 // the 60-day booking window.
 const REQUEST_DATE = shiftSeedDate('2026-08-25');
 

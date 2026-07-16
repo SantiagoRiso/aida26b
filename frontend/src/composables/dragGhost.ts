@@ -32,13 +32,17 @@ export function createDragGhost(source: HTMLElement, rect: DOMRect, parent: HTML
   parent.appendChild(ghost);
   const prevOpacity = source.style.opacity;
   source.style.opacity = '0';
+  let lastHeight = rect.height;
 
   return {
     move({ top, left, width, height }) {
       ghost.style.top = `${top}px`;
       ghost.style.left = `${left}px`;
       ghost.style.width = `${width}px`;
-      ghost.style.height = `${height}px`;
+      if (height !== lastHeight) {
+        ghost.style.height = `${height}px`;
+        lastHeight = height;
+      }
     },
     setLabel(text) {
       const label = ghost.querySelector('.fc-event-time, .fc-ev-time');

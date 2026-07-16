@@ -32,7 +32,7 @@ test.describe('Client request → staff approve', () => {
     await page.getByRole('button', { name: es.portal.next }).click();
 
     // A Monday past the dense-seed window (seed fills ~45 days from 2026-07-06, i.e. through
-    // ~2026-08-19) so the first offered slot is genuinely free; demo_pro works Mon–Fri.
+    // ~2026-08-19) so the first offered slot is genuinely free; demo_pro works Mon-Fri.
     let date = shiftSeedDate('2026-08-24');
     await expect(page.locator('input[placeholder="dd/mm/aaaa"]')).toBeVisible();
     await fillDate(page, date);

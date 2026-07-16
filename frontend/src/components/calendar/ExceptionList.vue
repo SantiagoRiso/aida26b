@@ -62,7 +62,7 @@ async function confirmDelete() {
           <span class="font-medium">
             {{ formatDate(row.exception_date) }} · {{ t(`exception.kind.${classifyException(row)}`) }}
             <template v-if="row.start_time && row.end_time">
-              · {{ row.start_time }}–{{ row.end_time }}
+              · {{ row.start_time }}-{{ row.end_time }}
             </template>
           </span>
           <span v-if="row.reason" class="text-xs text-neutral">{{ row.reason }}</span>

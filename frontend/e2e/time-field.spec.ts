@@ -30,7 +30,7 @@ test.describe('TimeField — 24h masked time input', () => {
     await desde.pressSequentially('30');
     await expect(desde).toHaveValue('09:30');
 
-    // A leading 3–9 can't grow into a valid hour, so the colon lands immediately.
+    // A leading 3-9 can't grow into a valid hour, so the colon lands immediately.
     await retype(desde, '9');
     await expect(desde).toHaveValue('9:');
 

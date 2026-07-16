@@ -53,7 +53,7 @@ function parse(s: string): { h: number; m: number } {
 }
 
 // Greedily split a bare digit run into hour/minute, marking each field "done" as soon as no further
-// digit can extend it: a lead 3–9 is a single-digit hour, and a minute lead 6–9 is a single minute.
+// digit can extend it: a lead 3-9 is a single-digit hour, and a minute lead 6-9 is a single minute.
 function smartSplit(d: string): { h: string; m: string; hourDone: boolean; minDone: boolean } {
   if (!d) return { h: '', m: '', hourDone: false, minDone: false };
   let h: string;

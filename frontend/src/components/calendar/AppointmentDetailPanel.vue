@@ -209,7 +209,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
         <dd>{{ formatDate(appointment.starts_at) }}</dd>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.timeLabel') }}</dt>
-        <dd>{{ formatTime(appointment.starts_at) }} – {{ formatTime(appointment.ends_at) }}</dd>
+        <dd>{{ formatTime(appointment.starts_at) }} - {{ formatTime(appointment.ends_at) }}</dd>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.durationLabel') }}</dt>
         <dd>{{ appointment.duration_minutes }} min</dd>

@@ -107,7 +107,7 @@ beforeAll(async () => {
     [proId, block.rows[0].id, serviceId]
   );
 
-  // A scheduled appointment 10:00–10:15 local (UTC-3). ends_at is set by the DB trigger.
+  // A scheduled appointment 10:00-10:15 local (UTC-3). ends_at is set by the DB trigger.
   await pool.query(
     `INSERT INTO appointments (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price)
      VALUES ($1, $2, $3, '2026-06-29 10:00:00-03', 15, 'scheduled', 1000.00)`,
@@ -215,8 +215,8 @@ describe('GET /api/availability', () => {
 
   test('a professional with no service returns raw working windows minus booked (staff shading)', async () => {
     currentUser = staffUser();
-    // No `service` param: the endpoint must not 422; it returns the 09:00–12:00 block as contiguous
-    // free windows split around the booked 10:00–10:15, not service-sized 15-min slots.
+    // No `service` param: the endpoint must not 422; it returns the 09:00-12:00 block as contiguous
+    // free windows split around the booked 10:00-10:15, not service-sized 15-min slots.
     const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
     expect(res.status).toBe(200);
     expect(res.body.data.open).toBe(true);

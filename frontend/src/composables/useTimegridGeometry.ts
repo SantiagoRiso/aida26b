@@ -36,6 +36,8 @@ export interface DayColumn {
 }
 
 export interface TimegridGeometry {
+  beginInteraction?: () => void;
+  endInteraction?: () => void;
   ready: () => boolean;
   minutesAt: (clientY: number) => number | null;
   yForMinutes: (minutes: number) => number | null;
@@ -75,7 +77,13 @@ function readColumns(root: ParentNode): DayColumn[] {
 // `getRoot` returns the calendar's rendered root element (or null before mount). All reads happen at
 // call time so the mapping tracks layout and scroll changes during a drag.
 export function useTimegridGeometry(getRoot: () => ParentNode | null): TimegridGeometry {
+  let interactionSnapshot: {
+    reference: { lane: Lane; pxPerMinute: number };
+    columns: DayColumn[];
+  } | null = null;
+
   function reference(): { lane: Lane; pxPerMinute: number } | null {
+    if (interactionSnapshot) return interactionSnapshot.reference;
     const root = getRoot();
     if (!root) return null;
     const lanes = readLanes(root);
@@ -96,6 +104,12 @@ export function useTimegridGeometry(getRoot: () => ParentNode | null): TimegridG
   }
 
   return {
+    beginInteraction: () => {
+      const root = getRoot();
+      const ref = reference();
+      if (root && ref) interactionSnapshot = { reference: ref, columns: readColumns(root) };
+    },
+    endInteraction: () => { interactionSnapshot = null; },
     ready: () => reference() !== null,
     pxPerMinute: () => reference()?.pxPerMinute ?? null,
     minutesAt: (clientY) => {
@@ -107,12 +121,16 @@ export function useTimegridGeometry(getRoot: () => ParentNode | null): TimegridG
       return ref ? clientYForMinutes(minutes, ref.lane.top, ref.lane.minutes, ref.pxPerMinute) : null;
     },
     columnAt: (clientX) => {
+      if (interactionSnapshot) {
+        return interactionSnapshot.columns.find((c) => clientX >= c.left && clientX < c.left + c.width) ?? null;
+      }
       const root = getRoot();
       if (!root) return null;
       const cols = readColumns(root);
       return cols.find((c) => clientX >= c.left && clientX < c.left + c.width) ?? null;
     },
     columns: () => {
+      if (interactionSnapshot) return interactionSnapshot.columns;
       const root = getRoot();
       return root ? readColumns(root) : [];
     },

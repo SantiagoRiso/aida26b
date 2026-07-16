@@ -209,9 +209,10 @@ const dayCalendarOptions = computed(() => ({
   // The single day column's header carries the request's weekday + date (e.g. "miércoles 15/07"),
   // so it doesn't need to sit in the panel title.
   dayHeaderContent: () => dayHeading.value,
-  // Fill the calendar column instead of a short fixed block (parent gives it the height).
-  height: '100%' as const,
-  expandRows: true,
+  // Let the modal own vertical scrolling. A fixed calendar height makes FullCalendar add a second,
+  // nested scroller for the time grid.
+  height: 'auto' as const,
+  expandRows: false,
   selectable: false,
   editable: false,
   eventClassNames: (arg: EventContentArg) =>
@@ -410,17 +411,17 @@ async function confirmReject() {
         </template>
           </div>
 
-          <div class="flex min-h-0 flex-col gap-2 lg:h-[72vh]">
+          <div class="flex flex-col gap-2">
             <h3 class="text-sm font-semibold text-neutral">
               {{ t('requests.daySchedule') }}
             </h3>
-            <div class="min-h-[420px] flex-1 overflow-hidden rounded-lg border border-border">
+            <div class="rounded-lg border border-border">
               <CalendarView :key="detailAppt.id" :options="dayCalendarOptions" />
             </div>
           </div>
         </div>
 
-        <div class="flex gap-2 border-t border-border pt-4">
+        <div class="sticky -bottom-6 z-10 -mx-6 -mb-6 flex gap-2 border-t border-border bg-card px-6 py-4">
           <AppButton variant="primary" :loading="acting" class="flex-1" @click="approve(detailAppt)">
             {{ t('calendar.approve') }}
           </AppButton>
@@ -451,11 +452,6 @@ async function confirmReject() {
 </template>
 
 <style scoped>
-/* Let the embedded day calendar fill its (definite-height) column so it uses the modal height. */
-:deep(.fc-wrapper) {
-  height: 100%;
-}
-
 /* The request under review: a thick accent border on the event's own box (border-box, so it
    stays INSIDE the block and never bleeds onto the abutting blocks above/below), full opacity,
    and a gentle colour pulse for attention. */

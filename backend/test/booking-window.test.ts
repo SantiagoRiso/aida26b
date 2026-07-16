@@ -91,7 +91,7 @@ beforeAll(async () => {
   );
   serviceId = Number(svc.rows[0].id);
 
-  // Works every weekday 09:00–12:00, so any future date is a working day.
+  // Works every weekday 09:00-12:00, so any future date is a working day.
   for (const weekday of ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']) {
     const block = await pool.query<{ id: string }>(
       `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)

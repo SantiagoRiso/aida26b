@@ -88,3 +88,14 @@ export async function getAvailability(
   if (exclude !== undefined) params.set('exclude', String(exclude));
   return apiFetch<AvailabilityResult>(`${schedulingPaths.availability()}?${params.toString()}`);
 }
+
+export async function getAvailabilityRange(
+  owner: string,
+  dateFrom: string,
+  dateTo: string,
+  exclude?: Id,
+): Promise<ApiResult<AvailabilityResult[]>> {
+  const params = new URLSearchParams({ owner, date_from: dateFrom, date_to: dateTo });
+  if (exclude !== undefined) params.set('exclude', String(exclude));
+  return apiFetch<AvailabilityResult[]>(`${schedulingPaths.availability()}?${params.toString()}`);
+}

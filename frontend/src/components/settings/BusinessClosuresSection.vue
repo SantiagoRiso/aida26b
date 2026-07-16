@@ -130,7 +130,7 @@ async function confirmDelete() {
 
 function rangeLabel(c: BusinessClosure): string {
   return c.start_time && c.end_time
-    ? `${c.start_time}–${c.end_time}`
+    ? `${c.start_time}-${c.end_time}`
     : t('closures.allDay');
 }
 </script>

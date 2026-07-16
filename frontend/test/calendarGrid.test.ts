@@ -7,7 +7,7 @@ import { mergeIntervals } from '@shared/ssot/domain/availability';
 
 describe('complementIntervals', () => {
   it('returns the gaps around a single free window within [min,max]', () => {
-    // Free 09:00–12:00 within a 08:00–18:00 range → blocked 08:00–09:00 and 12:00–18:00.
+    // Free 09:00-12:00 within a 08:00-18:00 range → blocked 08:00-09:00 and 12:00-18:00.
     expect(complementIntervals([{ start: 540, end: 720 }], 480, 1080)).toEqual([
       { start: 480, end: 540 },
       { start: 720, end: 1080 },
@@ -23,14 +23,14 @@ describe('complementIntervals', () => {
   });
 
   it('merges adjacent free windows and yields only the true gaps', () => {
-    // 09:00–10:00 and 10:00–11:00 are contiguous → one gap after 11:00.
+    // 09:00-10:00 and 10:00-11:00 are contiguous → one gap after 11:00.
     expect(complementIntervals([{ start: 540, end: 600 }, { start: 600, end: 660 }], 540, 720)).toEqual([
       { start: 660, end: 720 },
     ]);
   });
 
   it('clips free windows that extend beyond the visible range', () => {
-    // Free 06:00–20:00 but range only 07:00–19:00 → no blocked time in view.
+    // Free 06:00-20:00 but range only 07:00-19:00 → no blocked time in view.
     expect(complementIntervals([{ start: 360, end: 1200 }], 420, 1140)).toEqual([]);
   });
 });
@@ -130,14 +130,13 @@ describe('resolveDrop', () => {
 describe('snapDragMinutes', () => {
   const valid = [540, 590, 640]; // 09:00, 09:50, 10:40 (50-min lattice)
 
-  it('coarse snaps to the nearest valid slot, any distance', () => {
-    expect(snapDragMinutes(560, valid, false)).toBe(540);
-    expect(snapDragMinutes(620, valid, false)).toBe(640);
+  it('coarse magnetizes to a nearby valid slot', () => {
+    expect(snapDragMinutes(552, valid, false)).toBe(540);
+    expect(snapDragMinutes(628, valid, false)).toBe(640);
   });
 
-  it('coarse pulls a far-off (sobreturno) position back onto the lattice', () => {
-    // Dragging a block that started at 09:15 (555) — nearest real slot is 09:00.
-    expect(snapDragMinutes(555, valid, false)).toBe(540);
+  it('coarse remains free when no valid slot is nearby', () => {
+    expect(snapDragMinutes(675, valid, false)).toBe(675);
   });
 
   it('fine rounds to the nearest 5 min, off the lattice', () => {

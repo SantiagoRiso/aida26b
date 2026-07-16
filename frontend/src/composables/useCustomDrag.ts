@@ -24,12 +24,14 @@ export interface CustomDragDeps {
   // Whether availability for this drag has finished loading. Until then, an empty validStartsFor means
   // "not loaded yet" rather than "no free slot", so the coarse no-free-slot freeze must wait for this.
   ready: () => boolean;
+  // Past targets remain visible under the pointer but can never be committed.
+  targetElapsed: (date: string, startMinutes: number, durationMinutes: number) => boolean;
   // A real drag started (threshold crossed) — the view loads slots and shows highlights.
   onBegin: (appt: Appointment) => void;
   // Drag ended (commit or abort) — the view clears highlights and the live target.
   onEnd: () => void;
   // Live snapped target changed, for a highlight box. Null date when the pointer is off the grid.
-  onTarget: (date: string | null, minutes: number | null) => void;
+  onTarget: (date: string | null, minutes: number | null, elapsed?: boolean, magnetized?: boolean) => void;
   // Commit the move — the view confirms and persists.
   onCommit: (appt: Appointment, target: { date: string; start: string }) => void;
 }
@@ -48,7 +50,13 @@ interface Session {
   lastDate: string;
   lastStart: number; // snapped minutes-of-day
   validTarget: boolean; // whether the current position is a droppable spot (false = over a booked/off day in coarse mode)
+  cancelTarget: boolean;
+  elapsedTarget: boolean;
+  originalDate: string;
+  originalStart: number;
 }
+
+const MAGNET_THRESHOLD_MINUTES = 20;
 
 function hhmm(minutes: number): string {
   const clamped = Math.max(0, minutes);
@@ -60,11 +68,29 @@ export function useCustomDrag(deps: CustomDragDeps): {
   start: (appt: Appointment, ev: PointerEvent, el: HTMLElement) => void;
 } {
   let session: Session | null = null;
+  let moveFrame: number | null = null;
+  let pendingMove: PointerEvent | null = null;
+
+  function flushMove() {
+    moveFrame = null;
+    const ev = pendingMove;
+    pendingMove = null;
+    if (ev) position(ev);
+  }
+
+  function scheduleMove(ev: PointerEvent) {
+    pendingMove = ev;
+    if (moveFrame == null) moveFrame = requestAnimationFrame(flushMove);
+  }
 
   function cleanup() {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('keydown', onKey);
+    if (moveFrame != null) cancelAnimationFrame(moveFrame);
+    moveFrame = null;
+    pendingMove = null;
+    deps.geometry.endInteraction?.();
     session?.ghost?.destroy();
     session = null;
   }
@@ -77,6 +103,7 @@ export function useCustomDrag(deps: CustomDragDeps): {
     session.lastWidth = rect.width;
     session.dragging = true;
     session.ghost = createDragGhost(session.el, rect, deps.ghostParent?.() ?? document.body);
+    deps.geometry.beginInteraction?.();
     deps.onBegin(session.appt);
     ev.preventDefault();
   }
@@ -90,32 +117,32 @@ export function useCustomDrag(deps: CustomDragDeps): {
     if (topMin === null) return;
 
     const validStarts = deps.validStartsFor(date);
-    // Coarse (non-sobreturno) drag only lands on real free slots. Once availability has loaded, a day
-    // with none (fully booked / day off) is not a valid drop — freeze the ghost and mark the target
-    // invalid instead of free-floating there. Free placement is the sobreturno (fine) privilege alone.
-    // While availability is still loading, every day looks empty, so don't freeze yet — let the ghost
-    // follow (the final move is still gated on commit).
-    if (!deps.fine.value && deps.ready() && validStarts.length === 0) {
-      session.validTarget = false;
-      deps.onTarget(null, null);
-      return;
-    }
-    session.validTarget = true;
-
-    const snapped = snapDragMinutes(topMin, validStarts, deps.fine.value);
+    const wasValid = session.validTarget;
+    const cancelTarget = date === session.originalDate && Math.abs(topMin - session.originalStart) <= MAGNET_THRESHOLD_MINUTES;
+    const snapped = cancelTarget
+      ? session.originalStart
+      : snapDragMinutes(topMin, validStarts, deps.fine.value, MAGNET_THRESHOLD_MINUTES);
+    const magnetized = validStarts.includes(snapped);
+    const elapsed = deps.targetElapsed(date, snapped, session.appt.duration_minutes);
+    session.cancelTarget = cancelTarget;
+    session.elapsedTarget = elapsed;
+    session.validTarget = cancelTarget || (!elapsed && (deps.fine.value || (deps.ready() && magnetized)));
     const y = geometry.yForMinutes(snapped);
     if (y === null) return;
 
-    if (col) {
-      session.lastLeft = col.left + 2;
-      session.lastWidth = col.width - 4;
+    const left = col ? col.left + 2 : session.lastLeft;
+    const width = col ? col.width - 4 : session.lastWidth;
+    if (wasValid && date === session.lastDate && snapped === session.lastStart && left === session.lastLeft && width === session.lastWidth) {
+      return;
     }
-    session.ghost.move({ top: y, left: session.lastLeft, width: session.lastWidth, height: session.heightPx });
-    session.ghost.setLabel(hhmm(snapped));
+    session.lastLeft = left;
+    session.lastWidth = width;
+    session.ghost?.move({ top: y, left, width, height: session.heightPx });
+    session.ghost?.setLabel(hhmm(snapped));
 
     session.lastDate = date;
     session.lastStart = snapped;
-    deps.onTarget(date, snapped);
+    deps.onTarget(!cancelTarget ? date : null, !cancelTarget ? snapped : null, elapsed, magnetized);
   }
 
   function onMove(ev: PointerEvent) {
@@ -127,19 +154,23 @@ export function useCustomDrag(deps: CustomDragDeps): {
     } else {
       ev.preventDefault();
     }
-    position(ev);
+    scheduleMove(ev);
   }
 
   function onUp() {
     if (!session) return;
-    const { appt, dragging, lastDate, lastStart, validTarget } = session;
+    if (pendingMove) {
+      if (moveFrame != null) cancelAnimationFrame(moveFrame);
+      flushMove();
+    }
+    const { appt, dragging, lastDate, lastStart, cancelTarget, elapsedTarget } = session;
     const wasDrag = dragging;
     cleanup();
     if (wasDrag) {
       deps.onEnd();
-      // Released over a booked/off day in coarse mode → no valid slot, so revert (the destroyed ghost
-      // restores the event to its original spot). Only a valid target commits the move.
-      if (validTarget) deps.onCommit(appt, { date: lastDate, start: hhmm(lastStart) });
+      // Invalid free positions restore the original event. Returning to the original position is an
+      // explicit cancel target even when that appointment's old slot is no longer valid.
+      if (!cancelTarget && !elapsedTarget) deps.onCommit(appt, { date: lastDate, start: hhmm(lastStart) });
     }
   }
 
@@ -153,6 +184,8 @@ export function useCustomDrag(deps: CustomDragDeps): {
   function start(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
     if (ev.button !== 0) return;
     const startDate = new Date(appt.starts_at);
+    const originalDate = isoDate(startDate);
+    const originalStart = startDate.getHours() * 60 + startDate.getMinutes();
     session = {
       appt,
       el,
@@ -164,9 +197,13 @@ export function useCustomDrag(deps: CustomDragDeps): {
       ghost: null,
       lastLeft: 0,
       lastWidth: 0,
-      lastDate: isoDate(startDate),
-      lastStart: startDate.getHours() * 60 + startDate.getMinutes(),
+      lastDate: originalDate,
+      lastStart: originalStart,
       validTarget: true,
+      cancelTarget: true,
+      elapsedTarget: deps.targetElapsed(originalDate, originalStart, appt.duration_minutes),
+      originalDate,
+      originalStart,
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);

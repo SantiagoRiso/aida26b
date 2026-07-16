@@ -46,7 +46,7 @@ function handleCancel() {
 
 <template>
   <TransitionRoot :show="open" as="template">
-    <Dialog class="relative z-50" @close="handleCancel">
+    <Dialog class="relative z-50" data-confirm-dialog="true" @close="handleCancel">
       <TransitionChild
         as="template"
         enter="ease-out duration-200"
@@ -91,6 +91,9 @@ function handleCancel() {
 
               <p v-if="!description.canOverride" class="text-sm text-neutral italic">
                 {{ t('conflicts.cannotOverride') }}
+              </p>
+              <p v-else class="text-sm font-medium text-warning-700">
+                {{ t('calendar.conflictOverrideSobreturno') }}
               </p>
             </div>
 
