@@ -68,7 +68,7 @@ if (reuse) {
   console.log(`\n$ node ${serverEntry}  (PORT=${PORT}, cwd=backend)`);
   server = spawn('node', [serverEntry], {
     cwd: backendDir,
-    env: { ...process.env, PORT, NODE_ENV: 'development' },
+    env: { ...process.env, PORT, NODE_ENV: 'development', LOG_LEVEL: process.env.LOG_LEVEL ?? 'silent' },
     stdio: 'inherit',
   });
   server.on('exit', (code) => {

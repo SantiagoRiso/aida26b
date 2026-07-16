@@ -16,8 +16,8 @@ export default defineConfig({
   testDir: __dirname,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  // Serial execution — all specs share one seeded dataset; concurrent runs cause DB-state races.
-  workers: 1,
+  // Files may run concurrently; each file remains internally ordered because fullyParallel is false.
+  workers: Number(process.env.E2E_WORKERS ?? 2),
   fullyParallel: false,
   use: {
     baseURL,
