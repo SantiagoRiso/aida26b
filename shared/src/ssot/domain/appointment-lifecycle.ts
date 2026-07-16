@@ -82,3 +82,20 @@ export function canCancelAppointment(
   const hoursUntil = (new Date(startsAtIso).getTime() - nowMs) / 3_600_000;
   return hoursUntil > cutoffHours;
 }
+
+// Staff may mark a scheduled turno absent once it enters the same window in which the client can
+// no longer cancel. Past appointments remain eligible.
+export function canMarkNoShow(
+  state: string,
+  startsAtIso: string,
+  cutoffHours: number,
+  nowMs: number,
+): boolean {
+  if (state !== 'scheduled') return false;
+  const hoursUntil = (new Date(startsAtIso).getTime() - nowMs) / 3_600_000;
+  return hoursUntil <= cutoffHours;
+}
+
+export function canCompleteAppointment(state: string, startsAtIso: string, nowMs: number): boolean {
+  return state === 'scheduled' && new Date(startsAtIso).getTime() <= nowMs;
+}

@@ -502,6 +502,33 @@ describe('POST /api/appointments/:id/transition — timing guard', () => {
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
+
+  test('no_show is rejected outside the cutoff and allowed inside it', async () => {
+    await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 24 WHERE id = $1`, [bizId]);
+
+    const insertFuture = async (hours: number) => {
+      const startsAt = new Date(Date.now() + hours * 3_600_000).toISOString();
+      const r = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+         VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+         RETURNING id`,
+        [clientId, proId, svcId, startsAt],
+      );
+      return Number(r.rows[0].id);
+    };
+
+    currentUser = asUser(proId, 'Professional');
+    const outsideId = await insertFuture(25);
+    const outside = await apptReq('POST', `/api/appointments/${outsideId}/transition`, { to: 'no_show' });
+    expect(outside.status).toBe(422);
+
+    const insideId = await insertFuture(1);
+    const inside = await apptReq('POST', `/api/appointments/${insideId}/transition`, { to: 'no_show' });
+    expect(inside.status).toBe(200);
+
+    await pool.query(`DELETE FROM appointments WHERE id IN ($1, $2)`, [outsideId, insideId]);
+  });
 });
 
 describe('POST /api/appointments/:id/transition — charge on completion', () => {

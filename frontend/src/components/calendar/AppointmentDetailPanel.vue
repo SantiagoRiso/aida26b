@@ -6,6 +6,8 @@ import {
   TERMINAL_STATES,
   assertValidTransition,
   canCancelAppointment,
+  canMarkNoShow,
+  canCompleteAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '@shared/ssot/domain/appointment-lifecycle';
 import { structure } from '@shared/ssot/structure';
@@ -86,6 +88,12 @@ const availableTransitions = computed((): string[] => {
     if (auth.user?.role === 'Client') {
       return to === 'canceled'
         && canCancelAppointment(appt.state, appt.starts_at, cutoffHours.value, Date.now());
+    }
+    if (to === 'no_show') {
+      return canMarkNoShow(appt.state, appt.starts_at, cutoffHours.value, Date.now());
+    }
+    if (to === 'completed') {
+      return canCompleteAppointment(appt.state, appt.starts_at, Date.now());
     }
     return true;
   });

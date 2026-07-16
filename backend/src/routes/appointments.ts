@@ -11,6 +11,8 @@ import {
   APPOINTMENT_STATE_VALUES,
   assertValidTransition,
   canCancelAppointment,
+  canMarkNoShow,
+  canCompleteAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
 import { BUSINESS_TZ, DATE_OR_ISO_RE } from '../time';
@@ -412,12 +414,20 @@ export function mountAppointmentRoutes(
       }
     }
 
-    if (to === 'completed' || to === 'no_show') {
-      const startsAt = new Date(String(row.starts_at)).getTime();
-      if (Date.now() < startsAt) {
+    if (to === 'completed') {
+      if (!canCompleteAppointment(currentState, String(row.starts_at), Date.now())) {
         return sendError(
           res, 422, 'too_early',
           `Cannot mark '${to}' before the appointment's start time`,
+        );
+      }
+    }
+    if (to === 'no_show') {
+      const cutoffHours = (await getCancellationCutoffHours(pool, user.id)) ?? DEFAULT_CANCELLATION_CUTOFF_HOURS;
+      if (!canMarkNoShow(currentState, String(row.starts_at), cutoffHours, Date.now())) {
+        return sendError(
+          res, 422, 'too_early',
+          `Cannot mark 'no_show' more than ${cutoffHours} hour(s) before the appointment`,
         );
       }
     }

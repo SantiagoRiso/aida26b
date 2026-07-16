@@ -37,6 +37,8 @@ export {
   VOID_APPOINTMENT_STATES,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
   canCancelAppointment,
+  canMarkNoShow,
+  canCompleteAppointment,
 } from './appointment-lifecycle';
 export type { AppointmentState, VoidAppointmentState } from './appointment-lifecycle';
 export { resolveBooking } from './booking';

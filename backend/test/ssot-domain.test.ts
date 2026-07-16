@@ -20,6 +20,8 @@ import {
   TERMINAL_STATES,
   TRANSITION_MAP,
   assertValidTransition,
+  canMarkNoShow,
+  canCompleteAppointment,
   LEDGER_ENTRY_TYPES,
   BUSINESS_TZ,
   ARGENTINA_OFFSET_MS,
@@ -473,6 +475,21 @@ describe('evaluateConflicts — structured conflict verdict', () => {
 });
 
 describe('appointment state transition map (Phase 4)', () => {
+  it('allows no-show only once a scheduled appointment enters the cancellation window', () => {
+    const now = Date.parse('2026-07-16T12:00:00Z');
+    expect(canMarkNoShow('scheduled', '2026-07-17T13:00:00Z', 24, now)).toBe(false);
+    expect(canMarkNoShow('scheduled', '2026-07-17T12:00:00Z', 24, now)).toBe(true);
+    expect(canMarkNoShow('scheduled', '2026-07-16T11:00:00Z', 24, now)).toBe(true);
+    expect(canMarkNoShow('requested', '2026-07-16T11:00:00Z', 24, now)).toBe(false);
+  });
+
+  it('allows completion only after a scheduled appointment starts', () => {
+    const now = Date.parse('2026-07-16T12:00:00Z');
+    expect(canCompleteAppointment('scheduled', '2026-07-16T12:01:00Z', now)).toBe(false);
+    expect(canCompleteAppointment('scheduled', '2026-07-16T12:00:00Z', now)).toBe(true);
+    expect(canCompleteAppointment('requested', '2026-07-16T11:00:00Z', now)).toBe(false);
+  });
+
   it('assertValidTransition allows requested → scheduled', () => {
     expect(assertValidTransition('requested', 'scheduled')).toEqual({ ok: true });
   });
