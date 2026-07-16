@@ -220,3 +220,15 @@ describe('204 No Content response', () => {
     }
   });
 });
+
+describe('mutation generation', () => {
+  it('advances only after successful writes', async () => {
+    const { apiFetch, getApiMutationGeneration } = await import('@/api/client');
+    const initial = getApiMutationGeneration();
+    mockFetch(200, { success: true, data: { id: 1 } });
+
+    await apiFetch('/appointments', { method: 'POST' });
+
+    expect(getApiMutationGeneration()).toBe(initial + 1);
+  });
+});

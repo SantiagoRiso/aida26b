@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
@@ -41,6 +41,7 @@ const { formatDate } = useCurrency();
 const appointments = ref<Appointment[]>([]);
 const loading = ref(false);
 let appointmentRequest = 0;
+let calendarLoadController: AbortController | null = null;
 
 
 // Ref to the calendar surface — exposes the rendered root element the custom drag reads (via geometry).
@@ -64,8 +65,9 @@ const exceptions = useScheduleExceptions(filters, visibleRange);
 // of the professional/resource filter. This is how staff (esp. an Admin on the mixed 'Todos' view)
 // see a clinic holiday, which the per-owner exception overlay above never covers.
 const businessClosures = ref<BusinessClosure[]>([]);
-async function loadClosures() {
-  const res = await listClosures();
+async function loadClosures(signal?: AbortSignal) {
+  const res = await listClosures({ signal });
+  if (signal?.aborted) return;
   businessClosures.value = res.ok ? res.data : [];
 }
 
@@ -100,26 +102,35 @@ const moveConfirmRevert = ref<(() => void) | null>(null);
 
 async function fetchAppointments() {
   const request = ++appointmentRequest;
+  calendarLoadController?.abort();
+  const controller = new AbortController();
+  calendarLoadController = controller;
   loading.value = true;
-  const result = await listAppointments({
-    date_from: visibleRange.value.from,
-    date_to: visibleRange.value.to,
-    professional_user_id: filters.value.professional_user_id ?? undefined,
-    resource_id: filters.value.resource_id ?? undefined,
-    limit: 200,
-  });
+  let result;
+  try {
+    result = await listAppointments({
+      date_from: visibleRange.value.from,
+      date_to: visibleRange.value.to,
+      professional_user_id: filters.value.professional_user_id ?? undefined,
+      resource_id: filters.value.resource_id ?? undefined,
+      limit: 200,
+    }, { signal: controller.signal });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return;
+    throw error;
+  }
   if (request !== appointmentRequest) return;
   loading.value = false;
   if (result.ok) {
     appointments.value = result.data as Appointment[];
-    // Bookings changed → the visible professional's slot lattice (visual row sizing) is stale.
-    void refreshSnapGrid();
-    // …and a filtered resource's free/blocked shading depends on the same bookings.
-    void loadResourceAvailability();
-    // …and the month-view per-day availability (graying + click-to-book gating).
-    void loadMonthAvailability();
-    // …and the business-wide closure bands (a feriado added elsewhere must surface here).
-    void loadClosures();
+    await Promise.all([
+      refreshSnapGrid(controller.signal),
+      loadResourceAvailability(controller.signal),
+      loadMonthAvailability(controller.signal),
+      loadClosures(controller.signal),
+    ]).catch((error: Error) => {
+      if (error.name !== 'AbortError') throw error;
+    });
   }
 }
 
@@ -164,8 +175,18 @@ const dragDurationMinutes = ref(0);
 // Fetch a professional's free slots for each visible day, all days in parallel so a hover pulls
 // the week in ~one round-trip. `exclude` frees the dragged block's own span so it can be nudged
 // near its current position.
-async function loadSlotsByDay(profId: string | number, exclude?: string): Promise<Map<string, { start: string; end: string }[]>> {
-  const result = await getAvailabilityRange(`prof:${profId}`, visibleRange.value.from, visibleRange.value.to, exclude);
+async function loadSlotsByDay(
+  profId: string | number,
+  exclude?: string,
+  signal?: AbortSignal,
+): Promise<Map<string, { start: string; end: string }[]>> {
+  const result = await getAvailabilityRange(
+    `prof:${profId}`,
+    visibleRange.value.from,
+    visibleRange.value.to,
+    exclude,
+    { signal },
+  );
   const byDay = new Map<string, { start: string; end: string }[]>();
   if (result.ok) result.data.forEach((day) => byDay.set(day.date, day.slots));
   return byDay;
@@ -203,9 +224,17 @@ const {
   onPastPick: () => toast.info('pastNotBookable'),
 });
 
-watch(filters, fetchAppointments, { immediate: true, deep: true });
-watch(() => filters.value.professional_user_id, refreshSnapGrid);
-watch(visibleRange, refreshSnapGrid, { deep: true });
+watch(
+  [
+    () => filters.value.professional_user_id,
+    () => filters.value.resource_id,
+    () => visibleRange.value.from,
+    () => visibleRange.value.to,
+  ],
+  fetchAppointments,
+  { immediate: true },
+);
+onBeforeUnmount(() => calendarLoadController?.abort());
 
 // Occupied vs requested minute-intervals per date for the selected professional. Drives the
 // background shading, the "no dotted outline on a taken slot", and the "no hover on a taken slot"
@@ -218,10 +247,17 @@ const bookedByDate = computed<Map<string, BookedDay>>(() => {
   );
 });
 
-async function loadResourceAvailability() {
+async function loadResourceAvailability(signal?: AbortSignal) {
   const resId = filters.value.resource_id;
   if (resId == null) { resourceFreeByDay.value = new Map(); return; }
-  const result = await getAvailabilityRange(`res:${resId}`, visibleRange.value.from, visibleRange.value.to);
+  const result = await getAvailabilityRange(
+    `res:${resId}`,
+    visibleRange.value.from,
+    visibleRange.value.to,
+    undefined,
+    { signal },
+  );
+  if (signal?.aborted) return;
   const byDay = new Map<string, { start: number; end: number }[]>();
   if (result.ok) result.data.forEach((day) => {
     byDay.set(day.date, day.slots.map((slot) => ({ start: toMinutes(slot.start), end: toMinutes(slot.end) })));
@@ -233,13 +269,20 @@ async function loadResourceAvailability() {
 // Drives the "no availability" graying and gates click-to-book on empty days.
 const monthAvailability = ref<Map<string, DayAvailability>>(new Map());
 
-async function loadMonthAvailability() {
+async function loadMonthAvailability(signal?: AbortSignal) {
   const profId = filters.value.professional_user_id;
   if (currentViewType.value !== 'dayGridMonth' || profId == null) {
     if (monthAvailability.value.size) monthAvailability.value = new Map();
     return;
   }
-  const result = await getAvailabilityRange(`prof:${profId}`, visibleRange.value.from, visibleRange.value.to);
+  const result = await getAvailabilityRange(
+    `prof:${profId}`,
+    visibleRange.value.from,
+    visibleRange.value.to,
+    undefined,
+    { signal },
+  );
+  if (signal?.aborted) return;
   const map = new Map<string, DayAvailability>();
   if (result.ok) result.data.forEach((day) => {
     map.set(day.date, day.slots.length > 0 ? 'free' : day.open ? 'full' : 'closed');
@@ -449,7 +492,6 @@ function onDatesSet(info: { startStr: string; endStr: string; view: { type: stri
   const to = info.endStr.slice(0, 10);
   if (visibleRange.value.from === from && visibleRange.value.to === to) return;
   visibleRange.value = { from, to };
-  void fetchAppointments();
 }
 
 function handleSelect(arg: DateSelectArg) {

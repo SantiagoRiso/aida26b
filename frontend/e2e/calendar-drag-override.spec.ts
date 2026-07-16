@@ -30,7 +30,11 @@ import { DEMO_SERVICE_NAMES } from '../../shared/src/dev-fixtures';
  * clients no other spec touches — so the only conflict on that day is this spec's own two turnos.
  */
 const PROF = 'Julius Hibbert';
-const DATE = isoDaysFromNow(45);
+const RANGE_START = isoDaysFromNow(45);
+const RANGE_END = isoDaysFromNow(52);
+let fixtureDate: string;
+let startA: string;
+let startB: string;
 
 async function readStartHHMM(page: Page, apptId: number): Promise<string> {
   const res = await page.request.get(`/api/appointments/${apptId}`);
@@ -56,25 +60,50 @@ test.describe('Calendar conflict override — cancel reverts the reschedule', ()
       findClientId(page, 'Nelson Muntz'),
     ]);
 
+    const availabilityRes = await page.request.get(
+      `/api/availability?owner=prof:${professionalId}&date_from=${RANGE_START}&date_to=${RANGE_END}`,
+    );
+    const availability = (await availabilityRes.json()).data as Array<{
+      date: string;
+      slots: Array<{ start: string; end: string }>;
+    }>;
+    const day = availability.find((candidate) => candidate.slots.some((slot) => {
+      const [startHour, startMinute] = slot.start.split(':').map(Number);
+      const [endHour, endMinute] = slot.end.split(':').map(Number);
+      return (endHour! * 60 + endMinute!) - (startHour! * 60 + startMinute!) >= 60;
+    }));
+    if (!availabilityRes.ok() || !day) throw new Error('No one-hour interval available for override-cancel fixture');
+    const interval = day.slots.find((slot) => {
+      const [startHour, startMinute] = slot.start.split(':').map(Number);
+      const [endHour, endMinute] = slot.end.split(':').map(Number);
+      return (endHour! * 60 + endMinute!) - (startHour! * 60 + startMinute!) >= 60;
+    })!;
+    fixtureDate = day.date;
+    startA = interval.start;
+    const [hour, minute] = startA.split(':').map(Number);
+    const secondStart = hour! * 60 + minute! + 30;
+    startB = `${String(Math.floor(secondStart / 60)).padStart(2, '0')}:${String(secondStart % 60).padStart(2, '0')}`;
+
     const seed = (clientId: number, start: string, name: string) =>
       scheduleViaApi(page, {
         professional_user_id: professionalId,
         service_id: serviceId,
         client_user_id: clientId,
-        date: DATE,
+        date: fixtureDate,
         start,
         duration_minutes: 30,
         name,
+        override: false,
       });
-    apptAId = await seed(clientA, '08:00', 'Turno E2E override-cancel — A');
-    apptBId = await seed(clientB, '09:00', 'Turno E2E override-cancel — B');
+    apptAId = await seed(clientA, startA, 'Turno E2E override-cancel — A');
+    apptBId = await seed(clientB, startB, 'Turno E2E override-cancel — B');
 
     await context.close();
   });
 
   test('cancelling the sobreturno dialog leaves the turno at its original time', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    expect(await readStartHHMM(page, apptAId)).toBe('08:00');
+    expect(await readStartHHMM(page, apptAId)).toBe(startA);
 
     await page.getByRole('link', { name: es.nav.calendar }).click();
     await expect(page.locator('.fc')).toBeVisible();
@@ -86,7 +115,7 @@ test.describe('Calendar conflict override — cancel reverts the reschedule', ()
     await page.getByRole('button', { name: es.calendar.reschedule }).click();
 
     await expect(page.locator('#appt-start')).toBeVisible({ timeout: 10_000 });
-    await fillTime(page, 'appt-start', '09:00');
+    await fillTime(page, 'appt-start', startB);
 
     const firstAttempt = page.waitForResponse(
       (r) => r.url().includes(`/appointments/${apptAId}/reschedule`) && r.request().method() === 'POST',
@@ -102,11 +131,11 @@ test.describe('Calendar conflict override — cancel reverts the reschedule', ()
     await dialog.getByRole('button', { name: es.actions.cancel }).click();
     await expect(page.locator('button', { hasText: es.actions.bookAnyway })).toBeHidden();
 
-    // No second reschedule request fired and the turno stayed at 08:00, unflagged.
-    expect(await readStartHHMM(page, apptAId)).toBe('08:00');
+    // No second reschedule request fired and the turno stayed at its discovered free slot, unflagged.
+    expect(await readStartHHMM(page, apptAId)).toBe(startA);
     const res = await page.request.get(`/api/appointments/${apptAId}`);
     expect((await res.json()).data.override_conflict).toBe(false);
     // B is untouched too.
-    expect(await readStartHHMM(page, apptBId)).toBe('09:00');
+    expect(await readStartHHMM(page, apptBId)).toBe(startB);
   });
 });

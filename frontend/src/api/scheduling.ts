@@ -1,4 +1,4 @@
-import { apiFetch } from '@/api/client';
+import { apiFetch, getApiMutationGeneration } from '@/api/client';
 import type { ApiResult } from '@/api/client';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
@@ -44,6 +44,21 @@ export interface AvailabilityResult {
 export interface BookingWindowResult {
   min_date: string;
   max_date: string | null;
+}
+
+const AVAILABILITY_CACHE_MS = 15_000;
+const availabilityCache = new Map<string, {
+  expiresAt: number;
+  mutationGeneration: number;
+  result: ApiResult<AvailabilityResult[]>;
+}>();
+const availabilityInFlight = new Map<string, {
+  signal?: AbortSignal;
+  request: Promise<ApiResult<AvailabilityResult[]>>;
+}>();
+
+export function invalidateAvailabilityCache(): void {
+  availabilityCache.clear();
 }
 
 // Concrete booking-window bounds for one (professional, service), so the portal can clamp the date
@@ -94,8 +109,37 @@ export async function getAvailabilityRange(
   dateFrom: string,
   dateTo: string,
   exclude?: Id,
+  options: { signal?: AbortSignal; bypassCache?: boolean } = {},
 ): Promise<ApiResult<AvailabilityResult[]>> {
   const params = new URLSearchParams({ owner, date_from: dateFrom, date_to: dateTo });
   if (exclude !== undefined) params.set('exclude', String(exclude));
-  return apiFetch<AvailabilityResult[]>(`${schedulingPaths.availability()}?${params.toString()}`);
+  const path = `${schedulingPaths.availability()}?${params.toString()}`;
+  const cached = availabilityCache.get(path);
+  if (
+    !options.bypassCache &&
+    cached &&
+    cached.expiresAt > Date.now() &&
+    cached.mutationGeneration === getApiMutationGeneration()
+  ) return cached.result;
+
+  const pending = availabilityInFlight.get(path);
+  if (pending && pending.signal === options.signal) return pending.request;
+
+  const mutationGeneration = getApiMutationGeneration();
+  const request = apiFetch<AvailabilityResult[]>(path, { signal: options.signal })
+    .then((result) => {
+      if (result.ok) {
+        availabilityCache.set(path, {
+          expiresAt: Date.now() + AVAILABILITY_CACHE_MS,
+          mutationGeneration,
+          result,
+        });
+      }
+      return result;
+    })
+    .finally(() => {
+      if (availabilityInFlight.get(path)?.request === request) availabilityInFlight.delete(path);
+    });
+  availabilityInFlight.set(path, { signal: options.signal, request });
+  return request;
 }

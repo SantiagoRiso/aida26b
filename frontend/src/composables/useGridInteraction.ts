@@ -31,7 +31,11 @@ export interface GridInteractionOptions {
   currentViewType: Ref<string>;
   professionalId: () => number | null;
   blocks: Ref<ProfessionalBlock[]>;
-  loadSlotsByDay: (profId: string | number) => Promise<Map<string, { start: string; end: string }[]>>;
+  loadSlotsByDay: (
+    profId: string | number,
+    exclude?: string,
+    signal?: AbortSignal,
+  ) => Promise<Map<string, { start: string; end: string }[]>>;
   cellElapsed: (date: string, endMin: number) => boolean;
   onSlotPicked: (pick: SlotPick) => void;
   onPastPick: () => void;
@@ -64,14 +68,15 @@ export function useGridInteraction(opts: GridInteractionOptions) {
 
   // Size the visible grid rows to a selected professional's slot lattice AND capture their free time
   // for the unavailable-shading overlay. The mixed 'Todos' view has no single professional → both empty.
-  async function refreshSnapGrid() {
+  async function refreshSnapGrid(signal?: AbortSignal) {
     const profId = professionalId();
     if (profId == null) {
       applyGrid({ starts: null, minutes: null });
       professionalFreeByDay.value = new Map();
       return;
     }
-    const byDay = await opts.loadSlotsByDay(profId);
+    const byDay = await opts.loadSlotsByDay(profId, undefined, signal);
+    if (signal?.aborted) return;
     // Drag-box / shading step = the professional's schedule slot size (never the free-slot lengths — a
     // small booking gap would collapse it, and an empty week would explode it). Schedule-derived, so it
     // is stable whether or not the week has bookings. 30 min when unknown.

@@ -8,8 +8,8 @@ import { closurePaths } from '@shared/ssot/api-paths';
 // unions it into every professional's and resource's day.
 export type BusinessClosure = BusinessClosureRow;
 
-export function listClosures(): Promise<ApiResult<BusinessClosure[]>> {
-  return apiFetch<BusinessClosure[]>(closurePaths.list());
+export function listClosures(options: { signal?: AbortSignal } = {}): Promise<ApiResult<BusinessClosure[]>> {
+  return apiFetch<BusinessClosure[]>(closurePaths.list(), { signal: options.signal });
 }
 
 export function createClosure(body: {

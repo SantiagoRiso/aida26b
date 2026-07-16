@@ -25,6 +25,7 @@ import { DEMO_SERVICE_NAMES } from '../../shared/src/dev-fixtures';
 const CONFLICT_DATE = isoDaysFromNow(62);
 let margeId: number;
 let conflictApptId: number;
+let closureId: number;
 
 test.beforeAll(async ({ browser }) => {
   const context = await browser.newContext();
@@ -51,7 +52,19 @@ test.beforeAll(async ({ browser }) => {
     data: { exception_date: CONFLICT_DATE, start_time: null, end_time: null, reason: 'e2e dashboard' },
   });
   if (!closureRes.ok()) throw new Error(`closure seed failed: ${closureRes.status()}`);
+  closureId = Number((await closureRes.json()).data.id);
 
+  await context.close();
+});
+
+test.afterAll(async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+  const closureRes = await page.request.delete(`/api/business-closures/${closureId}`);
+  if (!closureRes.ok() && closureRes.status() !== 404) {
+    throw new Error(`closure fixture cleanup failed: ${closureRes.status()}`);
+  }
   await context.close();
 });
 
@@ -95,14 +108,16 @@ test.describe('Dashboard — role variants', () => {
     await login(page, DEMO_ACCOUNTS.professionalUser.username, DEMO_ACCOUNTS.professionalUser.password);
     expect(await isFlagged(page, conflictApptId)).toBe(true);
 
-    const panel = page.locator('div').filter({ has: page.getByRole('heading', { name: es.dashboard.conflictsHeading }) }).first();
     await expect(page.getByRole('heading', { name: es.dashboard.conflictsHeading })).toBeVisible({ timeout: 10_000 });
+
+    const conflictRow = page.locator(`[data-testid="conflict-${conflictApptId}"]`);
+    await expect(conflictRow).toBeVisible();
 
     const ignoreResp = page.waitForResponse(
       (r) => /\/appointments\/\d+\/ignore-conflict/.test(r.url()) && r.request().method() === 'POST',
       { timeout: 10_000 },
     );
-    await panel.getByRole('button', { name: es.dashboard.ignore }).first().click();
+    await conflictRow.getByRole('button', { name: es.dashboard.ignore }).click();
     expect((await ignoreResp).ok()).toBe(true);
 
     // Acknowledged → drops out of the conflicting list.

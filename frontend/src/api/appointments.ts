@@ -34,6 +34,7 @@ function toScheduleResult(data: Appointment | ConflictVerdict): ScheduleResult {
 
 export async function listAppointments(
   filters: AppointmentListFilters = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<ApiResult<Appointment[]>> {
   const params = new URLSearchParams();
   if (filters.date_from) params.set('date_from', filters.date_from);
@@ -46,7 +47,7 @@ export async function listAppointments(
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
-  return apiFetch<Appointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`);
+  return apiFetch<Appointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
 }
 
 // Distinct client ids the caller has any appointment with, in their role scope. Backs the

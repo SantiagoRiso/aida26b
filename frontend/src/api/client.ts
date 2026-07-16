@@ -5,6 +5,12 @@ import type { ApiEnvelope, ApiErrorEnvelope, ListMeta } from '@shared/ssot/envel
 // Every backend route speaks the one shared envelope (shared/src/ssot/envelope.ts).
 type Envelope<T> = ApiEnvelope<T> | ApiErrorEnvelope;
 
+let mutationGeneration = 0;
+
+export function getApiMutationGeneration(): number {
+  return mutationGeneration;
+}
+
 export type ApiResult<T> =
   | { ok: true; data: T; meta?: ListMeta }
   | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> };
@@ -45,6 +51,7 @@ export async function apiFetch<T>(
   }
 
   if (response.status === 204) {
+    if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
     return { ok: true, data: undefined as T };
   }
 
@@ -66,6 +73,7 @@ export async function apiFetch<T>(
       fields: body.error.fields,
     };
   }
+  if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
   return {
     ok: true,
     data: body.data,

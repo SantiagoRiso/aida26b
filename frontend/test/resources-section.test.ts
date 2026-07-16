@@ -62,7 +62,7 @@ describe('ResourcesSection', () => {
     await w.get('[data-testid="room-add-name"]').setValue('Nueva');
     await w.get('[data-testid="room-add-save"]').trigger('click');
     await flushPromises();
-    expect(createRow).toHaveBeenCalledWith('resources', { name: 'Nueva' });
+    expect(createRow).toHaveBeenCalledWith('resources', { name: 'Nueva', description: null });
   });
 
   it('blocks add when the name is empty', async () => {

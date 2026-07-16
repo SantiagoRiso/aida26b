@@ -122,6 +122,7 @@ onMounted(() => {
         <li
           v-for="appt in conflictTurnos"
           :key="appt.id"
+          :data-testid="`conflict-${appt.id}`"
           class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border pb-2 text-sm last:border-0 last:pb-0"
         >
           <span class="flex flex-wrap items-center gap-2">
