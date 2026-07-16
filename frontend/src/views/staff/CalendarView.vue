@@ -294,6 +294,7 @@ async function loadMonthAvailability(signal?: AbortSignal) {
 const dragOrigin = ref<{ date: string; minutes: number; duration: number } | null>(null);
 let dragTargetOverlay: HTMLElement | null = null;
 let draggedAppointment: Appointment | null = null;
+let dragConflictsByDate = new Map<string, Array<{ id: string; start: number; end: number }>>();
 const DRAG_LAYOUT_PREVIEW_ID = '__drag-layout-preview';
 const dragLayoutPreviewEvents = ref<EventInput[]>([]);
 let layoutPreviewKey = '';
@@ -310,19 +311,30 @@ function conflictKey(date: string, minutes: number): string {
   const dragged = draggedAppointment;
   if (!dragged) return '';
   const end = minutes + dragged.duration_minutes;
-  return appointments.value
-    .filter((appointment) => {
-      if (appointment.id === dragged.id) return false;
-      if (String(appointment.professional_user_id) !== String(dragged.professional_user_id)) return false;
-      const start = new Date(appointment.starts_at);
-      const appointmentStart = start.getHours() * 60 + start.getMinutes();
-      return dayISO(start, 0) === date
-        && minutes < appointmentStart + appointment.duration_minutes
-        && appointmentStart < end;
-    })
-    .map((appointment) => String(appointment.id))
+  return (dragConflictsByDate.get(date) ?? [])
+    .filter((appointment) => minutes < appointment.end && appointment.start < end)
+    .map((appointment) => appointment.id)
     .sort()
     .join(',');
+}
+
+function indexDragConflicts(dragged: Appointment) {
+  const byDate = new Map<string, Array<{ id: string; start: number; end: number }>>();
+  for (const appointment of appointments.value) {
+    if (appointment.id === dragged.id) continue;
+    if (String(appointment.professional_user_id) !== String(dragged.professional_user_id)) continue;
+    const start = new Date(appointment.starts_at);
+    const startMinutes = start.getHours() * 60 + start.getMinutes();
+    const date = dayISO(start, 0);
+    const day = byDate.get(date) ?? [];
+    day.push({
+      id: String(appointment.id),
+      start: startMinutes,
+      end: startMinutes + appointment.duration_minutes,
+    });
+    byDate.set(date, day);
+  }
+  dragConflictsByDate = byDate;
 }
 
 function syncLayoutPreview(date: string, minutes: number, magnetized: boolean) {
@@ -413,12 +425,16 @@ function onSlotPicked(pick: SlotPick) {
 // Whether loadHighlights has finished for the in-flight drag. Until then an empty valid-starts list
 // means "still loading", not "no free slot" — the coarse no-free-slot freeze must wait for this.
 const highlightsReady = ref(false);
+let highlightStartMinutesByDay = new Map<string, number[]>();
+let highlightRequest = 0;
 
 // Duration-aware valid slots for the dragged appointment across the visible days (its own span freed).
 async function loadHighlights(appt: Appointment) {
+  const request = ++highlightRequest;
   highlightsReady.value = false;
   dragDurationMinutes.value = appt.duration_minutes;
   const byDay = await loadSlotsByDay(appt.professional_user_id, appt.id);
+  if (request !== highlightRequest || draggedAppointment?.id !== appt.id) return;
   const targets = new Map<string, string[]>();
   const origin = new Date(appt.starts_at);
   const originDate = dayISO(origin, 0);
@@ -433,6 +449,9 @@ async function loadHighlights(appt: Appointment) {
     ));
   }
   highlightStartsByDay.value = targets;
+  highlightStartMinutesByDay = new Map(
+    [...targets].map(([date, starts]) => [date, starts.map(toMinutes)]),
+  );
   highlightsReady.value = true;
 }
 
@@ -440,7 +459,7 @@ const customDrag = useCustomDrag({
   geometry,
   fine: fineDrag,
   ghostParent: () => calendarRef.value?.getRootEl() ?? null,
-  validStartsFor: (date) => (highlightStartsByDay.value.get(date) ?? []).map(toMinutes),
+  validStartsFor: (date) => highlightStartMinutesByDay.get(date) ?? [],
   ready: () => highlightsReady.value,
   targetElapsed: (date, start, duration) => cellElapsed(date, start + duration),
   onBegin: (appt) => {
@@ -451,11 +470,23 @@ const customDrag = useCustomDrag({
       duration: appt.duration_minutes,
     };
     draggedAppointment = appt;
+    indexDragConflicts(appt);
     isDragging.value = true;
     hoverTarget.value = null;
     void loadHighlights(appt);
   },
-  onEnd: () => { isDragging.value = false; highlightStartsByDay.value = new Map(); clearDragTargetOverlay(); draggedAppointment = null; dragOrigin.value = null; suppressEventClick = true; suppressNextGridClick(); },
+  onEnd: () => {
+    highlightRequest += 1;
+    isDragging.value = false;
+    highlightStartsByDay.value = new Map();
+    highlightStartMinutesByDay = new Map();
+    clearDragTargetOverlay();
+    draggedAppointment = null;
+    dragConflictsByDate = new Map();
+    dragOrigin.value = null;
+    suppressEventClick = true;
+    suppressNextGridClick();
+  },
   onTarget: renderDragTargetOverlay,
   onCommit: (appt, target) => { requestMove(appt, target, () => {}); },
 });
