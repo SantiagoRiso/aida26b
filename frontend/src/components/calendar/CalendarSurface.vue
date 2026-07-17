@@ -38,7 +38,6 @@ const props = defineProps<{
   exceptionBgEvents: EventInput[];
   hoverEvents: EventInput[];
   hoverPreviewEvents: EventInput[];
-  dragLayoutPreviewEvents: EventInput[];
   cellElapsed: (date: string, endMin: number) => boolean;
   slotBookableByAvailability: (date: string, startMin: number, endMin: number) => boolean;
 }>();
@@ -231,7 +230,6 @@ const fullOptions = computed<CalendarOptions>(() => {
       ...closureBgEvents.value,
       ...props.hoverEvents,
       ...props.hoverPreviewEvents,
-      ...props.dragLayoutPreviewEvents,
       ...backgroundEvents.value,
       ...originEvent.value,
     ],

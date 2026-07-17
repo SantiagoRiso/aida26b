@@ -55,6 +55,7 @@ const selected = computed<string | null>({
       v-model="selected"
       :options="options"
       :label-if-single="!allowAll"
+      :show-empty-option="!allowAll"
     />
   </label>
 </template>

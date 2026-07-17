@@ -55,23 +55,26 @@ export async function listAuditEvents(
 
   const where = conditions.join(' AND ');
 
-  const [rows, count] = await Promise.all([
-    query<AuditEventRow>(
-      db,
-      `SELECT a.id, a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
-              a.outcome, a.ip, a.details, a.created_at
-         FROM audit_events a
-        WHERE ${where}
-        ORDER BY a.created_at DESC
-        LIMIT $${p} OFFSET $${p + 1}`,
-      [...params, f.limit, f.offset],
-    ),
-    query<{ n: string }>(
+  const pageRows = await query<AuditEventRow & { total_count: string }>(
+    db,
+    `SELECT a.id, a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
+            a.outcome, a.ip, a.details, a.created_at,
+            count(*) OVER()::text AS total_count
+       FROM audit_events a
+      WHERE ${where}
+      ORDER BY a.created_at DESC
+      LIMIT $${p} OFFSET $${p + 1}`,
+    [...params, f.limit, f.offset],
+  );
+  if (pageRows.length === 0) {
+    const count = await query<{ n: string }>(
       db,
       `SELECT count(*)::text AS n FROM audit_events a WHERE ${where}`,
       params,
-    ),
-  ]);
-
-  return { rows, total: Number(count[0].n) };
+    );
+    return { rows: [], total: Number(count[0]?.n ?? 0) };
+  }
+  const total = Number(pageRows[0].total_count);
+  const rows = pageRows.map(({ total_count: _, ...row }) => row as AuditEventRow);
+  return { rows, total };
 }

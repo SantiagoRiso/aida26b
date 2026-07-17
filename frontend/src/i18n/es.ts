@@ -280,7 +280,6 @@ export const es = {
     reasonOptional: 'Motivo (opcional)',
   },
   dashboard: {
-    currentAppointment: 'Turno actual',
     paymentArs: 'Pago (ARS)',
     paid: 'Pagó',
     notPaid: 'No pagó',

@@ -341,6 +341,15 @@ describe('GET /api/audit — pagination', () => {
     expect(res.status).toBe(200);
     expect(res.body.meta.limit).toBe(500);
   });
+
+  test('an out-of-range page remains empty but preserves the filtered total', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const first = await auditReq('GET', '/api/audit?limit=1&page=1');
+    const empty = await auditReq('GET', '/api/audit?limit=1&page=500');
+    expect(empty.status).toBe(200);
+    expect(empty.body.data).toEqual([]);
+    expect(empty.body.meta.total).toBe(first.body.meta.total);
+  });
 });
 
 describe('GET /api/business/settings — any authenticated role, session-scoped', () => {

@@ -219,7 +219,7 @@ if (isAdmin.value) {
             <tr
               v-for="event in events"
               :key="event.id"
-              class="hover:bg-surface"
+              class="virtualized-row hover:bg-surface"
               :class="{ 'bg-red-50': event.outcome === 'denied' }"
             >
               <td class="px-4 py-3 tabular-nums text-neutral whitespace-nowrap">

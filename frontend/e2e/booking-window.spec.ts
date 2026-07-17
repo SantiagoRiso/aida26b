@@ -120,6 +120,9 @@ test.describe('Booking window — date-stepper clamp and server-side enforcement
     const offeringsRes = await adminPage.request.get(`/api/professional_services?filter_professional_user_id=${profId}`);
     const offerings = (await offeringsRes.json()).data as Array<Record<string, string | number | null>>;
     expect(offerings.length, 'Dr. Arnie Pye must offer exactly one service').toBeGreaterThan(0);
+    const blocksRes = await adminPage.request.get(`/api/schedule_blocks?filter_professional_user_id=${profId}&limit=500`);
+    const blocks = (await blocksRes.json()).data as Array<{ weekday: string }>;
+    const workingDays = new Set(blocks.map((block) => block.weekday));
     // The generic update validates the FULL editable object, so send back the whole row (a partial
     // { max_booking_days } is rejected) minus the server-derived keys it forbids in the body.
     const offeringId = offerings[0].id as string;
@@ -136,9 +139,14 @@ test.describe('Booking window — date-stepper clamp and server-side enforcement
     await expect(page.locator('#svc-select')).toContainText(DEMO_SERVICE_NAMES.sesion, { timeout: 10_000 });
     await page.getByRole('button', { name: es.portal.next }).click();
 
-    // A date comfortably inside the current (business-default, 60-day) window, past the seed's
-    // dense-fill so a free slot is guaranteed; the window is about to shrink underneath it.
-    const targetDate = isoDaysFromNow(50);
+    // Pick a real working day comfortably inside the current 60-day window. A fixed offset becomes
+    // invalid whenever it lands on a weekend, making the test depend on the date it happens to run.
+    const weekdayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const targetDate = Array.from({ length: 11 }, (_, index) => isoDaysFromNow(45 + index)).find((iso) => {
+      const [year, month, day] = iso.split('-').map(Number);
+      return workingDays.has(weekdayKeys[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]);
+    });
+    if (!targetDate) throw new Error('Arnie must have a working day between 45 and 55 days out');
     await fillDate(page, targetDate);
     const slotButton = page.locator('button').filter({ hasText: /^\d{2}:\d{2}/ }).first();
     await expect(slotButton).toBeVisible({ timeout: 10_000 });

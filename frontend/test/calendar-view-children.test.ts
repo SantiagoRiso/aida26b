@@ -77,7 +77,6 @@ describe('CalendarSurface', () => {
       exceptionBgEvents: [],
       hoverEvents: [],
       hoverPreviewEvents: [],
-      dragLayoutPreviewEvents: [],
       cellElapsed: () => false,
       slotBookableByAvailability: () => true,
     };
@@ -98,25 +97,6 @@ describe('CalendarSurface', () => {
     expect(closure).toBeDefined();
     expect(closure?.start).toBe('2099-01-02T00:00:00');
     expect(closure?.end).toBe('2099-01-03T00:00:00');
-  });
-
-  it('keeps the drag layout preview when hover layers refresh', async () => {
-    const wrapper = mount(CalendarSurface, {
-      props: {
-        ...surfaceProps(),
-        dragLayoutPreviewEvents: [{
-          id: '__drag-layout-preview',
-          start: '2099-01-02T14:40:00',
-          end: '2099-01-02T15:30:00',
-          classNames: ['fc-drag-layout-preview'],
-        }],
-      },
-      global: { stubs: { CalendarViewComponent: true } },
-    });
-
-    await wrapper.setProps({ hoverEvents: [{ start: '2099-01-02T15:00:00', display: 'background' }] });
-    const events = wrapper.findComponent(CalendarViewComponent).props('options').events as EventInput[];
-    expect(events.some((event) => event.id === '__drag-layout-preview')).toBe(true);
   });
 
   it('shows the cancel origin and hides drop boxes that overlap bookings', () => {

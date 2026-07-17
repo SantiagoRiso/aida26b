@@ -209,6 +209,35 @@ describe('cache policy', () => {
   });
 });
 
+describe('in-flight GET coalescing', () => {
+  it('shares an identical concurrent GET and releases it after completion', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { apiFetch } = await importFresh();
+
+    const first = apiFetch('/services?limit=500');
+    const second = apiFetch('/services?limit=500');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveFetch(new Response(JSON.stringify({ success: true, data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await Promise.all([first, second]);
+    await apiFetch('/services?limit=500');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not share abortable requests', async () => {
+    mockFetch(200, { success: true, data: [] });
+    const { apiFetch } = await importFresh();
+    const signal = new AbortController().signal;
+    await Promise.all([apiFetch('/services', { signal }), apiFetch('/services', { signal })]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('204 No Content response', () => {
   it('returns ok:true with undefined data without throwing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));

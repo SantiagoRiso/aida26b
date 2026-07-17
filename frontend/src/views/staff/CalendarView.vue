@@ -6,13 +6,18 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCustomDrag } from '@/composables/useCustomDrag';
 import { useTimegridGeometry } from '@/composables/useTimegridGeometry';
+import {
+  DRAG_LAYOUT_PREVIEW_ID,
+  removeDragLayoutPreview,
+  upsertDragLayoutPreview,
+} from '@/composables/calendarDragPreview';
 import { useGridInteraction } from '@/composables/useGridInteraction';
 import type { SlotPick } from '@/composables/useGridInteraction';
 import { useConflictOverride } from '@/composables/useConflictOverride';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
-import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import { useAppointmentLabels } from '@/composables/useAppointmentLabels';
 import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
 import { getAvailabilityRange } from '@/api/scheduling';
@@ -36,7 +41,7 @@ import type { BookedDay } from '@/composables/availabilityShading';
 const { t } = useI18n();
 const auth = useAuthStore();
 const toast = useToast();
-const { formatDate } = useCurrency();
+const { formatARS, formatDate, formatDateTime } = useCurrency();
 
 const appointments = ref<Appointment[]>([]);
 const loading = ref(false);
@@ -134,27 +139,29 @@ async function fetchAppointments() {
   }
 }
 
-// Untitled events read as the client's name — "Turno #id" says nothing to staff.
-const { labelFor: clientLabelFor } = useForeignKeyOptions({
-  table: 'clients', valueField: 'id', labelField: 'display_name',
-});
-const { labelFor: professionalLabelFor } = useForeignKeyOptions({
-  table: 'professionals', valueField: 'id', labelField: 'display_name',
-});
-const { labelFor: serviceLabelFor } = useForeignKeyOptions({
-  table: 'services', valueField: 'id', labelField: 'name',
-});
+const {
+  defaultAppointmentTitle,
+  pendingClientName,
+  professionalNameFor,
+  serviceNameFor,
+  resourceNameFor,
+} = useAppointmentLabels();
 function clientNameFor(appt: Appointment): string | null {
-  return clientLabelFor(appt.client_user_id);
+  return pendingClientName(appt);
 }
 const { stateLabel } = useStateLabel();
 function tooltipFor(appt: Appointment): string {
   return [
-    clientLabelFor(appt.client_user_id),
-    professionalLabelFor(appt.professional_user_id),
-    serviceLabelFor(appt.service_id),
-    stateLabel(appt.state),
-  ].filter(Boolean).join(' · ');
+    appt.name || defaultAppointmentTitle(appt),
+    `${formatDateTime(appt.starts_at)} - ${appt.duration_minutes} min`,
+    `${t('calendar.clientLabel')}: ${clientNameFor(appt)}`,
+    `${t('calendar.professionalLabel')}: ${professionalNameFor(appt) ?? '-'}`,
+    `${t('calendar.resourceLabel')}: ${resourceNameFor(appt) ?? '-'}`,
+    `${t('calendar.serviceLabel')}: ${serviceNameFor(appt) ?? '-'}`,
+    `${t('calendar.priceLabel')}: ${formatARS(appt.price)}`,
+    `${t('portal.state')}: ${stateLabel(appt.state)}`,
+    ...(appt.override_conflict ? [`${t('calendar.fineMode')}: ${t('generic.yes')}`] : []),
+  ].join('\n');
 }
 
 // Sobreturno mode: a persistent toggle (not a held key) so the snap step is fixed for the whole
@@ -295,16 +302,19 @@ const dragOrigin = ref<{ date: string; minutes: number; duration: number } | nul
 let dragTargetOverlay: HTMLElement | null = null;
 let draggedAppointment: Appointment | null = null;
 let dragConflictsByDate = new Map<string, Array<{ id: string; start: number; end: number }>>();
-const DRAG_LAYOUT_PREVIEW_ID = '__drag-layout-preview';
-const dragLayoutPreviewEvents = ref<EventInput[]>([]);
 let layoutPreviewKey = '';
 let layoutPreviewFrame: number | null = null;
+let layoutPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingLayoutPreview: { start: string; end: string } | null = null;
 
 function removeLayoutPreview() {
   if (layoutPreviewFrame != null) cancelAnimationFrame(layoutPreviewFrame);
+  if (layoutPreviewTimer != null) clearTimeout(layoutPreviewTimer);
   layoutPreviewFrame = null;
+  layoutPreviewTimer = null;
+  pendingLayoutPreview = null;
   layoutPreviewKey = '';
-  dragLayoutPreviewEvents.value = [];
+  removeDragLayoutPreview(calendarRef.value?.getApi());
 }
 
 function conflictKey(date: string, minutes: number): string {
@@ -337,42 +347,48 @@ function indexDragConflicts(dragged: Appointment) {
   dragConflictsByDate = byDate;
 }
 
-function syncLayoutPreview(date: string, minutes: number, magnetized: boolean) {
+function syncLayoutPreview(date: string, minutes: number) {
   const dragged = draggedAppointment;
   if (!dragged) return;
   const conflicts = conflictKey(date, minutes);
-  const key = magnetized ? `${date}:${minutes}:${conflicts}` : `${date}:${conflicts}`;
+  const key = `${date}:${minutes}:${conflicts}`;
   if (key === layoutPreviewKey) return;
   layoutPreviewKey = key;
   const start = `${date}T${toHHMM(minutes)}:00`;
   const end = `${date}T${toHHMM(minutes + dragged.duration_minutes)}:00`;
-  dragLayoutPreviewEvents.value = [{
-    id: DRAG_LAYOUT_PREVIEW_ID,
-    start,
-    end,
-    display: 'block',
-    classNames: ['fc-drag-layout-preview'],
-  }];
+  pendingLayoutPreview = { start, end };
+  if (layoutPreviewTimer != null) return;
 
-  if (layoutPreviewFrame != null) cancelAnimationFrame(layoutPreviewFrame);
-  const alignGhostToPreview = (attemptsLeft: number) => {
-    layoutPreviewFrame = null;
-    const root = calendarRef.value?.getRootEl();
-    const previewElement = root?.querySelector<HTMLElement>('.fc-drag-layout-preview');
-    const ghost = root?.querySelector<HTMLElement>('.fc-drag-ghost');
-    if (!previewElement || !ghost) {
-      if (attemptsLeft > 0) layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(attemptsLeft - 1));
-      return;
-    }
-    const rect = previewElement.getBoundingClientRect();
-    ghost.style.left = `${rect.left}px`;
-    ghost.style.width = `${rect.width}px`;
-    if (dragTargetOverlay) {
-      dragTargetOverlay.style.left = `${rect.left}px`;
-      dragTargetOverlay.style.width = `${rect.width}px`;
-    }
-  };
-  layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(2));
+  // The visible ghost moved earlier in this animation frame. Defer FullCalendar's overlap relayout
+  // to the next task so the browser can paint that movement first; continuous input then coalesces
+  // to the latest target instead of starving the ghost's paint.
+  layoutPreviewTimer = setTimeout(() => {
+    layoutPreviewTimer = null;
+    const pending = pendingLayoutPreview;
+    pendingLayoutPreview = null;
+    if (!pending) return;
+    upsertDragLayoutPreview(calendarRef.value?.getApi(), pending.start, pending.end);
+
+    if (layoutPreviewFrame != null) cancelAnimationFrame(layoutPreviewFrame);
+    const alignGhostToPreview = (attemptsLeft: number) => {
+      layoutPreviewFrame = null;
+      const root = calendarRef.value?.getRootEl();
+      const previewElement = root?.querySelector<HTMLElement>('.fc-drag-layout-preview');
+      const ghost = root?.querySelector<HTMLElement>('.fc-drag-ghost');
+      if (!previewElement || !ghost) {
+        if (attemptsLeft > 0) layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(attemptsLeft - 1));
+        return;
+      }
+      const rect = previewElement.getBoundingClientRect();
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.width = `${rect.width}px`;
+      if (dragTargetOverlay) {
+        dragTargetOverlay.style.left = `${rect.left}px`;
+        dragTargetOverlay.style.width = `${rect.width}px`;
+      }
+    };
+    layoutPreviewFrame = requestAnimationFrame(() => alignGhostToPreview(2));
+  }, 0);
 }
 
 function clearDragTargetOverlay() {
@@ -402,7 +418,7 @@ function renderDragTargetOverlay(date: string | null, minutes: number | null, el
     width: `${ghostRect?.width ?? column.width - 4}px`,
     height: `${ghostRect?.height ?? dragDurationMinutes.value * pxPerMinute}px`,
   });
-  syncLayoutPreview(date, minutes, magnetized);
+  syncLayoutPreview(date, minutes);
 }
 
 // A completed drag emits a trailing click; swallow it once so it doesn't also open the detail panel.
@@ -501,7 +517,15 @@ const { calendarOptions } = useAppointmentCalendar(
     onEventResize: handleEventResize,
     onEventPointerDown: handleEventPointerDown,
   },
-  { fallbackTitle: clientNameFor, tooltip: tooltipFor },
+  {
+    fallbackTitle: defaultAppointmentTitle,
+    tooltip: tooltipFor,
+    compactContent: (appt) => ({
+      client: clientNameFor(appt),
+      resource: resourceNameFor(appt),
+      service: serviceNameFor(appt),
+    }),
+  },
 );
 
 // A cell is fully elapsed (not bookable) if its whole day has passed, or — today — it ENDS at or
@@ -793,7 +817,6 @@ function onFiltersUpdate(f: FilterState) {
       :exception-bg-events="exceptions.bgEvents.value"
       :hover-events="hoverEvents"
       :hover-preview-events="hoverPreviewEvents"
-      :drag-layout-preview-events="dragLayoutPreviewEvents"
       :cell-elapsed="cellElapsed"
       :slot-bookable-by-availability="slotBookableByAvailability"
       @dates-set="onDatesSet"

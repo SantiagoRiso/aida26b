@@ -498,6 +498,16 @@ describe('GET /api/clients/:id/ledger — paginated list', () => {
     expect(res.body.data).toBeInstanceOf(Array);
     expect(typeof res.body.meta.total).toBe('number');
     expect(res.body.meta.page).toBe(1);
+    expect(res.body.data[0]).not.toHaveProperty('total_count');
+  });
+
+  test('an out-of-range page remains empty but preserves the filtered total', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const first = await req('GET', `/api/clients/${clientId}/ledger?page=1&limit=1`);
+    const empty = await req('GET', `/api/clients/${clientId}/ledger?page=500&limit=1`);
+    expect(empty.status).toBe(200);
+    expect(empty.body.data).toEqual([]);
+    expect(empty.body.meta.total).toBe(first.body.meta.total);
   });
 
   test('entries are ordered newest-first (created_at DESC)', async () => {

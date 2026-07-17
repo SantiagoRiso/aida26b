@@ -72,14 +72,16 @@ onMounted(async () => {
   if (profRes.ok) professionals.value = profRes.data;
   if (svcRes.ok) services.value = svcRes.data;
 });
+const professionalsById = computed(() => new Map(professionals.value.map((p) => [p.id, p])));
+const serviceNamesById = computed(() => new Map(services.value.map((s) => [s.id, s.name])));
 function professionalFor(appt: Appointment): TableRecordMap['professionals'] | null {
-  return professionals.value.find((p) => p.id === appt.professional_user_id) ?? null;
+  return professionalsById.value.get(appt.professional_user_id) ?? null;
 }
 function professionalNameFor(appt: Appointment): string | null {
   return professionalFor(appt)?.display_name ?? null;
 }
 function serviceNameFor(appt: Appointment): string | null {
-  return services.value.find((s) => s.id === appt.service_id)?.name ?? null;
+  return serviceNamesById.value.get(appt.service_id) ?? null;
 }
 
 // Clicking a calendar event opens a read-only detail (clients can't edit/drag/resize).
@@ -191,7 +193,7 @@ const past = computed(() =>
           <li
             v-for="appt in upcoming"
             :key="appt.id"
-            class="rounded-lg border border-border bg-card p-4"
+            class="virtualized-row rounded-lg border border-border bg-card p-4"
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex-1 space-y-1">
@@ -259,7 +261,7 @@ const past = computed(() =>
           <li
             v-for="appt in past"
             :key="appt.id"
-            class="rounded-lg border border-border bg-card p-3"
+            class="virtualized-row rounded-lg border border-border bg-card p-3"
           >
             <div class="flex items-center gap-3 flex-wrap">
               <StatusBadge :state="appt.state" />

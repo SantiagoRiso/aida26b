@@ -24,7 +24,7 @@ const TABLE_KEY = 'users' as const;
 const usersColumns = structure.tables.users.columns;
 
 // Self-deactivation locks the account out and a self "admin reset" bypasses change-password;
-// the backend rejects both — the UI must not offer them.
+// the backend rejects both; the UI must not offer them.
 function isSelf(row: TableRecordMap['users']): boolean {
   return String(row.id) === String(auth.user?.id);
 }
@@ -136,6 +136,7 @@ async function submitReset() {
     <GenericTable
       :key="reloadKey"
       :table-key="TABLE_KEY"
+      empty-value="-"
     >
       <template #header-actions>
         <AppButton @click="openCreate">

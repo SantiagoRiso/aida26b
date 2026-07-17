@@ -12,6 +12,7 @@ import { useCurrency } from '@/composables/useCurrency';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useConflictOverride } from '@/composables/useConflictOverride';
 import { useLabel } from '@/composables/useLabel';
+import { takeClientDetailPrefetch } from '@/composables/clientDetailPrefetch';
 import { structure } from '@shared/ssot/structure';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
@@ -72,6 +73,7 @@ const professionalName = (id: number | string) => professionalLabelFor(id) ?? `#
 const serviceName = (id: number | string) => serviceLabelFor(id) ?? `#${id}`;
 
 const loading = ref(true);
+const contentLoading = ref(true);
 const showBookForm = ref(false);
 
 const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverrideCancel } =
@@ -79,10 +81,20 @@ const { conflictOpen, conflictVerdict, raiseConflict, onOverrideConfirm, onOverr
 
 async function load() {
   loading.value = true;
-  // Appointments first: ledger access depends on whether the viewer has seen this client.
-  await Promise.all([loadProfile(), loadAppointments()]);
-  if (ledgerAccessible.value) await loadLedger();
+  contentLoading.value = true;
+  const prefetched = takeClientDetailPrefetch(clientId);
+  const profilePromise = prefetched
+    ? prefetched.then(({ profile }) => { if (profile.ok) client.value = profile.data; })
+    : loadProfile();
+  const appointmentsPromise = prefetched
+    ? prefetched.then(({ appointments: result }) => { appointments.value = result.ok ? result.data : []; })
+    : loadAppointments();
+  await profilePromise;
   loading.value = false;
+  // Ledger access depends on the appointment relationship, but the profile can render first.
+  await appointmentsPromise;
+  if (ledgerAccessible.value) await loadLedger();
+  contentLoading.value = false;
 }
 
 async function onBookSaved() {
@@ -137,7 +149,9 @@ onMounted(load);
           </AppButton>
         </div>
 
+        <Skeleton v-if="contentLoading" variant="row" :rows="4" />
         <div
+          v-else
           class="rounded-lg border p-4 flex items-center justify-between"
           :class="balancePositive ? 'border-destructive bg-red-50' : 'border-border bg-card'"
         >
@@ -150,13 +164,13 @@ onMounted(load);
           </span>
         </div>
 
-        <div v-if="entries.length === 0">
+        <div v-if="!contentLoading && entries.length === 0">
           <EmptyState
             :heading="t('clients.noEntriesHeading')"
             :body="t('clients.noEntriesBody')"
           />
         </div>
-        <div v-else class="overflow-x-auto rounded-lg border border-border">
+        <div v-else-if="!contentLoading" class="overflow-x-auto rounded-lg border border-border">
           <table class="min-w-full divide-y divide-border text-sm">
             <thead class="bg-surface">
               <tr>
@@ -167,7 +181,7 @@ onMounted(load);
               </tr>
             </thead>
             <tbody class="divide-y divide-border bg-card">
-              <tr v-for="entry in entries" :key="entry.id">
+              <tr v-for="entry in entries" :key="entry.id" class="virtualized-row">
                 <td class="px-4 py-3 tabular-nums text-neutral">{{ formatDateTime(entry.created_at) }}</td>
                 <td class="px-4 py-3">
                   <span
@@ -193,7 +207,8 @@ onMounted(load);
           </AppButton>
         </div>
 
-        <div v-if="pendingAppointments.length > 0">
+        <Skeleton v-if="contentLoading" variant="row" :rows="4" />
+        <div v-else-if="pendingAppointments.length > 0">
           <ul class="divide-y divide-border rounded-lg border border-border bg-card">
             <li v-for="appt in pendingAppointments" :key="appt.id" class="flex items-center justify-between px-4 py-3">
               <div class="text-sm">
@@ -214,11 +229,11 @@ onMounted(load);
         </div>
 
         <EmptyState
-          v-if="appointments.length === 0"
+          v-if="!contentLoading && appointments.length === 0"
           :heading="t('clients.noAppointmentsHeading')"
           :body="t('clients.noAppointmentsBody')"
         />
-        <p v-else-if="pendingAppointments.length === 0" class="text-sm text-neutral">
+        <p v-else-if="!contentLoading && pendingAppointments.length === 0" class="text-sm text-neutral">
           {{ t('clients.noPending') }}
         </p>
       </section>
@@ -239,7 +254,7 @@ onMounted(load);
               </tr>
             </thead>
             <tbody class="divide-y divide-border bg-card">
-              <tr v-for="appt in historyAppointments" :key="appt.id">
+              <tr v-for="appt in historyAppointments" :key="appt.id" class="virtualized-row">
                 <td class="px-4 py-3 tabular-nums text-neutral">{{ formatDateTime(appt.starts_at) }}</td>
                 <td class="px-4 py-3">{{ serviceName(appt.service_id) }}</td>
                 <td class="px-4 py-3">{{ professionalName(appt.professional_user_id) }}</td>

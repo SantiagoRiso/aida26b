@@ -42,15 +42,25 @@ defineExpose({
   width: 100%;
 }
 
-/* Short events get very little height — keep content on one clean ellipsized line. */
+/* The first line identifies the client beside the time; room and service use the remaining height. */
 :deep(.fc-ev-compact) {
   display: block;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: 12px;
   line-height: 1.3;
   padding: 1px 3px;
+}
+
+:deep(.fc-ev-primary),
+:deep(.fc-ev-details) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+:deep(.fc-ev-details) {
+  font-size: 11px;
+  opacity: 0.9;
 }
 
 /* Only appointment labels are white on a professional colour, so only they get the crispening shadow.

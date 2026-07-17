@@ -94,13 +94,14 @@ async function getListOfTable(
   const { dataQuery, dataValues, countQuery, countValues, page, limit } =
     buildListStatement(tableName, parseListRequest(query), allowed);
 
-  const [dataRows, countRows] = await Promise.all([
-    runQuery<GenericRow>(pool, dataQuery, dataValues),
-    runQuery<{ count: string }>(pool, countQuery, countValues),
-  ]);
+  const pageRows = await runQuery<GenericRow & { __total_count: string }>(pool, dataQuery, dataValues);
+  if (pageRows.length === 0) {
+    const countRows = await runQuery<{ count: string }>(pool, countQuery, countValues);
+    return sendList(res, [], { page, limit, total: parseInt(countRows[0]?.count ?? "0", 10) });
+  }
 
-  const total = parseInt(countRows[0]?.count ?? "0", 10);
-
+  const total = parseInt(pageRows[0].__total_count, 10);
+  const dataRows = pageRows.map(({ __total_count: _, ...row }) => row);
   return sendList(res, dataRows, { page, limit, total });
 }
 

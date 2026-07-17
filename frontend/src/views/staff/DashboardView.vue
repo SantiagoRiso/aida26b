@@ -39,7 +39,7 @@ const {
 // Owns its own timers and refetch lifecycle.
 const { showsCard, currentAppointments, amounts, processing, canSettle, settle } = useSettleCard();
 
-const { apptLabel, pendingClientName, clientDniFor, serviceNameFor, professionalNameFor } =
+const { apptLabel, pendingClientName, clientDniFor, serviceNameFor, professionalNameFor, resourceNameFor } =
   useAppointmentLabels();
 
 onMounted(() => {
@@ -56,44 +56,37 @@ onMounted(() => {
       {{ t('nav.dashboard') }}
     </h1>
 
-    <div v-if="showsCard && currentAppointments.length" class="mb-6 space-y-4">
+    <div v-if="showsCard && currentAppointments.length" class="mb-6 space-y-2">
       <div
         v-for="appt in currentAppointments"
         :key="appt.id"
-        class="rounded-lg border-2 border-accent bg-card p-5"
+        class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border-2 border-accent bg-card p-3"
       >
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div class="min-w-0">
-            <div class="text-xs font-semibold uppercase tracking-wide text-accent">
-              {{ t('dashboard.currentAppointment') }}
-            </div>
-            <h2 class="mt-1 text-lg font-semibold text-heading">{{ apptLabel(appt) }}</h2>
-            <p class="text-sm text-neutral">
-              {{ formatDateTime(appt.starts_at) }}
-              <span v-if="serviceNameFor(appt)"> · {{ serviceNameFor(appt) }}</span>
-              <span v-if="role === 'Receptionist' && professionalNameFor(appt)"> · {{ professionalNameFor(appt) }}</span>
-            </p>
-          </div>
-          <div class="text-right">
-            <div class="text-xs text-neutral">{{ t('calendar.priceLabel') }}</div>
-            <div class="text-lg font-semibold tabular-nums">{{ appt.price ? formatARS(appt.price) : '—' }}</div>
-          </div>
+        <div class="flex min-w-[16rem] flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <h2 class="text-base font-semibold text-heading">{{ apptLabel(appt) }}</h2>
+          <p class="text-sm text-neutral">
+            {{ formatDateTime(appt.starts_at) }}
+            <span v-if="resourceNameFor(appt)"> · {{ resourceNameFor(appt) }}</span>
+            <span v-if="serviceNameFor(appt)"> · {{ serviceNameFor(appt) }}</span>
+            <span v-if="role === 'Receptionist' && professionalNameFor(appt)"> · {{ professionalNameFor(appt) }}</span>
+          </p>
         </div>
 
-        <div class="mt-4 flex flex-wrap items-end gap-3">
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-semibold text-neutral" :for="`pay-${appt.id}`">
-              {{ t('dashboard.paymentArs') }}
-            </label>
-            <input
-              :id="`pay-${appt.id}`"
-              v-model="amounts[appt.id]"
-              type="text"
-              inputmode="decimal"
-              :disabled="!canSettle(appt)"
-              class="w-36 rounded-md border border-border bg-card px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent disabled:bg-surface disabled:text-neutral"
-            />
-          </div>
+        <div class="whitespace-nowrap text-base font-semibold tabular-nums">
+          {{ appt.price ? formatARS(appt.price) : '-' }}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="sr-only" :for="`pay-${appt.id}`">{{ t('dashboard.paymentArs') }}</label>
+          <input
+            :id="`pay-${appt.id}`"
+            v-model="amounts[appt.id]"
+            type="text"
+            inputmode="decimal"
+            :placeholder="t('dashboard.paymentArs')"
+            :disabled="!canSettle(appt)"
+            class="w-32 rounded-md border border-border bg-card px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent disabled:bg-surface disabled:text-neutral"
+          />
           <AppButton variant="primary" :loading="processing[appt.id]" :disabled="!canSettle(appt)" @click="settle(appt, 'paid')">
             {{ t('dashboard.paid') }}
           </AppButton>

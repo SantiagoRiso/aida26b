@@ -99,13 +99,13 @@ class FakeDb {
       );
       return { rows: [{ count: String(matching.length) }] };
     }
-    if (/SELECT \* FROM \(SELECT \* FROM auth\.users/i.test(sql)) {
+    if (/SELECT base\.\*, COUNT\(\*\) OVER\(\).*FROM \(SELECT \* FROM auth\.users/i.test(sql)) {
       const role = params[0];
       const bizId = params[1] !== undefined ? params[1] : null;
       const matching = this.users.filter(
         (u) => u.role === role && (bizId === null || u.business_id === bizId) && !u.deleted_at,
       );
-      return { rows: matching };
+      return { rows: matching.map((row) => ({ ...row, __total_count: String(matching.length) })) };
     }
 
     throw new Error(`Unhandled query: ${sql}`);

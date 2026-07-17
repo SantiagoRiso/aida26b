@@ -61,15 +61,24 @@ onMounted(load);
 // picker self-hides unless more than one professional is in scope, so a Professional / single-grant
 // Receptionist never sees it and keeps their full list (which is already only their requests).
 const selectedProfessionalId = ref<number | null>(null);
+const clientQuery = ref('');
 const filteredRequests = computed(() => {
   const sel = selectedProfessionalId.value;
+  const query = clientQuery.value.trim().toLocaleLowerCase(locale.value);
   // Wire rows serialize ids as strings, so compare as strings (a strict number === always misses).
-  return sel == null ? requests.value : requests.value.filter((a) => String(a.professional_user_id) === String(sel));
+  return requests.value.filter((a) => {
+    if (sel != null && String(a.professional_user_id) !== String(sel)) return false;
+    if (!query) return true;
+    return clientName(a).toLocaleLowerCase(locale.value).includes(query)
+      || (clientDniFor(a.client_user_id) ?? '').toLocaleLowerCase(locale.value).includes(query);
+  });
 });
 
 const { labelFor: clientLabelFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
+const { labelFor: clientDniFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'dni' });
 const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
+const { labelFor: resourceLabelFor } = useForeignKeyOptions({ table: 'resources', valueField: 'id', labelField: 'name' });
 
 function clientName(a: Appointment): string {
   return clientLabelFor(a.client_user_id) ?? a.name ?? t('portal.appointmentFallback', { id: a.id });
@@ -79,6 +88,9 @@ function professionalName(a: Appointment): string {
 }
 function serviceName(a: Appointment): string {
   return serviceLabelFor(a.service_id) ?? '—';
+}
+function resourceName(a: Appointment): string | null {
+  return resourceLabelFor(a.resource_id);
 }
 
 // Detail drawer: full client context so a request can be triaged without leaving the list.
@@ -195,7 +207,25 @@ const { calendarOptions: dayCalendarBase } = useAppointmentCalendar(
   dayAppts,
   nullViewer,
   { onSelect: () => {}, onEventClick: () => {}, onEventDrop: () => {}, onEventResize: () => {} },
-  { fallbackTitle: (a) => clientLabelFor(a.client_user_id) },
+  {
+    fallbackTitle: (a) => clientLabelFor(a.client_user_id),
+    tooltip: (a) => [
+      a.name || clientName(a),
+      `${formatDateTime(a.starts_at)} - ${a.duration_minutes} min`,
+      `${t('calendar.clientLabel')}: ${clientName(a)}`,
+      `${t('calendar.professionalLabel')}: ${professionalName(a)}`,
+      `${t('calendar.resourceLabel')}: ${resourceName(a) ?? '-'}`,
+      `${t('calendar.serviceLabel')}: ${serviceName(a)}`,
+      `${t('calendar.priceLabel')}: ${formatARS(a.price)}`,
+      `${t('portal.state')}: ${stateLabel(a.state)}`,
+      ...(a.override_conflict ? [`${t('calendar.fineMode')}: ${t('generic.yes')}`] : []),
+    ].join('\n'),
+    compactContent: (a) => ({
+      client: clientLabelFor(a.client_user_id),
+      resource: resourceName(a),
+      service: serviceName(a),
+    }),
+  },
 );
 const dayCalendarOptions = computed(() => ({
   ...dayCalendarBase.value,
@@ -276,8 +306,17 @@ async function confirmReject() {
       {{ t('nav.requests') }}
     </h1>
 
-    <div class="mb-6 max-w-[260px]">
+    <div class="mb-6 flex flex-wrap items-end gap-4">
       <ProfessionalPicker allow-all v-model="selectedProfessionalId" />
+      <label class="flex min-w-[220px] flex-col gap-1 text-sm">
+        <span class="font-medium text-neutral">{{ t('calendar.clientLabel') }}</span>
+        <input
+          v-model="clientQuery"
+          type="search"
+          :placeholder="t('clients.searchPlaceholder')"
+          class="w-64 rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+        />
+      </label>
     </div>
 
     <div v-if="loading">
@@ -307,7 +346,7 @@ async function confirmReject() {
               {{ formatDateTime(appt.starts_at) }} · {{ appt.duration_minutes }} min
             </p>
             <p class="text-sm text-neutral">
-              {{ professionalName(appt) }} · {{ serviceName(appt) }}
+              {{ professionalName(appt) }}<span v-if="resourceName(appt)"> · {{ resourceName(appt) }}</span> · {{ serviceName(appt) }}
             </p>
             <p class="text-xs text-neutral">{{ formatARS(appt.price) }}</p>
           </div>
@@ -343,6 +382,10 @@ async function confirmReject() {
             <dd>{{ professionalName(detailAppt) }}</dd>
             <dt class="text-neutral">{{ t('calendar.serviceLabel') }}</dt>
             <dd>{{ serviceName(detailAppt) }}</dd>
+            <template v-if="resourceName(detailAppt)">
+              <dt class="text-neutral">{{ t('calendar.resourceLabel') }}</dt>
+              <dd>{{ resourceName(detailAppt) }}</dd>
+            </template>
             <dt class="text-neutral">{{ t('calendar.priceLabel') }}</dt>
             <dd>{{ formatARS(detailAppt.price) }}</dd>
             <template v-if="detailAppt.name">
@@ -403,7 +446,9 @@ async function confirmReject() {
                 class="flex items-center justify-between gap-3 px-3 py-2 text-sm"
               >
                 <span class="tabular-nums text-neutral">{{ formatDateTime(a.starts_at) }}</span>
-                <span class="flex-1 truncate">{{ serviceName(a) }} · {{ professionalName(a) }}</span>
+                <span class="flex-1 truncate">
+                  {{ serviceName(a) }}<span v-if="resourceName(a)"> · {{ resourceName(a) }}</span> · {{ professionalName(a) }}
+                </span>
                 <span class="rounded-full bg-surface px-2 py-0.5 text-xs">{{ stateLabel(a.state) }}</span>
               </li>
             </ul>

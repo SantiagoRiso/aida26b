@@ -32,6 +32,7 @@ const props = withDefaults(
     // options, then left editable — a suggestion, not a lock.
     defaultValue?: string | null;
     placeholder?: string;
+    showEmptyOption?: boolean;
     disabled?: boolean;
     id?: string;
     // Extra text to match against besides the label (searchable only), e.g. a professional's services.
@@ -43,6 +44,7 @@ const props = withDefaults(
     readonly: false,
     defaultValue: null,
     placeholder: '',
+    showEmptyOption: true,
     disabled: false,
   },
 );
@@ -178,7 +180,7 @@ watch(
     class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
     @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value || null)"
   >
-    <option value="" disabled>{{ placeholder || '—' }}</option>
+    <option v-if="showEmptyOption" value="" disabled>{{ placeholder || '—' }}</option>
     <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
   </select>
 </template>

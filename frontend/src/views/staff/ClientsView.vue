@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
+import { prefetchClientDetail } from '@/composables/clientDetailPrefetch';
 import { listRows } from '@/api/crud';
 import { listRelatedClientIds } from '@/api/appointments';
 import { structure } from '@shared/ssot/structure';
@@ -133,7 +134,9 @@ onMounted(load);
           <tr
             v-for="c in filtered"
             :key="c.id"
-            class="border-t border-border hover:bg-surface cursor-pointer"
+            class="virtualized-row border-t border-border hover:bg-surface cursor-pointer"
+            @pointerenter="prefetchClient(Number(c.id))"
+            @focusin="prefetchClient(Number(c.id))"
             @click="openClient(Number(c.id))"
           >
             <td class="px-4 py-3 font-medium">

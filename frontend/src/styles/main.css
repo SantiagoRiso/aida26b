@@ -48,3 +48,9 @@
 .dp--input.dp-invalid {
   border-color: #DC2626;
 }
+
+/* Let the browser skip layout and paint for off-screen rows without introducing a nested scroller. */
+.virtualized-row {
+  content-visibility: auto;
+  contain-intrinsic-block-size: 49px;
+}

@@ -10,7 +10,6 @@ import {
   requestViaApi,
   getAppointment,
   stateLabelEs,
-  toastEs,
   isoDaysFromNow,
   es,
 } from './helpers';
@@ -18,7 +17,7 @@ import { DEMO_PASSWORD, DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/s
 
 /**
  * Appointment lifecycle transitions driven through the calendar detail panel — the states the
- * existing suite leaves untested (approve is covered by appointment-lifecycle.spec.ts). Every
+ * available from the detail panel. Every
  * fixture is self-seeded via the staff API onto Dra. Lisa Simpson (demo_pro3) with no-relation
  * clients (Ruth Powers / Luann Van Houten / Agnes Skinner / Jimbo Jones), none of which any other
  * spec reads or mutates — safe under the serial (workers:1) shared-dataset run.
@@ -42,6 +41,7 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
   let completeId: number;
   let noShowId: number;
   let cancelId: number;
+  let approveId: number;
   let rejectId: number;
   let tooEarlyId: number;
 
@@ -72,6 +72,10 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
     rejectId = await requestViaApi(client, {
       professional_user_id, service_id, duration_minutes: DURATION,
       date: REQUEST_DATE, start: '08:00', name: 'E2E rechazar',
+    });
+    approveId = await requestViaApi(client, {
+      professional_user_id, service_id, duration_minutes: DURATION,
+      date: REQUEST_DATE, start: '08:40', name: 'E2E aprobar',
     });
     await clientContext.close();
   });
@@ -106,6 +110,23 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
     await transitionViaPanel(page, rejectId, es.calendar.reject, 'rejected', 'next');
   });
 
+  test('approve a requested turno → scheduled', async ({ page }) => {
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+    await openAppointmentDetail(page, approveId, 'next');
+
+    const responsePromise = page.waitForResponse(
+      (r) => r.url().includes(`/appointments/${approveId}/approve`) && r.request().method() === 'POST',
+      { timeout: 15_000 },
+    );
+    await page.getByRole('button', { name: es.calendar.approve, exact: true }).click();
+    const response = await responsePromise;
+    expect(response.status()).toBe(200);
+    expect((await response.json()).data.state).toBe('scheduled');
+
+    await expect(page.getByText(stateLabelEs('scheduled')).first()).toBeVisible({ timeout: 10_000 });
+    expect((await getAppointment(page, approveId)).state).toBe('scheduled');
+  });
+
   test('cancel a scheduled turno → canceled', async ({ page }) => {
     await transitionViaPanel(page, cancelId, es.calendar.cancel, 'canceled', 'next');
   });
@@ -118,21 +139,11 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
     await transitionViaPanel(page, noShowId, es.calendar.noShow, 'no_show', 'prev');
   });
 
-  test('completing a not-yet-started turno is refused with the too-early message', async ({ page }) => {
+  test('a not-yet-started turno does not offer the complete action', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await openAppointmentDetail(page, tooEarlyId, 'next');
 
-    const responsePromise = page.waitForResponse(
-      (r) => r.url().includes(`/appointments/${tooEarlyId}/transition`) && r.request().method() === 'POST',
-      { timeout: 15_000 },
-    );
-    await page.getByRole('button', { name: es.calendar.complete, exact: true }).click();
-    const response = await responsePromise;
-    expect(response.status()).toBe(422);
-    expect((await response.json()).error.code).toBe('too_early');
-
-    await expect(page.getByText(toastEs.completeTooEarly)).toBeVisible({ timeout: 10_000 });
-    // Unchanged: still scheduled.
+    await expect(page.getByRole('button', { name: es.calendar.complete, exact: true })).toHaveCount(0);
     expect((await getAppointment(page, tooEarlyId)).state).toBe('scheduled');
   });
 });

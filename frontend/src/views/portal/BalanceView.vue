@@ -128,7 +128,7 @@ onMounted(load);
             <tr
               v-for="entry in entries"
               :key="entry.id"
-              class="bg-card hover:bg-surface transition-colors"
+              class="virtualized-row bg-card hover:bg-surface transition-colors"
             >
               <td class="px-4 py-3">
                 <span

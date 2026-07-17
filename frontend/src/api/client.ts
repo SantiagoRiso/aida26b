@@ -25,7 +25,7 @@ export interface ApiFetchOptions {
   toastOnForbidden?: boolean;
 }
 
-export async function apiFetch<T>(
+async function performApiFetch<T>(
   path: string,
   options: RequestInit = {},
   { authMode = 'authenticated', toastOnForbidden = false }: ApiFetchOptions = {},
@@ -79,4 +79,27 @@ export async function apiFetch<T>(
     data: body.data,
     meta: 'meta' in body ? body.meta : undefined,
   };
+}
+
+const inFlightGets = new Map<string, Promise<ApiResult<unknown>>>();
+
+export function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+  apiOptions: ApiFetchOptions = {},
+): Promise<ApiResult<T>> {
+  const method = (options.method ?? 'GET').toUpperCase();
+  const canShare = method === 'GET' && !options.signal && !options.body && !options.headers;
+  if (!canShare) return performApiFetch<T>(path, options, apiOptions);
+
+  const key = `${apiOptions.authMode ?? 'authenticated'}|${apiOptions.toastOnForbidden ?? false}|${path}`;
+  const existing = inFlightGets.get(key);
+  if (existing) return existing as Promise<ApiResult<T>>;
+
+  const request = performApiFetch<T>(path, options, apiOptions);
+  inFlightGets.set(key, request);
+  void request.finally(() => {
+    if (inFlightGets.get(key) === request) inFlightGets.delete(key);
+  });
+  return request;
 }

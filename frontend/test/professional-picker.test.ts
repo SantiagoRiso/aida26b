@@ -65,8 +65,8 @@ describe('ProfessionalPicker (allowAll filter mode)', () => {
     await flushPromises();
 
     const options = wrapper.get('select').findAll('option');
-    // disabled placeholder + "all" + the two professionals
-    expect(options.length).toBe(4);
+    expect(options.length).toBe(3);
+    expect(options.some((option) => option.element.value === '')).toBe(false);
     expect(wrapper.text()).toContain('Todos los profesionales');
     // Defaults to "all" — no filter forced on the caller.
     expect(wrapper.emitted('update:modelValue')).toBeUndefined();

@@ -49,10 +49,12 @@ const {
   selectedProfessionalId: () => (selectedProfId.value != null ? String(selectedProfId.value) : null),
 });
 
+const servicesById = computed(() => new Map(services.value.map((service) => [service.id, service])));
+const professionalsById = computed(() => new Map(professionals.value.map((professional) => [professional.id, professional])));
 const selectedService = computed<ServiceRow | null>(() =>
   selectedServiceId.value == null
     ? null
-    : services.value.find((s) => s.id === selectedServiceId.value) ?? null,
+    : servicesById.value.get(selectedServiceId.value) ?? null,
 );
 
 interface ProfOption { value: string; label: string; bio: string | null; services: string }
@@ -318,7 +320,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
       </div>
 
       <div v-else class="rounded-lg border border-border bg-card p-4 space-y-2">
-        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionals.find(p => p.id === String(selectedProfId))?.display_name }}</strong></p>
+        <p class="text-sm text-neutral">{{ t('portal.professional') }}: <strong class="text-current">{{ professionalsById.get(String(selectedProfId))?.display_name }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.service') }}: <strong class="text-current">{{ selectedService?.name }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.date') }}: <strong class="text-current">{{ selectedDate ? formatDate(selectedDate) : '-' }}</strong></p>
         <p class="text-sm text-neutral">{{ t('portal.time') }}: <strong class="text-current">{{ selectedStart }}</strong></p>

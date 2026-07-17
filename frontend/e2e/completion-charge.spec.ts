@@ -15,12 +15,9 @@ import { DEMO_SERVICE_NAMES } from '../../shared/src/dev-fixtures';
 
 /**
  * Ledger integrity of the completion money rule (CLAUDE.md): completing a turno posts exactly one
- * idempotent `charge` for the frozen price; no_show never charges; a turno cannot be completed
- * twice, so it cannot be charged twice. The detail-panel/settle UIs are covered by
- * appointment-transitions and dashboard-settle; this spec asserts the accounting via the API for
- * precision. Fixtures: Dr. Julius Hibbert (demo_pro6) + no-relation clients, dated in the seed's
- * past week so completion isn't blocked by the too-early gate. Balances are asserted as deltas
- * around each operation, so prior charges on a shared client don't matter (serial run).
+ * idempotent `charge` for the frozen price. The charge and no-charge outcomes are covered through
+ * the dashboard settle flow; this API-level case keeps the distinct state-machine guarantee that
+ * a completed turno cannot be completed or charged twice.
  */
 const SERVICE = DEMO_SERVICE_NAMES.medico; // Julius offers "Consulta médica"
 const DURATION = 30;
@@ -34,9 +31,7 @@ async function clientOf(page: Page, id: number): Promise<number> {
   return Number((await res.json()).data.client_user_id);
 }
 
-test.describe('Completion posts the charge; no_show does not; completion is not double-charged', () => {
-  let chargeId: number;
-  let noChargeId: number;
+test.describe('Completion is not double-charged', () => {
   let idempId: number;
 
   test.beforeAll(async ({ browser }) => {
@@ -46,42 +41,11 @@ test.describe('Completion posts the charge; no_show does not; completion is not 
 
     const professional_user_id = await findProfessionalId(admin, 'Dr. Julius Hibbert');
     const service_id = await findServiceId(admin, SERVICE);
-    const [ruth, luann, agnes] = await Promise.all([
-      findClientId(admin, 'Ruth Powers'),
-      findClientId(admin, 'Luann Van Houten'),
-      findClientId(admin, 'Agnes Skinner'),
-    ]);
+    const agnes = await findClientId(admin, 'Agnes Skinner');
 
     const base = { professional_user_id, service_id, duration_minutes: DURATION, date: PAST };
-    chargeId   = await scheduleViaApi(admin, { ...base, client_user_id: ruth,  start: '08:30', name: 'E2E cargo' });
-    noChargeId = await scheduleViaApi(admin, { ...base, client_user_id: luann, start: '09:00', name: 'E2E sin cargo' });
     idempId    = await scheduleViaApi(admin, { ...base, client_user_id: agnes, start: '09:30', name: 'E2E idempotente' });
     await ctx.close();
-  });
-
-  test('completing a turno raises the client balance by the frozen price', async ({ page }) => {
-    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    const client = await clientOf(page, chargeId);
-    const { price } = await getAppointment(page, chargeId);
-    const before = await getBalance(page, client);
-
-    const res = await transition(page, chargeId, 'completed');
-    expect(res.status()).toBe(200);
-    expect((await res.json()).data.state).toBe('completed');
-
-    expect((await getBalance(page, client)) - before).toBeCloseTo(Number(price), 2);
-  });
-
-  test('marking a turno no_show never charges the client', async ({ page }) => {
-    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    const client = await clientOf(page, noChargeId);
-    const before = await getBalance(page, client);
-
-    const res = await transition(page, noChargeId, 'no_show');
-    expect(res.status()).toBe(200);
-    expect((await res.json()).data.state).toBe('no_show');
-
-    expect((await getBalance(page, client)) - before).toBeCloseTo(0, 2);
   });
 
   test('a completed turno cannot be completed (nor charged) again', async ({ page }) => {

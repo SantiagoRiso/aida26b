@@ -58,6 +58,9 @@ const { labelFor: professionalLabelFor } = useForeignKeyOptions({
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({
   table: 'services', valueField: 'id', labelField: 'name',
 });
+const { labelFor: resourceLabelFor } = useForeignKeyOptions({
+  table: 'resources', valueField: 'id', labelField: 'name',
+});
 const { labelFor: clientLabelFor } = isStaffViewer
   ? useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' })
   : { labelFor: () => null };
@@ -65,6 +68,7 @@ const { labelFor: clientLabelFor } = isStaffViewer
 const clientName = computed(() => clientLabelFor(props.appointment?.client_user_id ?? null));
 const professionalName = computed(() => professionalLabelFor(props.appointment?.professional_user_id ?? null));
 const serviceName = computed(() => serviceLabelFor(props.appointment?.service_id ?? null));
+const resourceName = computed(() => resourceLabelFor(props.appointment?.resource_id ?? null));
 
 // The backend 422 is the real gate; the button reads the same rule (canCancelAppointment) and the
 // real per-business cutoff so its state can't disagree with what the server will accept.
@@ -211,6 +215,11 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
         <template v-if="serviceName">
           <dt class="font-semibold text-neutral">{{ t('calendar.serviceLabel') }}</dt>
           <dd>{{ serviceName }}</dd>
+        </template>
+
+        <template v-if="resourceName">
+          <dt class="font-semibold text-neutral">{{ t('calendar.resourceLabel') }}</dt>
+          <dd>{{ resourceName }}</dd>
         </template>
 
         <dt class="font-semibold text-neutral">{{ t('calendar.dateLabel') }}</dt>

@@ -282,7 +282,6 @@ export const en: Messages = {
     reasonOptional: 'Reason (optional)',
   },
   dashboard: {
-    currentAppointment: 'Current appointment',
     paymentArs: 'Payment (ARS)',
     paid: 'Paid',
     notPaid: 'Not paid',

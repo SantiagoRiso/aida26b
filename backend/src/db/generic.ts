@@ -176,7 +176,7 @@ function buildListQueryInternal(
   const fromClause = `FROM (${baseQuery}) AS base`;
 
   const dataQuery = `
-    SELECT *
+    SELECT base.*, COUNT(*) OVER()::text AS "__total_count"
     ${fromClause}
     ${whereClause}
     ${orderClause}

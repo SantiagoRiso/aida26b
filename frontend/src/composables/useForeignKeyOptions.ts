@@ -12,16 +12,13 @@ export interface SelectOption {
 // Server list cap — one page covers every FK target table today.
 export const FK_OPTIONS_LIMIT = 500;
 
-interface FkOptionsEntry {
-  options: Ref<SelectOption[]>;
+interface FkTableEntry {
+  rows: Ref<ReadonlyArray<object>>;
   loading: Ref<boolean>;
-  labelFor: (id: string | number | null | undefined) => string | null;
   reload: () => Promise<void>;
 }
 
-// One fetch per (table, valueField, labelField) app-wide; every consumer shares
-// the same reactive options, so late mounts and early rows resolve alike.
-const cache = new Map<string, FkOptionsEntry>();
+const cache = new Map<string, FkTableEntry>();
 
 function toOptions(rows: ReadonlyArray<object>, fk: ForeignKeyDef): SelectOption[] {
   return rows.map((row) => {
@@ -33,7 +30,7 @@ function toOptions(rows: ReadonlyArray<object>, fk: ForeignKeyDef): SelectOption
   });
 }
 
-function makeLabelFor(options: Ref<SelectOption[]>): FkOptionsEntry['labelFor'] {
+function makeLabelFor(options: Ref<SelectOption[]>) {
   const optionMap = computed(() => {
     const m = new Map<string, string>();
     for (const o of options.value) m.set(o.value, o.label);
@@ -47,23 +44,22 @@ function makeLabelFor(options: Ref<SelectOption[]>): FkOptionsEntry['labelFor'] 
   };
 }
 
-function acquire(fk: ForeignKeyDef): FkOptionsEntry {
-  const key = `${fk.table}|${fk.valueField}|${fk.labelField}`;
-  let entry = cache.get(key);
+function acquire(table: TableKey): FkTableEntry {
+  let entry = cache.get(table);
   if (!entry) {
-    const options = ref<SelectOption[]>([]);
+    const rows = ref<ReadonlyArray<object>>([]);
     const loading = ref(false);
     const reload = async () => {
       loading.value = true;
       try {
-        const result = await listRows(fk.table as TableKey, { limit: FK_OPTIONS_LIMIT });
-        options.value = result.ok ? toOptions(result.data, fk) : [];
+        const result = await listRows(table, { limit: FK_OPTIONS_LIMIT });
+        rows.value = result.ok ? result.data : [];
       } finally {
         loading.value = false;
       }
     };
-    entry = { options, loading, labelFor: makeLabelFor(options), reload };
-    cache.set(key, entry);
+    entry = { rows, loading, reload };
+    cache.set(table, entry);
     void entry.reload();
   }
   return entry;
@@ -72,9 +68,7 @@ function acquire(fk: ForeignKeyDef): FkOptionsEntry {
 // After a write to a referenced table, refetch its cached options so live
 // consumers don't keep showing pre-edit labels.
 export function invalidateFkOptions(table: string): void {
-  for (const [key, entry] of cache) {
-    if (key.startsWith(`${table}|`)) void entry.reload();
-  }
+  void cache.get(table)?.reload();
 }
 
 export function resetFkOptionsCache(): void {
@@ -86,8 +80,9 @@ export function useForeignKeyOptions(
   getParentValue?: () => string | undefined,
 ) {
   if (!fk.dependsOn) {
-    const entry = acquire(fk);
-    return { options: entry.options, loading: entry.loading, labelFor: entry.labelFor };
+    const entry = acquire(fk.table as TableKey);
+    const options = computed(() => toOptions(entry.rows.value, fk));
+    return { options, loading: entry.loading, labelFor: makeLabelFor(options) };
   }
 
   // Dependent options are filtered by the parent's value — per-instance, never cached.

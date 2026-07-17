@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
 import { SCREEN_ROLES } from '@/router/access';
+import { prefetchRoute } from '@/router/prefetch';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -44,6 +45,8 @@ function isActive(routeName: string): boolean {
       v-for="item in visibleItems"
       :key="item.name"
       :to="{ name: item.name }"
+      @pointerenter="prefetchRoute(router, { name: item.name })"
+      @focus="prefetchRoute(router, { name: item.name })"
       class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors"
       :class="
         isActive(item.name)

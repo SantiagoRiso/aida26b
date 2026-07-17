@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe('useForeignKeyOptions — shared cache', () => {
-  it('serves every consumer of the same table+fields from one fetch at the server cap', async () => {
+  it('serves every consumer of the same table from one fetch at the server cap', async () => {
     const a = useForeignKeyOptions(professionalsFk);
     const b = useForeignKeyOptions(professionalsFk);
     await flushPromises();
@@ -41,12 +41,12 @@ describe('useForeignKeyOptions — shared cache', () => {
     expect(b.labelFor(2)).toBe('Dr. Bruno');
   });
 
-  it('treats a different labelField as a distinct entry (separate fetch, own labels)', async () => {
+  it('derives different label fields from one shared table fetch', async () => {
     const names = useForeignKeyOptions(professionalsFk);
     const dnis = useForeignKeyOptions({ ...professionalsFk, labelField: 'dni' });
     await flushPromises();
 
-    expect(mockedListRows).toHaveBeenCalledTimes(2);
+    expect(mockedListRows).toHaveBeenCalledTimes(1);
     expect(names.labelFor('2')).toBe('Dr. Bruno');
     expect(dnis.labelFor('1')).toBe('111');
     // A null label maps to '' so callers can pick their own fallback (GenericTable shows #id).

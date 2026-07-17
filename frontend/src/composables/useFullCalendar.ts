@@ -81,6 +81,11 @@ export interface CalendarDecorators {
   // clients) before the last-resort "Turno #id".
   fallbackTitle?: (appt: Appointment) => string | null;
   tooltip?: (appt: Appointment) => string;
+  compactContent?: (appt: Appointment) => {
+    client: string | null;
+    resource: string | null;
+    service: string | null;
+  };
 }
 
 function apptToEvent(appt: Appointment, decorators?: CalendarDecorators, showConflictCues = true): EventInput {
@@ -174,9 +179,19 @@ export function useAppointmentCalendar(
 
     // Compact one-line-first rendering so short events show "HH:MM Título" instead of
     // clipping the time and title mid-letter.
-    eventContent: (arg) => ({
-      html: `<div class="fc-ev-compact"><span class="fc-ev-time">${arg.timeText.split(' - ')[0] ?? ''}</span> <span class="fc-ev-title">${escapeHtml(arg.event.title)}</span></div>`,
-    }),
+    eventContent: (arg) => {
+      const appt = arg.event.extendedProps.appointment as Appointment | undefined;
+      const compact = appt ? decorators?.compactContent?.(appt) : null;
+      if (!compact) {
+        return {
+          html: `<div class="fc-ev-compact"><div class="fc-ev-primary"><span class="fc-ev-time">${arg.timeText.split(' - ')[0] ?? ''}</span> <span class="fc-ev-title">${escapeHtml(arg.event.title)}</span></div></div>`,
+        };
+      }
+      const details = [compact.resource, compact.service].filter((part): part is string => !!part).join(' - ');
+      return {
+        html: `<div class="fc-ev-compact"><div class="fc-ev-primary"><span class="fc-ev-time">${arg.timeText.split(' - ')[0] ?? ''}</span> <span class="fc-ev-title">${escapeHtml(compact.client ?? arg.event.title)}</span></div>${details ? `<div class="fc-ev-details">${escapeHtml(details)}</div>` : ''}</div>`,
+      };
+    },
 
     selectable: editable.value,
     editable: editable.value,
@@ -206,7 +221,7 @@ export function useAppointmentCalendar(
         if (showConflictCues && appt.in_conflict) info.el.setAttribute('data-in-conflict', 'true');
         const tip = decorators?.tooltip?.(appt);
         const conflictTip = showConflictCues && appt.in_conflict ? i18n.global.t('calendar.inConflictTooltip') : '';
-        const fullTip = [tip, conflictTip].filter(Boolean).join(' · ');
+        const fullTip = [tip, conflictTip].filter(Boolean).join('\n');
         if (fullTip) info.el.setAttribute('title', fullTip);
         if (handlers.onEventPointerDown) {
           info.el.addEventListener('pointerdown', (ev) => {

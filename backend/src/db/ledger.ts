@@ -84,20 +84,24 @@ export async function listClientLedger(
   clientUserId: number,
   page: { limit: number; offset: number },
 ): Promise<{ rows: LedgerEntryRow[]; total: number }> {
-  const [rows, count] = await Promise.all([
-    query<LedgerEntryRow>(
-      db,
-      `SELECT * FROM ledger_entries
-        WHERE client_user_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3`,
-      [clientUserId, page.limit, page.offset],
-    ),
-    query<{ n: string }>(
+  const pageRows = await query<LedgerEntryRow & { total_count: string }>(
+    db,
+    `SELECT ledger_entries.*, count(*) OVER()::text AS total_count
+       FROM ledger_entries
+      WHERE client_user_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3`,
+    [clientUserId, page.limit, page.offset],
+  );
+  if (pageRows.length === 0) {
+    const count = await queryOne<{ n: string }>(
       db,
       `SELECT count(*)::text AS n FROM ledger_entries WHERE client_user_id = $1`,
       [clientUserId],
-    ),
-  ]);
-  return { rows, total: Number(count[0].n) };
+    );
+    return { rows: [], total: Number(count?.n ?? 0) };
+  }
+  const total = Number(pageRows[0].total_count);
+  const rows = pageRows.map(({ total_count: _, ...row }) => row as LedgerEntryRow);
+  return { rows, total };
 }
