@@ -36,6 +36,10 @@ jobs:
       # Used by the migration runner when DB_OWNER_* is unset; aida26_user acts as owner in CI.
       DB_OWNER_USER: aida26_user
       DB_OWNER_PASSWORD: aida26pass
+      # The db-test harness (backend/test/helpers.ts) connects its superuser pool with these; in the
+      # single-role CI Postgres, aida26_user is the superuser.
+      POSTGRES_SUPERUSER: aida26_user
+      POSTGRES_SUPERPASS: aida26pass
       NODE_ENV: test
       PORT: 3000
       # Tells playwright.config.ts to skip the webServer block (CI manages the stack).
