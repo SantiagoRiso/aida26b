@@ -23,8 +23,6 @@ const PRO_NAME = 'Dra. Edna Krabappel';
 const CLIENT_A_NAME = 'Cletus Spuckler';  // series A — created live through the form
 const CLIENT_B_NAME = 'Reverend Lovejoy'; // series B — API-seeded, anchored in the past
 const SERIES_COUNT = 3;
-// Series B runs far enough past the demo seed's dense fill to leave free future occurrences.
-const SERIES_B_COUNT = 16;
 
 function addDays(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);
@@ -41,8 +39,7 @@ async function navigateToOccurrence(
   page: Page,
   testId: string,
   direction: 'next' | 'prev' = 'next',
-  // Series B's free occurrences sit past the dense-fill window, several weeks out.
-  maxClicks = 20,
+  maxClicks = 12,
 ): Promise<Locator> {
   await page.getByRole('link', { name: es.nav.calendar }).click();
   await expect(page.locator('.fc')).toBeVisible({ timeout: 10_000 });
@@ -86,11 +83,10 @@ test.describe('Recurring appointment series', () => {
     clientAId = await findClientId(admin, CLIENT_A_NAME);
     clientBId = await findClientId(admin, CLIENT_B_NAME);
 
-    // Only the anchor is guaranteed free: it predates the demo seed's dense fill. Every occurrence
-    // after it lands inside that fill, where ~80% of the professional's slots are already booked, so
-    // most are skipped as conflicts. Run the series long enough to clear the fill and take the dates
-    // the server actually generated (below) rather than assuming +7 / +14.
+    // Before the dense demo-seed window (see helpers.ts isoDaysFromNow) — guaranteed conflict-free.
     seriesBDate0 = isoDaysFromNow(-6);
+    seriesBDate1 = addDays(seriesBDate0, 7);
+    seriesBDate2 = addDays(seriesBDate0, 14);
 
     const res = await admin.request.post('/api/appointments/series', {
       data: {
@@ -104,7 +100,7 @@ test.describe('Recurring appointment series', () => {
         start_date: seriesBDate0,
         duration_minutes: 50,
         end_kind: 'count',
-        end_count: SERIES_B_COUNT,
+        end_count: SERIES_COUNT,
       },
     });
     const body = await res.json();
@@ -112,20 +108,6 @@ test.describe('Recurring appointment series', () => {
       throw new Error(`series fixture failed: ${res.status()} ${JSON.stringify(body)}`);
     }
     seriesBId = Number(body.data.series.id);
-
-    const skipped = new Set(
-      ((body.data.preview?.skipped ?? []) as Array<{ date: string }>).map((s) => s.date),
-    );
-    const today = isoDaysFromNow(0);
-    const generatedFuture = Array.from({ length: SERIES_B_COUNT }, (_, i) => addDays(seriesBDate0, i * 7))
-      .filter((date) => !skipped.has(date) && date > today);
-    if (skipped.has(seriesBDate0) || generatedFuture.length < 2) {
-      throw new Error(
-        `series fixture needs a free anchor plus two free future occurrences; `
-        + `anchor=${seriesBDate0} skipped=[${[...skipped].join(', ')}]`,
-      );
-    }
-    [seriesBDate1, seriesBDate2] = generatedFuture;
     await ctx.close();
   });
 
