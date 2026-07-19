@@ -1,19 +1,11 @@
-import type { AuthUser } from '@/stores/auth';
-import { arrayOf, booleanValue, nullable, numberValue, object, stringEnum, stringValue } from '@/api/decoders';
-import { ROLES } from '@shared/types/roles';
+import type { AuthUser, AuthUserResult } from '@shared/ssot/contracts/auth';
+import { arrayOf, booleanValue, externalDecoder, numberValue, object, stringEnum, stringValue } from '@/api/decoders';
 import type { Conflict, ConflictVerdict } from '@shared/ssot/domain/conflict';
+import { authUserContractFailure, isAuthUser } from '@shared/ssot/contracts/auth';
 
-export const authUser = object<AuthUser>({
-  id: numberValue,
-  username: stringValue,
-  email: nullable(stringValue),
-  role: stringEnum(ROLES),
-  business_id: nullable(numberValue),
-  is_active: booleanValue,
-  must_change_password: booleanValue,
-});
+export const authUser = externalDecoder<AuthUser>(isAuthUser, authUserContractFailure);
 
-export const wrappedAuthUser = object<{ user: AuthUser }>({ user: authUser });
+export const wrappedAuthUser = object<AuthUserResult>({ user: authUser });
 
 export const conflict = object<Conflict>({
   type: stringEnum([

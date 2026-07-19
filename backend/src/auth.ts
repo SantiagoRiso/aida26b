@@ -1,18 +1,17 @@
 import crypto from 'crypto';
-import { promisify } from 'util';
 import type { Role } from '../../shared/src/types/roles';
+import type { AuthUser } from '../../shared/src/ssot/contracts/auth';
 
-const scrypt = promisify(crypto.scrypt);
+export type { AuthUser } from '../../shared/src/ssot/contracts/auth';
 
-export type AuthUser = {
-  id: number;
-  username: string;
-  email: string | null;
-  role: Role;
-  business_id: number | null;
-  is_active: boolean;
-  must_change_password: boolean;
-};
+function scrypt(password: string, salt: string, keyLength: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, keyLength, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
 
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
@@ -26,7 +25,7 @@ export function readPassword(value: string | undefined): string | null {
 }
 
 export async function hashPassword(password: string, salt = crypto.randomBytes(16).toString('hex')) {
-  const key = (await scrypt(password, salt, 64)) as Buffer;
+  const key = await scrypt(password, salt, 64);
   return { passwordHash: key.toString('hex'), passwordSalt: salt };
 }
 

@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import {
@@ -52,7 +52,11 @@ import {
 } from '../db/series';
 import { canMaterializeOccurrence, ensureOccurrenceMaterialized } from '../services/series-materialize';
 import { listVirtualOccurrences, flagRealConflictsWithVirtuals } from '../services/series-listing';
-import type { AppointmentRow, ListAppointment } from '../../../shared/src/ssot/query-types';
+import type { AppointmentRow, AppointmentSeriesRow, ListAppointment } from '../../../shared/src/ssot/query-types';
+import type {
+  EndSeriesResult, MaterializedOccurrenceResult, RelatedClientIdsResult,
+  ScheduleSeriesResult, SeriesResult, SplitSeriesResult,
+} from '../../../shared/src/ssot/contracts/appointments';
 import { parsePagination } from './pagination';
 import { APPOINTMENT_PATTERNS } from '../../../shared/src/ssot/api-paths';
 
@@ -60,6 +64,7 @@ import { APPOINTMENT_PATTERNS } from '../../../shared/src/ssot/api-paths';
 // today) — bounded so a preview never dry-runs an unbounded (open-ended) series.
 const SERIES_PREVIEW_DAYS = 56;
 
+// eslint-disable-next-line no-restricted-syntax -- Narrows an untrusted request-body field.
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
@@ -75,7 +80,7 @@ export function mountAppointmentRoutes(
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter },
 ) {
   app.post(APPOINTMENT_PATTERNS.request, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
@@ -148,7 +153,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.post(APPOINTMENT_PATTERNS.schedule, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
@@ -220,7 +225,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.post(APPOINTMENT_PATTERNS.approve, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -279,7 +284,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.post(APPOINTMENT_PATTERNS.reschedule, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -384,7 +389,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.post(APPOINTMENT_PATTERNS.transition, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -483,7 +488,7 @@ export function mountAppointmentRoutes(
   // Acknowledge (or re-flag) a turno that overlaps time-off. Staff-only; flips the stored bit the
   // in_conflict predicate reads, so an ignored turno leaves the conflict list and the calendar ring.
   app.post(APPOINTMENT_PATTERNS.ignoreConflict, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
     if (user.role === 'Client') {
@@ -517,7 +522,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.patch(APPOINTMENT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -577,7 +582,7 @@ export function mountAppointmentRoutes(
   // Backs the "clients with a prior relationship" list without shipping the whole appointment
   // history to the browser. Registered before /:id so the literal path wins.
   app.get(APPOINTMENT_PATTERNS.relatedClients, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
     if (user.role === 'Client') {
@@ -590,11 +595,11 @@ export function mountAppointmentRoutes(
       granteeUserId: user.role === 'Receptionist' ? user.id : undefined,
     });
 
-    return sendData(res, { client_user_ids: relatedIds });
+    return sendData(res, { client_user_ids: relatedIds } satisfies RelatedClientIdsResult);
   }));
 
   app.get(APPOINTMENT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -620,7 +625,7 @@ export function mountAppointmentRoutes(
   }));
 
   app.get(APPOINTMENT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -741,7 +746,7 @@ export function mountAppointmentRoutes(
   // authz/price-freeze pipeline as /schedule; occurrences themselves are never stored (computed on
   // demand) until touched via /materialize.
   app.post(APPOINTMENT_PATTERNS.seriesCreate, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -838,14 +843,14 @@ export function mountAppointmentRoutes(
       }
     }
 
-    return sendData(res, { series, preview: { skipped } }, 201);
+    return sendData(res, { series, preview: { skipped } } satisfies ScheduleSeriesResult<AppointmentSeriesRow>, 201);
   }));
 
   // Touch one occurrence into an ordinary appointments row so the existing reschedule/transition
   // endpoints can act on it individually. Idempotent — a second call for the same date returns the
   // same row (see ensureOccurrenceMaterialized).
   app.post(APPOINTMENT_PATTERNS.seriesMaterialize, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -879,7 +884,7 @@ export function mountAppointmentRoutes(
       return appt;
     });
 
-    return sendData(res, { appointment });
+    return sendData(res, { appointment } satisfies MaterializedOccurrenceResult<AppointmentRow>);
   }));
 
   // Read one series' current rule — backs the frontend's reschedule-scope weekday decision and the
@@ -887,7 +892,7 @@ export function mountAppointmentRoutes(
   // PUT below: business-scoped via getSeriesById (404s, never leaking cross-tenant existence),
   // staff-only via assertAppointmentActionAllowed.
   app.get(APPOINTMENT_PATTERNS.seriesDetail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -911,7 +916,7 @@ export function mountAppointmentRoutes(
   // resolveBooking's precedence chain (service/resource/client/duration) — that's a deliberate
   // re-freeze, never a client-supplied number.
   app.put(APPOINTMENT_PATTERNS.seriesDetail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -1001,13 +1006,13 @@ export function mountAppointmentRoutes(
       return row;
     });
 
-    return sendData(res, { series: updated });
+    return sendData(res, { series: updated } satisfies SeriesResult<AppointmentSeriesRow>);
   }));
 
   // This-and-future split: ends the current rule the day before from_date and opens a new series
   // (old identity/frozen values merged with the patch) starting exactly on from_date.
   app.post(APPOINTMENT_PATTERNS.seriesFuture, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -1056,6 +1061,7 @@ export function mountAppointmentRoutes(
       await endSeriesAt(tx, String(id), addDaysISO(fromDate, -1));
       await auditInTx(tx, user, 'appointment_series_ended', 'success', id, 'appointment_series');
       const ended = await getSeriesById(tx, id, businessId);
+      if (!ended) throw new Error('seriesFuture: ended series disappeared');
 
       const created = await insertSeries(tx, {
         client_user_id: series.client_user_id,
@@ -1079,7 +1085,7 @@ export function mountAppointmentRoutes(
       if (!created) throw new Error('insertSeries: insert returned no row');
       await auditInTx(tx, user, 'appointment_series_created', 'success', Number(created.id), 'appointment_series');
 
-      return { ended, created };
+      return { ended, created } satisfies SplitSeriesResult<AppointmentSeriesRow>;
     });
 
     return sendData(res, result, 201);
@@ -1089,7 +1095,7 @@ export function mountAppointmentRoutes(
   // rule so no further virtual occurrences generate at/after fromDate, and cancels any
   // already-materialized non-terminal occurrences in the same range.
   app.post(APPOINTMENT_PATTERNS.seriesEnd, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -1119,10 +1125,11 @@ export function mountAppointmentRoutes(
     const result = await withTransaction(pool, async (tx) => {
       await endSeriesAt(tx, String(id), addDaysISO(fromDate, -1));
       const ended = await getSeriesById(tx, id, businessId);
+      if (!ended) throw new Error('seriesEnd: ended series disappeared');
       const canceledRows = await cancelFutureOccurrences(tx, String(id), fromDate);
       const canceled = canceledRows.map((r) => r.id);
       await auditInTx(tx, user, 'appointment_series_ended', 'success', id, 'appointment_series', { canceled });
-      return { ended, canceled };
+      return { ended, canceled } satisfies EndSeriesResult<AppointmentSeriesRow>;
     });
 
     return sendData(res, result);

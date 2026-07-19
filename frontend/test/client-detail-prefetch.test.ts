@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/api/crud', () => ({ getRow: mocks.getRow }));
 vi.mock('@/api/appointments', () => ({ listAppointments: mocks.listAppointments }));
-vi.mock('@/api/client', () => ({ getApiMutationGeneration: () => mocks.generation }));
+vi.mock('@/api/mutation-generation', () => ({ getApiMutationGeneration: () => mocks.generation }));
 
 import {
   prefetchClientDetail,

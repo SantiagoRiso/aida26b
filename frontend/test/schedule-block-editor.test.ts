@@ -38,6 +38,21 @@ function fakeSelectArg(startStr: string, endStr: string) {
   return { startStr, endStr, view: { calendar: { unselect: vi.fn() } } };
 }
 
+type ScheduleEditorHarness = {
+  calendarOptions: {
+    select: (arg: ReturnType<typeof fakeSelectArg>) => void | Promise<void>;
+    eventDrop: (arg: { event: { id: string; startStr: string; endStr: string }; revert: () => void }) => void | Promise<void>;
+    eventClick: (arg: { event: { id: string } }) => void;
+  };
+  editorOpen: boolean;
+  onDeleteConfirm: () => Promise<void>;
+  saveTimes: (times: { startTime: string; endTime: string }) => Promise<boolean>;
+};
+
+function editorVm(wrapper: ReturnType<typeof mountEditor>) {
+  return wrapper.vm as typeof wrapper.vm & ScheduleEditorHarness;
+}
+
 describe('ScheduleBlockEditor', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -54,8 +69,7 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
 
     // Overlaps the existing Mon 09:00-12:00 block.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.select(fakeSelectArg('2024-01-01T11:00:00', '2024-01-01T13:00:00'));
+    await editorVm(wrapper).calendarOptions.select(fakeSelectArg('2024-01-01T11:00:00', '2024-01-01T13:00:00'));
     await flushPromises();
 
     expect(createRow).not.toHaveBeenCalled();
@@ -71,8 +85,7 @@ describe('ScheduleBlockEditor', () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.select(fakeSelectArg('2024-01-01T13:00:00', '2024-01-01T14:00:00'));
+    await editorVm(wrapper).calendarOptions.select(fakeSelectArg('2024-01-01T13:00:00', '2024-01-01T14:00:00'));
     await flushPromises();
 
     expect(createRow).toHaveBeenCalledWith('schedule_blocks', {
@@ -88,8 +101,7 @@ describe('ScheduleBlockEditor', () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.select(fakeSelectArg('2024-01-03T10:00:00', '2024-01-03T10:00:00'));
+    await editorVm(wrapper).calendarOptions.select(fakeSelectArg('2024-01-03T10:00:00', '2024-01-03T10:00:00'));
     await flushPromises();
 
     expect(createRow).not.toHaveBeenCalled();
@@ -106,8 +118,7 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
     const revert = vi.fn();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.eventDrop({
+    await editorVm(wrapper).calendarOptions.eventDrop({
       event: { id: '1', startStr: '2024-01-01T10:00:00', endStr: '2024-01-01T13:00:00' },
       revert,
     });
@@ -138,8 +149,7 @@ describe('ScheduleBlockEditor', () => {
     const revert = vi.fn();
 
     // Block '2' dragged onto block '1''s Mon 09:00-12:00 span.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.eventDrop({
+    await editorVm(wrapper).calendarOptions.eventDrop({
       event: { id: '2', startStr: '2024-01-01T10:00:00', endStr: '2024-01-01T12:00:00' },
       revert,
     });
@@ -157,16 +167,13 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
 
     // Clicking a block selects it and opens the editor modal.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (wrapper.vm as any).calendarOptions.eventClick({ event: { id: '1' } });
+    editorVm(wrapper).calendarOptions.eventClick({ event: { id: '1' } });
     await flushPromises();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((wrapper.vm as any).editorOpen).toBe(true);
+    expect(editorVm(wrapper).editorOpen).toBe(true);
 
     // Delete is confirmed outside the editor; drive the confirm handler directly rather than the
     // ConfirmDialog's own Teleport/transition DOM.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).onDeleteConfirm();
+    await editorVm(wrapper).onDeleteConfirm();
     await flushPromises();
 
     expect(deleteRow).toHaveBeenCalledWith('schedule_blocks', '1');
@@ -180,13 +187,11 @@ describe('ScheduleBlockEditor', () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (wrapper.vm as any).calendarOptions.eventClick({ event: { id: '1' } });
+    editorVm(wrapper).calendarOptions.eventClick({ event: { id: '1' } });
     await flushPromises();
 
     // Per-minute textbox edit (09:05-11:35) within block '1''s own span → no overlap with itself.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ok = await (wrapper.vm as any).saveTimes({ startTime: '09:05', endTime: '11:35' });
+    const ok = await editorVm(wrapper).saveTimes({ startTime: '09:05', endTime: '11:35' });
     await flushPromises();
 
     expect(ok).toBe(true);
@@ -212,13 +217,11 @@ describe('ScheduleBlockEditor', () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (wrapper.vm as any).calendarOptions.eventClick({ event: { id: '2' } });
+    editorVm(wrapper).calendarOptions.eventClick({ event: { id: '2' } });
     await flushPromises();
 
     // Edit block '2' to 11:00-15:00 → overlaps block '1' (Mon 09:00-12:00).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ok = await (wrapper.vm as any).saveTimes({ startTime: '11:00', endTime: '15:00' });
+    const ok = await editorVm(wrapper).saveTimes({ startTime: '11:00', endTime: '15:00' });
     await flushPromises();
 
     expect(ok).toBe(false);
@@ -244,8 +247,7 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
 
     // Non-overlapping with the existing Mon 09:00-12:00 resource block.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).calendarOptions.select(fakeSelectArg('2024-01-01T13:00:00', '2024-01-01T14:00:00'));
+    await editorVm(wrapper).calendarOptions.select(fakeSelectArg('2024-01-01T13:00:00', '2024-01-01T14:00:00'));
     await flushPromises();
 
     expect(createRow).toHaveBeenCalledWith('schedule_blocks', {

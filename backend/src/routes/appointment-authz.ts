@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from 'pg';
+import type { Queryable, TransactionClient } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import type { AuditOutcome } from '../../../shared/src/ssot/domain';
@@ -20,7 +20,7 @@ export type AuthzResult =
 
 // Does NOT catch errors — a lifecycle transition without an audit row must not commit.
 export async function auditInTx(
-  client: PoolClient,
+  client: TransactionClient,
   user: AuthUser,
   eventType: string,
   outcome: AuditOutcome,
@@ -41,10 +41,10 @@ export async function auditInTx(
   });
 }
 
-// `db` accepts both Pool and PoolClient so a caller can pass a transaction-bound client
+// `db` accepts any query executor so a caller can pass a transaction-bound client
 // when the authorization check must be atomic with the write.
 export async function assertAppointmentActionAllowed(
-  db: Pool | PoolClient,
+  db: Queryable,
   user: AuthUser,
   professionalUserId: number,
 ): Promise<AuthzResult> {
@@ -66,10 +66,10 @@ export async function assertAppointmentActionAllowed(
     : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required for this professional' };
 }
 
-// `db` must be a bound PoolClient so the grant check and the ledger INSERT are atomic —
+// `db` must be a bound transaction executor so the grant check and the ledger INSERT are atomic —
 // no revoke-between-check-and-write window on a financial route.
 export async function assertLedgerWriteAllowed(
-  db: Pool | PoolClient,
+  db: Queryable,
   user: AuthUser,
   opts: { clientUserId: number; appointmentId?: number | null; entryType: string },
 ): Promise<AuthzResult> {
@@ -106,7 +106,7 @@ export async function assertLedgerWriteAllowed(
 }
 
 export async function assertLedgerReadAllowed(
-  db: Pool | PoolClient,
+  db: Queryable,
   user: AuthUser,
   clientUserId: number,
 ): Promise<AuthzResult> {

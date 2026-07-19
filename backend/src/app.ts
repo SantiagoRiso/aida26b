@@ -11,6 +11,7 @@ import { requestLogger } from './logger';
 import { registerHealthRoute } from './health';
 import { guardRoute } from './helpers';
 import type { AuthUser } from './auth';
+import { optionalAuthenticatedUser, setAuthenticatedUser } from './session';
 import { CRUD_PATTERNS } from '../../shared/src/ssot/api-paths';
 
 export type GenericRouteGuards = {
@@ -75,8 +76,7 @@ export function createApp(pool: Pool, options: CreateAppOptions = {}) {
   if (options.defaultUser) {
     const defaultUser = options.defaultUser;
     app.use((req, _res, next) => {
-      const r = req as express.Request & { user?: AuthUser };
-      if (!r.user) r.user = defaultUser;
+      if (!optionalAuthenticatedUser(req)) setAuthenticatedUser(req, defaultUser);
       next();
     });
   }

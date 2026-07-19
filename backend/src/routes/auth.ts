@@ -5,7 +5,7 @@ import * as auth from '../auth';
 import { sendData, sendError } from '../status_messages';
 import { readPassword } from '../auth';
 import type { AuditWriter } from '../audit';
-import { getSessionToken, loadSession, type AuthedRequest } from '../session';
+import { authenticatedUser, getSessionToken, loadSession, setAuthenticatedUser } from '../session';
 import { guardRoute } from '../helpers';
 import {
   findUserForLogin,
@@ -65,7 +65,7 @@ export function mountAuthRoutes(
 
     await createSession(pool, user.id, auth.hashToken(token));
 
-    (req as AuthedRequest).user = user;
+    setAuthenticatedUser(req, user);
 
     await audit(req, 'login_success', 'success');
 
@@ -80,7 +80,7 @@ export function mountAuthRoutes(
     if (token) {
       const user = await loadSession(pool, req);
       if (user) {
-        (req as AuthedRequest).user = user;
+        setAuthenticatedUser(req, user);
       }
       await deleteSessionByToken(pool, auth.hashToken(token));
       await audit(req, 'logout', 'success');
@@ -91,14 +91,14 @@ export function mountAuthRoutes(
   }));
 
   app.get(AUTH_PATTERNS.me, requireAuth, (req, res) => {
-    return sendData(res, { user: (req as AuthedRequest).user });
+    return sendData(res, { user: authenticatedUser(req) });
   });
 
   app.post(AUTH_PATTERNS.changePassword, requireAuth, guardRoute(async (req, res) => {
     const currentPassword =
       typeof req.body.current_password === 'string' ? req.body.current_password : '';
     const newPassword = readPassword(req.body.new_password);
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (!currentPassword || !newPassword) {
       return sendError(res, 400, 'invalid_request', 'Current password and a valid new password are required');
@@ -123,6 +123,7 @@ export function mountAuthRoutes(
     const { passwordHash, passwordSalt } = await auth.hashPassword(newPassword);
 
     const updatedRow = await updateUserPassword(pool, user.id, passwordHash, passwordSalt);
+    if (!updatedRow) return sendError(res, 404, 'not_found', 'User not found');
 
     // Invalidate the user's other sessions so a changed password locks out anyone
     // holding an older token; the current session stays valid.
@@ -131,22 +132,22 @@ export function mountAuthRoutes(
       await deleteOtherSessions(pool, user.id, auth.hashToken(currentToken));
     }
 
-    (req as AuthedRequest).user = auth.publicUser(updatedRow!);
+    setAuthenticatedUser(req, auth.publicUser(updatedRow));
 
     await audit(req, 'password_changed', 'success');
 
-    return sendData(res, { user: (req as AuthedRequest).user });
+    return sendData(res, { user: authenticatedUser(req) });
   }));
 
   app.get(AUTH_PATTERNS.meProfile, requireAuth, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const profile = await getSelfProfile(pool, user.id);
     if (!profile) return sendError(res, 404, 'not_found', 'Profile not found');
     return sendData(res, { profile });
   }));
 
   app.patch(AUTH_PATTERNS.meProfile, requireAuth, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const displayName = typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
     const email = typeof req.body.email === 'string' ? req.body.email.trim() : '';
     const bio = typeof req.body.bio === 'string' && req.body.bio.trim() !== '' ? req.body.bio : null;
@@ -160,8 +161,8 @@ export function mountAuthRoutes(
     if (!updated) return sendError(res, 404, 'not_found', 'Profile not found');
 
     // email is part of the session identity; refresh it so the header/store stay in sync.
-    (req as AuthedRequest).user = { ...user, email: updated.email };
+    setAuthenticatedUser(req, { ...user, email: updated.email });
     await audit(req, 'profile_updated', 'success');
-    return sendData(res, { profile: updated, user: (req as AuthedRequest).user });
+    return sendData(res, { profile: updated, user: authenticatedUser(req) });
   }));
 }

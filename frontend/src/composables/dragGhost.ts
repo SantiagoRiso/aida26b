@@ -13,7 +13,9 @@ export interface DragGhost {
 }
 
 export function createDragGhost(source: HTMLElement, rect: DOMRect, parent: HTMLElement): DragGhost {
-  const ghost = source.cloneNode(true) as HTMLElement;
+  const clone = source.cloneNode(true);
+  if (!(clone instanceof HTMLElement)) throw new Error('Drag ghost source did not clone to an element');
+  const ghost = clone;
   ghost.classList.add('fc-drag-ghost');
   Object.assign(ghost.style, {
     position: 'fixed',

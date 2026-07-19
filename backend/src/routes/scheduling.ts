@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { countAppointmentsHitByTimeOff } from '../db/scheduling';
@@ -17,6 +17,9 @@ import {
 } from '../services/scheduling';
 import { resolveAndLoadService, runConflictDryRun } from '../services/booking';
 import { SCHEDULING_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import type {
+  AvailabilityResult, BookingWindowResult, ConflictCheckResult, TimeOffConflictCountResult,
+} from '../../../shared/src/ssot/contracts/scheduling';
 
 export function mountSchedulingRoutes(
   app: express.Application,
@@ -25,7 +28,7 @@ export function mountSchedulingRoutes(
 ) {
   // Advisory dry-run. REPORT-ONLY — never writes; appointments stay SELECT-only.
   app.post(SCHEDULING_PATTERNS.conflictCheck, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -60,16 +63,17 @@ export function mountSchedulingRoutes(
       return sendError(res, dryRun.status, dryRun.code, dryRun.message);
     }
 
-    return sendData(res, {
+    const response = {
       ...dryRun.verdict,
       effective_price: resolved.effective_price,
       effective_duration_minutes: resolved.effective_duration_minutes,
-    });
+    } satisfies ConflictCheckResult;
+    return sendData(res, response);
   }));
 
   // Discrete free slots for one owner on one date. owner = prof:<id> | res:<id>.
   app.get(SCHEDULING_PATTERNS.availability, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -125,11 +129,12 @@ export function mountSchedulingRoutes(
       if (states.some((state) => state == null)) {
         return sendError(res, 404, 'not_found', 'Owner not found in this business');
       }
-      return sendData(res, states.map((state, index) => ({
+      const response = states.map((state, index) => ({
         date: dates[index],
         slots: state!.freeSlots,
         open: state!.gridSlots.length > 0,
-      })));
+      } satisfies AvailabilityResult));
+      return sendData(res, response);
     }
 
     const state = await loadOwnerState(pool, businessId, { kind, id: Number(owner![2]) }, date, {
@@ -143,13 +148,15 @@ export function mountSchedulingRoutes(
     if (user.role === 'Client' && kind === 'professional' && serviceId !== undefined) {
       const bounds = await resolveBookingWindow(pool, businessId, Number(owner![2]), serviceId);
       if (bounds && isOutsideBookingWindow(date, bounds)) {
-        return sendData(res, { date, slots: [], open: false, outside_window: true });
+        const response = { date, slots: [], open: false, outside_window: true } satisfies AvailabilityResult;
+        return sendData(res, response);
       }
     }
 
     // `open` distinguishes "doesn't work that day" (false) from "works but fully booked"
     // (true + empty slots) so the UI can say which one it is.
-    return sendData(res, { date, slots: state.freeSlots, open: state.gridSlots.length > 0 });
+    const response = { date, slots: state.freeSlots, open: state.gridSlots.length > 0 } satisfies AvailabilityResult;
+    return sendData(res, response);
   }));
 
   // Concrete booking-window bounds for one (professional, service), so the client UI can clamp the
@@ -168,7 +175,8 @@ export function mountSchedulingRoutes(
 
     const bounds = await resolveBookingWindow(pool, businessId, professionalId, serviceId);
     if (!bounds) return sendError(res, 404, 'not_found', 'Professional not found in this business');
-    return sendData(res, { min_date: bounds.minDate, max_date: bounds.maxDate });
+    const response = { min_date: bounds.minDate, max_date: bounds.maxDate } satisfies BookingWindowResult;
+    return sendData(res, response);
   }));
 
   // How many open, future turnos a not-yet-saved time-off would put in conflict — read-only, backs
@@ -176,7 +184,7 @@ export function mountSchedulingRoutes(
   // professional_user_id previews a personal exception (gated like editing that schedule);
   // omitting it previews a whole-business closure (Admin only, mirroring the closures route).
   app.post(SCHEDULING_PATTERNS.timeOffConflictPreview, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
@@ -210,6 +218,6 @@ export function mountSchedulingRoutes(
     }
 
     const count = await countAppointmentsHitByTimeOff(pool, businessId, BUSINESS_TZ, scope, { date, start, end });
-    return sendData(res, { count });
+    return sendData(res, { count } satisfies TimeOffConflictCountResult);
   }));
 }

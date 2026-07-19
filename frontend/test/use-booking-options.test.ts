@@ -6,6 +6,8 @@ import { listRows } from '@/api/crud';
 import { listAppointments } from '@/api/appointments';
 import { useAuthStore, type AuthUser } from '@/stores/auth';
 import { useBookingOptions } from '@/composables/useBookingOptions';
+import type { Appointment } from '@/api/appointments';
+import { apiSuccess, listRowsFrom } from './helpers/api-fixtures';
 
 vi.mock('@/api/crud', () => ({ listRows: vi.fn() }));
 vi.mock('@/api/appointments', () => ({ listAppointments: vi.fn() }));
@@ -18,30 +20,33 @@ const professionals = [
   { id: '3', display_name: 'Dr. Arnie Pye', bio: null },
 ];
 const services = [
-  { id: '10', name: 'Sesión de Psicología Infantil' },
-  { id: '20', name: 'Consulta nutricional' },
-  { id: '30', name: 'Sesión de kinesiología' },
+  { id: '10', business_id: '1', name: 'Sesión de Psicología Infantil', description: null, default_duration_minutes: 50, default_price_ars: '8000.00' },
+  { id: '20', business_id: '1', name: 'Consulta nutricional', description: null, default_duration_minutes: 50, default_price_ars: '8000.00' },
+  { id: '30', business_id: '1', name: 'Sesión de kinesiología', description: null, default_duration_minutes: 50, default_price_ars: '8000.00' },
 ];
 const profServices = [
-  { professional_user_id: '1', service_id: '10' },
-  { professional_user_id: '1', service_id: '20' },
-  { professional_user_id: '2', service_id: '30' },
+  { id: '1', professional_user_id: '1', service_id: '10', min_booking_days: null, max_booking_days: null },
+  { id: '2', professional_user_id: '1', service_id: '20', min_booking_days: null, max_booking_days: null },
+  { id: '3', professional_user_id: '2', service_id: '30', min_booking_days: null, max_booking_days: null },
 ];
 const clients = [
-  { id: '7', display_name: 'Homero Simpson', dni: '11222333' },
-  { id: '8', display_name: 'Ned Flanders', dni: null },
+  { id: '7', display_name: 'Homero Simpson', email: null, dni: '11222333', username: null, phone: null, notes: null },
+  { id: '8', display_name: 'Ned Flanders', email: null, dni: null, username: null, phone: null, notes: null },
 ];
 
 function mockTables() {
-  mockListRows.mockImplementation((table) => {
-    const data =
-      table === 'professionals' ? professionals
-      : table === 'services' ? services
-      : table === 'professional_services' ? profServices
-      : table === 'clients' ? clients
-      : [];
-    return Promise.resolve({ ok: true, data } as never);
-  });
+  mockListRows.mockImplementation(listRowsFrom({ professionals, services, professional_services: profServices, clients }));
+}
+
+function appointment(overrides: Partial<Appointment>): Appointment {
+  return {
+    id: '1', client_user_id: '7', professional_user_id: '1', resource_id: null, service_id: '10',
+    starts_at: new Date().toISOString(), duration_minutes: 50, ends_at: new Date().toISOString(),
+    state: 'scheduled', name: null, description: null, price: '8000.00', override_conflict: false,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(), conflict_ignored: false,
+    series_id: null, occurrence_date: null,
+    ...overrides,
+  };
 }
 
 function setUser(user: Partial<AuthUser> | null) {
@@ -65,7 +70,7 @@ beforeEach(() => {
   mockListRows.mockReset();
   mockListAppointments.mockReset();
   mockTables();
-  mockListAppointments.mockResolvedValue({ ok: true, data: [] } as never);
+  mockListAppointments.mockResolvedValue(apiSuccess([]));
 });
 
 describe('useBookingOptions — professional scoping', () => {
@@ -127,12 +132,12 @@ describe('useBookingOptions — recency ranking', () => {
   function appts(rows: { prof: string; agoDays: number }[]) {
     mockListAppointments.mockResolvedValue({
       ok: true,
-      data: rows.map((r, i) => ({
+      data: rows.map((r, i) => appointment({
         id: String(i + 1),
         professional_user_id: r.prof,
         starts_at: new Date(Date.now() - r.agoDays * day).toISOString(),
       })),
-    } as never);
+    });
   }
 
   it('recently seen professionals come first (most recent → oldest), the rest alphabetical', async () => {
@@ -204,7 +209,7 @@ describe('useBookingOptions — recency ranking', () => {
         is_virtual: true,
         in_conflict: false,
       }],
-    } as never);
+    });
     const { rankedProfessionals } = useBookingOptions({ rankByRecency: true });
     await flushPromises();
 

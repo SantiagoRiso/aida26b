@@ -3,11 +3,9 @@ import { arrayOf, nullable, numberValue, object, stringValue, union } from '@/ap
 import type { ApiResult } from '@/api/client';
 import type { LedgerEntryRow, Wire } from '@shared/ssot/query-types';
 import { ledgerPaths } from '@shared/ssot/api-paths';
+import type { BalanceResult } from '@shared/ssot/contracts/ledger';
 
-export interface BalanceResult {
-  client_user_id: number | string;
-  balance_ars: string;
-}
+export type { BalanceResult } from '@shared/ssot/contracts/ledger';
 
 export type LedgerEntry = Wire<LedgerEntryRow>;
 const idValue = union(numberValue, stringValue);

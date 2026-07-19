@@ -1,9 +1,12 @@
 import type { EventInput } from '@fullcalendar/core';
 import type { TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
+import { tableRecord } from '@/api/ssot-decoder';
 
 export type ExceptionKind = 'off' | 'block' | 'extra';
 
-export type ExceptionRow = TableRecordMap['schedule_exceptions'];
+export type ExceptionRow = Wire<TableRecordMap['schedule_exceptions']>;
+export const exceptionContract = tableRecord('schedule_exceptions');
 
 // Full-day off has no time window; a partial window is either blocked (is_unavailable) or an
 // extra-hours opening — the DB CHECK guarantees these three shapes are exhaustive.

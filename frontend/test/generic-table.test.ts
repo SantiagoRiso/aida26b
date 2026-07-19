@@ -291,7 +291,7 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
 describe('GenericTable — loading skeleton', () => {
   it('shows the row skeleton while the list request is in flight, then the rows once resolved', async () => {
     const { listRows } = await import('@/api/crud');
-    let resolveFetch!: (v: unknown) => void;
+    let resolveFetch!: (value: Awaited<ReturnType<typeof listRows>>) => void;
     (listRows as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((r) => { resolveFetch = r; }));
 
     const { pinia, router, i18n } = makePlugins();

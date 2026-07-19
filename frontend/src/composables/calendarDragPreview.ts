@@ -1,10 +1,10 @@
-import type { EventInput } from '@fullcalendar/core';
+import type { EventApi, EventInput } from '@fullcalendar/core';
 
 export const DRAG_LAYOUT_PREVIEW_ID = '__drag-layout-preview';
 
 export interface DragPreviewCalendarApi {
   getEventById: (id: string) => { setDates: (start: string, end: string) => void; remove: () => void } | null;
-  addEvent: (event: EventInput) => unknown;
+  addEvent: (event: EventInput) => EventApi;
 }
 
 export function upsertDragLayoutPreview(api: DragPreviewCalendarApi | undefined, start: string, end: string): void {

@@ -42,8 +42,7 @@ describe('GET /health', () => {
       query: async () => {
         throw new Error('SELECT 1 unreachable');
       },
-      // eslint-disable-next-line no-restricted-syntax -- partial mock of pg's Pool — implementing its full driver interface isn't practical for a test double
-    } as unknown as Pool);
+    });
     const s = failing.listen(4141);
     await new Promise<void>((resolve) => s.once('listening', () => resolve()));
 

@@ -9,6 +9,7 @@ import {
   getSortableColumns,
   getReferencedRelations,
   getDerivableFields,
+  isTableKey,
 } from '../../../shared/src/utils/utils';
 import { buildScopeConditions, type ScopeConditionsInput } from './scope';
 
@@ -240,7 +241,10 @@ function getSelectStatement(tableName: TableKey): string {
 
   selectFields.push(
     ...derivedFields.map(([fieldName, column]) => {
-      const originTable = column.derivable?.originTable as TableKey;
+      const originTable = column.derivable?.originTable;
+      if (!originTable || !isTableKey(originTable)) {
+        throw new Error(`Invalid derivable origin table for ${tableName}.${fieldName}`);
+      }
 
       const expression = column.derivable?.sqlGenerationStatement.replace(
         /entityName/g,

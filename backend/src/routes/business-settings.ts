@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { getBusinessSettings, updateBusinessSettings } from '../db/businesses';
@@ -22,7 +22,7 @@ export function mountBusinessSettingsRoutes(
     req: express.Request,
     res: express.Response,
   ): Promise<number | null> {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'permission_denied', 'denied', {
@@ -94,7 +94,7 @@ export function mountBusinessSettingsRoutes(
     };
 
     const minParsed = asOptInt(req.body.min_booking_days, false);
-    if (!minParsed.ok) {
+    if (!minParsed.ok || minParsed.value === null) {
       return sendError(res, 422, 'invalid_request', 'min_booking_days must be a non-negative integer', {
         min_booking_days: 'non-negative integer',
       });
@@ -110,7 +110,7 @@ export function mountBusinessSettingsRoutes(
     if (!current) {
       return sendError(res, 404, 'not_found', 'Business not found');
     }
-    const minDays = minParsed.value === undefined ? current.min_booking_days : (minParsed.value as number);
+    const minDays = minParsed.value === undefined ? current.min_booking_days : minParsed.value;
     const maxDays = maxParsed.value === undefined ? current.max_booking_days : maxParsed.value;
     if (maxDays !== null && maxDays < minDays) {
       return sendError(res, 422, 'invalid_request', 'max_booking_days must be greater than or equal to min_booking_days', {

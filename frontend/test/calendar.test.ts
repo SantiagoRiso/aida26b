@@ -6,7 +6,7 @@ import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import type { CalendarOptions } from '@fullcalendar/core';
+import type { CalendarOptions, EventMountArg } from '@fullcalendar/core';
 
 describe('colorForProfessional', () => {
   it('returns a stable color for the same id across calls', () => {
@@ -266,7 +266,7 @@ describe('useAppointmentCalendar hides non-events', () => {
       onEventPointerDown,
     });
     const element = document.createElement('div');
-    const eventDidMount = calendarOptions.value.eventDidMount as (info: unknown) => void;
+    const eventDidMount = calendarOptions.value.eventDidMount as (info: EventMountArg) => void;
     eventDidMount({
       el: element,
       event: { extendedProps: { appointment: original } },
@@ -293,7 +293,7 @@ describe('useAppointmentCalendar hides non-events', () => {
     expect(event.classNames).not.toContain('appt-in-conflict');
 
     const element = document.createElement('div');
-    const eventDidMount = calendarOptions.value.eventDidMount as (info: unknown) => void;
+    const eventDidMount = calendarOptions.value.eventDidMount as (info: EventMountArg) => void;
     eventDidMount({ el: element, event: { extendedProps: { appointment: conflicted } } });
     expect(element.hasAttribute('data-in-conflict')).toBe(false);
     expect(element.getAttribute('title') ?? '').not.toContain('conflict');

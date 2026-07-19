@@ -57,7 +57,8 @@ export async function runMigrations(pool: Pool, dir: string): Promise<number> {
           appliedCount++;
         } catch (err) {
           await client.query('ROLLBACK');
-          throw new Error(`Migration "${file}" failed: ${(err as Error).message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`Migration "${file}" failed: ${message}`);
         }
       }
 

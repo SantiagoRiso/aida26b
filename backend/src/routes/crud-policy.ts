@@ -1,5 +1,3 @@
-import { Pool, PoolClient } from 'pg';
-import { structure } from '../../../shared/src/ssot/structure';
 import {
   isProtected,
   getCrudPolicy,
@@ -7,9 +5,10 @@ import {
   getProfessionalScheduleOwnerFk,
   getResourceScheduleOwnerFk,
   getRoleCheckedColumns,
+  isTableKey,
 } from '../../../shared/src/utils/utils';
 import type { TableKey } from '../../../shared/src/ssot/derived';
-import type { SqlParam } from '../db/core';
+import type { Queryable, SqlParam } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import { hasCalendarGrant } from '../db/grants';
@@ -32,7 +31,7 @@ export function getSqlReadTable(table: TableKey): string {
 }
 
 export function isKnownTable(name: string): name is TableKey {
-  return Object.prototype.hasOwnProperty.call(structure.tables, name);
+  return isTableKey(name);
 }
 
 export type CrudAccess =
@@ -91,26 +90,26 @@ export function assertCrudAllowed(name: string, op: CrudOperation, user: AuthUse
     };
   }
 
-  const meta = tableOf(name as TableKey);
+  const meta = tableOf(name);
   const required = meta.roleRequired?.[op] ?? [];
   if (required.length > 0 && !required.includes(user.role)) {
     return { ok: false, status: 403, code: 'forbidden', message: 'Insufficient role' };
   }
 
-  const { businessWhere, businessParams } = buildBusinessScope(name as TableKey, user);
-  const { ownerWhere, ownerParams } = buildOwnerScope(name as TableKey, user, op);
-  const { grantWhere, grantParams } = buildGrantScope(name as TableKey, user);
+  const { businessWhere, businessParams } = buildBusinessScope(name, user);
+  const { ownerWhere, ownerParams } = buildOwnerScope(name, user, op);
+  const { grantWhere, grantParams } = buildGrantScope(name, user);
 
-  const disc = roleDiscriminatorFragment(name as TableKey);
+  const disc = roleDiscriminatorFragment(name);
   const discriminatorWhere = disc?.sql;
   const discriminatorParams = disc ? [disc.value] : undefined;
 
-  const sqlTable = getSqlTable(name as TableKey);
-  const sqlReadTable = getSqlReadTable(name as TableKey);
+  const sqlTable = getSqlTable(name);
+  const sqlReadTable = getSqlReadTable(name);
 
   return {
     ok: true,
-    table: name as TableKey,
+    table: name,
     sqlTable,
     sqlReadTable,
     businessWhere,
@@ -139,7 +138,7 @@ export type OwnScheduleResult =
 // resources are Admin-only for non-granted staff (no resource-grant column exists);
 // a Client is always denied. Cross-business owners return 404 to hide existence.
 export async function assertOwnScheduleAllowed(
-  db: Pool | PoolClient,
+  db: Queryable,
   user: AuthUser,
   target: OwnScheduleTarget,
 ): Promise<OwnScheduleResult> {
@@ -203,7 +202,7 @@ export type ReferenceCheckResult =
 // for super-admins). Replaces the removed composite-FK DB constraint; shared by create and update
 // so the tenant-integrity rule lives in exactly one place.
 export async function assertRoleCheckedReferences(
-  db: Pool | PoolClient,
+  db: Queryable,
   table: TableKey,
   data: Record<string, ColumnValue>,
   user: AuthUser,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
+import { arrayOf, numberValue, object, optional, stringValue, undefinedValue, union } from '@/api/decoders';
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -9,22 +10,19 @@ beforeEach(() => {
 async function importFresh() {
   // Dynamic import avoids module-level singleton issues.
   const { apiFetchDecoded } = await import('@/api/client');
-  const { unknownValue } = await import('@/api/decoders');
   const { useUiStore } = await import('@/stores/ui');
   const apiFetch = (path: string, options?: RequestInit, apiOptions?: Parameters<typeof apiFetchDecoded>[3]) => (
-    apiFetchDecoded(unknownValue, path, options, apiOptions)
+    apiFetchDecoded(transportPayload, path, options, apiOptions)
   );
   return { apiFetch, useUiStore };
 }
 
-function isNamedEntity(value: unknown): value is { id: number; name: string } {
-  return value !== null
-    && typeof value === 'object'
-    && 'id' in value
-    && typeof value.id === 'number'
-    && 'name' in value
-    && typeof value.name === 'string';
-}
+const namedEntity = object<{ id: number; name: string }>({ id: numberValue, name: stringValue });
+const basicEntity = object<{ id: number; name?: string }>({ id: numberValue, name: optional(stringValue) });
+const authPayload = object<{ user: { id: number; username: string; role: string } }>({
+  user: object({ id: numberValue, username: stringValue, role: stringValue }),
+});
+const transportPayload = union(undefinedValue, union(basicEntity, union(authPayload, arrayOf(basicEntity))));
 
 function mockFetch<T>(status: number, body: T, headers?: Record<string, string>) {
   const responseBody = body === undefined ? '' : JSON.stringify(body);
@@ -52,19 +50,51 @@ describe('decoded payload contract', () => {
   it('accepts data matching the endpoint decoder', async () => {
     mockFetch(200, { success: true, data: { id: 1, name: 'Test' } });
     const { apiFetchDecoded } = await import('@/api/client');
-    const result = await apiFetchDecoded(isNamedEntity, '/appointments/1');
+    const result = await apiFetchDecoded(namedEntity, '/appointments/1');
     expect(result).toEqual({ ok: true, data: { id: 1, name: 'Test' }, meta: undefined });
+  });
+
+  it('rejects a successful response with an unexpected endpoint status', async () => {
+    mockFetch(201, { success: true, data: { id: 1, name: 'Test' } });
+    const { apiFetchDecoded } = await import('@/api/client');
+    const result = await apiFetchDecoded(namedEntity, '/appointments/1', {}, { successStatuses: [200] });
+    expect(result).toEqual({
+      ok: false,
+      status: 201,
+      code: 'bad_response',
+      message: 'Unexpected response status',
+      diagnostic: '$status: expected 200, received 201',
+    });
   });
 
   it('rejects an enveloped payload that violates the endpoint contract', async () => {
     mockFetch(200, { success: true, data: { id: 'wrong', name: 'Test' } });
     const { apiFetchDecoded } = await import('@/api/client');
-    const result = await apiFetchDecoded(isNamedEntity, '/appointments/1');
+    const result = await apiFetchDecoded(namedEntity, '/appointments/1');
     expect(result).toEqual({
       ok: false,
       status: 200,
       code: 'bad_response',
       message: 'Unexpected response payload',
+      diagnostic: '$.id: expected finite number',
+    });
+  });
+
+  it('reports the endpoint and field path without exposing it as the user message', async () => {
+    mockFetch(200, { success: true, data: { id: 'wrong', name: 'Test' } });
+    const { apiFetchDecoded } = await import('@/api/client');
+    const { setApiContractFailureReporter } = await import('@/api/contract-validation');
+    const reporter = vi.fn();
+    const restore = setApiContractFailureReporter(reporter);
+    try {
+      await apiFetchDecoded(namedEntity, '/appointments/1');
+    } finally {
+      restore();
+    }
+    expect(reporter).toHaveBeenCalledWith({
+      path: '/appointments/1',
+      status: 200,
+      diagnostic: '$.id: expected finite number',
     });
   });
 });
@@ -286,12 +316,12 @@ describe('204 No Content response', () => {
 
 describe('mutation generation', () => {
   it('advances only after successful writes', async () => {
-    const { apiFetchDecoded, getApiMutationGeneration } = await import('@/api/client');
-    const { unknownValue } = await import('@/api/decoders');
+    const { apiFetchDecoded } = await import('@/api/client');
+    const { getApiMutationGeneration } = await import('@/api/mutation-generation');
     const initial = getApiMutationGeneration();
     mockFetch(200, { success: true, data: { id: 1 } });
 
-    await apiFetchDecoded(unknownValue, '/appointments', { method: 'POST' });
+    await apiFetchDecoded(basicEntity, '/appointments', { method: 'POST' });
 
     expect(getApiMutationGeneration()).toBe(initial + 1);
   });

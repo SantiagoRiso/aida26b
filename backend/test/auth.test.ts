@@ -4,6 +4,7 @@ import http from 'node:http';
 import { test } from 'vitest';
 import { app, pool } from '../src/server';
 import { hashPassword } from '../src/auth';
+import { isAuthUser } from '../../shared/src/ssot/contracts/auth';
 
 class FakeDb {
   constructor(users) {
@@ -180,6 +181,7 @@ test('login, me and logout manage the session cookie', async () => {
 
     const loginRes = await request(baseUrl, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'adminpass' } });
     assert.equal(loginRes.status, 200);
+    assert.ok(isAuthUser(loginRes.body.data.user));
     assert.equal(loginRes.body.data.user.business_id, 1);
     assert.equal(loginRes.body.data.user.must_change_password, false);
     const cookie = loginRes.cookie;
@@ -187,6 +189,7 @@ test('login, me and logout manage the session cookie', async () => {
 
     const me = await request(baseUrl, '/api/auth/me', { cookie });
     assert.equal(me.status, 200);
+    assert.ok(isAuthUser(me.body.data.user));
     assert.equal(me.body.data.user.role, 'Admin');
     assert.equal(me.body.data.user.business_id, 1);
     assert.equal(me.body.data.user.must_change_password, false);

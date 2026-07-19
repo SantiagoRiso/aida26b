@@ -8,8 +8,8 @@ import {
 } from '@/composables/availabilityShading';
 import type { EventInput } from '@fullcalendar/core';
 
-function spans(events: EventInput[]): { start: unknown; end: unknown; cls: unknown }[] {
-  return events.map((e) => ({ start: e.start, end: e.end, cls: (e.classNames as string[])[0] }));
+function spans(events: EventInput[]) {
+  return events.map((event) => ({ start: event.start, end: event.end, cls: event.classNames?.[0] }));
 }
 
 const appt = (starts_at: string, ends_at: string, state = 'scheduled') => ({ starts_at, ends_at, state });

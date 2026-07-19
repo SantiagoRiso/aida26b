@@ -2,7 +2,7 @@ import { getRow } from '@/api/crud';
 import { listAppointments } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import type { Appointment } from '@/api/appointments';
-import { getApiMutationGeneration } from '@/api/client';
+import { getApiMutationGeneration } from '@/api/mutation-generation';
 
 const PREFETCH_TTL_MS = 15_000;
 

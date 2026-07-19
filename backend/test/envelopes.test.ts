@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import type { Response } from 'express';
 import { sendList, sendData, sendError } from '../src/status_messages';
 import type { ApiEnvelope, ApiErrorEnvelope } from '../../shared/src/ssot/envelope';
 import { assertCrudAllowed, resolveCrudAccess } from '../src/routes/crud-policy';
@@ -41,32 +40,28 @@ const adminUser: AuthUser = {
 describe('standard response envelopes', () => {
   it('list endpoints return { success, data, meta }', () => {
     const res = fakeRes();
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    sendList(res as unknown as Response, [{ id: '1' }], { page: 1, limit: 20, total: 1 });
+    sendList(res, [{ id: '1' }], { page: 1, limit: 20, total: 1 });
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ success: true, data: [{ id: '1' }], meta: { page: 1, limit: 20, total: 1 } });
   });
 
   it('single-record / action endpoints return { success, data }', () => {
     const res = fakeRes();
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    sendData(res as unknown as Response, { id: '1', name: 'x' }, 201);
+    sendData(res, { id: '1', name: 'x' }, 201);
     expect(res.statusCode).toBe(201);
     expect(res.body).toEqual({ success: true, data: { id: '1', name: 'x' } });
   });
 
   it('errors return { success: false, error: { code, message } }', () => {
     const res = fakeRes();
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    sendError(res as unknown as Response, 404, 'not_found', 'nope');
+    sendError(res, 404, 'not_found', 'nope');
     expect(res.statusCode).toBe(404);
     expect(res.body).toEqual({ success: false, error: { code: 'not_found', message: 'nope' } });
   });
 
   it('error envelope carries a per-field map when provided', () => {
     const res = fakeRes();
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    sendError(res as unknown as Response, 400, 'validation_error', 'Validation failed', {
+    sendError(res, 400, 'validation_error', 'Validation failed', {
       email: 'email must be a valid email address',
     });
     expect(res.body).toEqual({
@@ -133,8 +128,7 @@ describe('validation adapter', () => {
   it('emits the standard error envelope with a fields map on invalid input', () => {
     const res = fakeRes();
     const result = validateFullObject('clients', {});
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    const stopped = sendErrorsIfInvalid(res as unknown as Response, result);
+    const stopped = sendErrorsIfInvalid(res, result);
     expect(stopped).toBe(true);
     expect(res.statusCode).toBe(400);
     const body = res.body;
@@ -152,8 +146,7 @@ describe('validation adapter', () => {
       dni: '12345678',
       notes: 'x',
     });
-    // eslint-disable-next-line no-restricted-syntax -- partial mock of Express's Response — implementing its full interface isn't practical for a test double
-    const stopped = sendErrorsIfInvalid(res as unknown as Response, result);
+    const stopped = sendErrorsIfInvalid(res, result);
     expect(stopped).toBe(false);
     expect(res.statusCode).toBe(0);
   });

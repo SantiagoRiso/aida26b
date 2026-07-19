@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { listAuditEvents } from '../db/audit';
@@ -19,7 +19,7 @@ export function mountAuditRoutes(
 ) {
   // Scoped to the session business; business_id is seeded from the session, never the request body.
   app.get(AUDIT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'permission_denied', 'denied', {

@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { LEDGER_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
@@ -23,6 +23,7 @@ import {
 } from '../db/ledger';
 import { parsePagination } from './pagination';
 import { LEDGER_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import type { BalanceResult } from '../../../shared/src/ssot/contracts/ledger';
 
 // Non-negative, at most two decimals — the SSoT pattern carries its own anchors.
 const AMOUNT_RE = new RegExp(AMOUNT_PATTERN);
@@ -37,7 +38,7 @@ export function mountLedgerRoutes(
 ) {
   // The authz check runs inside the transaction so the grant check and INSERT are atomic.
   app.post(LEDGER_PATTERNS.create, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
@@ -100,8 +101,9 @@ export function mountLedgerRoutes(
         description,
         actorUserId: user.id,
       });
-      await auditInTx(tx, user, `ledger_${entryType}_created`, 'success', Number(row!.id), 'ledger_entries');
-      return { kind: 'ok' as const, row: row! };
+      if (!row) throw new Error('insertLedgerEntry returned no row');
+      await auditInTx(tx, user, `ledger_${entryType}_created`, 'success', Number(row.id), 'ledger_entries');
+      return { kind: 'ok' as const, row };
     });
 
     if (outcome.kind === 'denied') {
@@ -126,7 +128,7 @@ export function mountLedgerRoutes(
 
   // Read authz runs on the pool — no write follows, so TOCTOU is not a concern here.
   app.get(LEDGER_PATTERNS.clientBalance, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     const clientUserId = Number(req.params.id);
     if (!Number.isInteger(clientUserId) || clientUserId <= 0) {
@@ -143,11 +145,11 @@ export function mountLedgerRoutes(
     return sendData(res, {
       client_user_id: clientUserId,
       balance_ars: balanceArs,
-    });
+    } satisfies BalanceResult);
   }));
 
   app.get(LEDGER_PATTERNS.clientLedger, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     const clientUserId = Number(req.params.id);
     if (!Number.isInteger(clientUserId) || clientUserId <= 0) {

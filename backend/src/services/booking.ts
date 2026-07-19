@@ -1,10 +1,9 @@
-import type { Pool, PoolClient } from 'pg';
 import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
 import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
 import { getBlockServiceForSlot, resourceExistsInBusiness } from '../db/scheduling';
 import { findUser } from '../db/users';
-import { withTransaction } from '../db/core';
+import { withTransaction, type Queryable, type TransactionClient, type TransactionPool } from '../db/core';
 import { recheckConflictsInTx, loadConflictInputs, toAggregatorOwner } from './scheduling';
 import { DATE_RE, HHMM_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
 
@@ -41,10 +40,10 @@ export type SaveResult<T> =
 // the row. Returns the verdict without writing when an override is needed but not granted. The
 // write may throw httpError to abort; guardRoute maps that and recheck's structured errors.
 export async function saveWithConflictRecheck<T>(
-  pool: Pool,
+  pool: TransactionPool,
   recheck: RecheckInput,
   override: boolean,
-  write: (tx: PoolClient, forced: boolean) => Promise<T>,
+  write: (tx: TransactionClient, forced: boolean) => Promise<T>,
 ): Promise<SaveResult<T>> {
   return withTransaction(pool, async (tx) => {
     const verdict = await recheckConflictsInTx(tx, { ...recheck, callerIsStaff: true });
@@ -89,7 +88,7 @@ export function validateBookingFields(parts: {
 // the body, business-scopes the service/resource/client (404 to hide cross-tenant existence), and
 // resolves the effective price/duration. No write, no conflict check — the caller owns those.
 export async function resolveAndLoadService(
-  pool: Pool,
+  pool: Queryable,
   businessId: number,
   body: BookingBody,
   callerIsStaff: boolean,
@@ -197,7 +196,7 @@ export async function resolveAndLoadService(
 // recheck, so preview and save always agree. Never writes and takes no lock; a mere read
 // must not serialize against real bookings.
 export async function runConflictDryRun(
-  pool: Pool,
+  pool: Queryable,
   businessId: number,
   params: {
     professionalUserId: number;

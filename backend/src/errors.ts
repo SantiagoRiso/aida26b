@@ -30,6 +30,7 @@ export function httpForStructuredError(
   return null;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- Continues narrowing a field from the unverified caught error above.
 function isStringRecord(value: unknown): value is Record<string, string> {
   return value !== null
     && typeof value === 'object'

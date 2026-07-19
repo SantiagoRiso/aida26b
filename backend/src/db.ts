@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import type { Queryable } from './db/core';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -33,6 +34,6 @@ export function createOwnerPool(): Pool {
 }
 
 // Lightweight connectivity probe for the health endpoint. Throws if the DB is unreachable.
-export async function pingDatabase(probe: Pick<Pool, 'query'>): Promise<void> {
+export async function pingDatabase(probe: Queryable): Promise<void> {
   await probe.query('SELECT 1');
 }

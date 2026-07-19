@@ -9,7 +9,7 @@ import { closurePaths } from '@shared/ssot/api-paths';
 // unions it into every professional's and resource's day.
 export type BusinessClosure = BusinessClosureRow;
 
-const businessClosure = object<BusinessClosure>({
+export const businessClosureContract = object<BusinessClosure>({
   id: stringValue,
   exception_date: stringValue,
   start_time: nullable(stringValue),
@@ -18,7 +18,7 @@ const businessClosure = object<BusinessClosure>({
 });
 
 export function listClosures(options: { signal?: AbortSignal } = {}): Promise<ApiResult<BusinessClosure[]>> {
-  return apiFetchDecoded(arrayOf(businessClosure), closurePaths.list(), { signal: options.signal });
+  return apiFetchDecoded(arrayOf(businessClosureContract), closurePaths.list(), { signal: options.signal });
 }
 
 export function createClosure(body: {
@@ -27,7 +27,7 @@ export function createClosure(body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetchDecoded(businessClosure, closurePaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
+  return apiFetchDecoded(businessClosureContract, closurePaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function updateClosure(id: number | string, body: {
@@ -36,7 +36,7 @@ export function updateClosure(id: number | string, body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetchDecoded(businessClosure, closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
+  return apiFetchDecoded(businessClosureContract, closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function deleteClosure(id: number | string): Promise<ApiResult<{ id: string; deleted: boolean }>> {

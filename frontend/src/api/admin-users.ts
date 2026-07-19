@@ -1,7 +1,10 @@
 import { apiFetchDecoded } from '@/api/client';
-import { numberValue, object, stringValue, union } from '@/api/decoders';
+import { numberValue, object, optional, stringValue, union } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import { adminUserPaths } from '@shared/ssot/api-paths';
+import type { AdminUserResult, CreatedUserResult, EnabledLoginResult } from '@shared/ssot/contracts/users';
+
+export type { AdminUserResult } from '@shared/ssot/contracts/users';
 
 export interface AdminUserPayload {
   // Omitted together for a contact-only client (no login) — see enableClientLogin.
@@ -13,18 +16,16 @@ export interface AdminUserPayload {
   dni?: string;
 }
 
-export interface AdminUserResult {
-  id: number | string;
-  username: string;
-  role: string;
-}
-
 const adminUserResult = object<AdminUserResult>({ id: union(numberValue, stringValue), username: stringValue, role: stringValue });
 const wrappedAdminUserResult = object<{ user: AdminUserResult }>({ user: adminUserResult });
+const createdUserResult = object<CreatedUserResult>({
+  id: union(numberValue, stringValue), username: optional(stringValue), role: stringValue,
+});
+const enabledLoginResult = object<EnabledLoginResult>({ id: union(numberValue, stringValue), username: stringValue });
 
 // createUser is not admin-only: Professionals/Receptionists may create Clients.
-export function createUser(body: AdminUserPayload): Promise<ApiResult<AdminUserResult>> {
-  return apiFetchDecoded(adminUserResult, adminUserPaths.create(), {
+export function createUser(body: AdminUserPayload): Promise<ApiResult<CreatedUserResult>> {
+  return apiFetchDecoded(createdUserResult, adminUserPaths.create(), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -50,8 +51,8 @@ export function resetPassword(
 export function enableClientLogin(
   id: string | number,
   body: { username: string; password: string },
-): Promise<ApiResult<{ user: AdminUserResult }>> {
-  return apiFetchDecoded(wrappedAdminUserResult, adminUserPaths.enableLogin(id), {
+): Promise<ApiResult<EnabledLoginResult>> {
+  return apiFetchDecoded(enabledLoginResult, adminUserPaths.enableLogin(id), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });

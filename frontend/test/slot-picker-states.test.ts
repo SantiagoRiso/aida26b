@@ -40,8 +40,8 @@ describe('SlotPicker', () => {
     vi.mocked(getAvailability).mockResolvedValue({
       ok: true, data: { date: '2026-08-25', slots: [], open: true, outside_window: false },
     });
-    let resolve!: (v: unknown) => void;
-    vi.mocked(getAvailability).mockReturnValueOnce(new Promise((r) => { resolve = r; }) as never);
+    let resolve!: (value: Awaited<ReturnType<typeof getAvailability>>) => void;
+    vi.mocked(getAvailability).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
 
     const wrapper = mountPicker({ professionalId: 1, serviceId: 2, date: '2026-08-25', modelValue: null });
     // The watcher's async handler has started but not yet resolved — loading renders first.

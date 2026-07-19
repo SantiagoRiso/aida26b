@@ -7,6 +7,9 @@ import { en } from '@/i18n/en';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import ResourcesSection from '@/components/settings/ResourcesSection.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import type { TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
+import { listRowsFrom, rowResultFrom } from './helpers/api-fixtures';
 
 vi.mock('@/api/crud', () => ({
   listRows: vi.fn(),
@@ -17,9 +20,8 @@ vi.mock('@/api/crud', () => ({
 
 const makeI18n = () => createI18n({ legacy: false, locale: 'es', messages: { es, en } });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mockRooms(data: any[]) {
-  vi.mocked(listRows).mockResolvedValue({ ok: true, data } as never);
+function mockRooms(data: Wire<TableRecordMap['resources']>[]) {
+  vi.mocked(listRows).mockImplementation(listRowsFrom({ resources: data }));
 }
 
 // Stub the heavy schedule editor so it doesn't hit the network; render its owner so we can assert on it.
@@ -55,7 +57,9 @@ describe('ResourcesSection', () => {
 
   it('adds a room from an inline name', async () => {
     mockRooms([]);
-    vi.mocked(createRow).mockResolvedValue({ ok: true, data: { id: '9', business_id: 'b1', name: 'Nueva', description: null } } as never);
+    vi.mocked(createRow).mockImplementation(rowResultFrom({
+      resources: [{ id: '9', business_id: 'b1', name: 'Nueva', description: null }],
+    }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="room-add-start"]').trigger('click');
@@ -77,7 +81,9 @@ describe('ResourcesSection', () => {
 
   it('edits a room name and description', async () => {
     mockRooms([{ id: '1', business_id: 'b1', name: 'Sala A', description: null }]);
-    vi.mocked(updateRow).mockResolvedValue({ ok: true, data: { id: '1', business_id: 'b1', name: 'Sala A1', description: 'Piso 2' } } as never);
+    vi.mocked(updateRow).mockImplementation(rowResultFrom({
+      resources: [{ id: '1', business_id: 'b1', name: 'Sala A1', description: 'Piso 2' }],
+    }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="room-edit-1"]').trigger('click');
@@ -110,7 +116,9 @@ describe('ResourcesSection', () => {
 
   it('deletes a room through the confirm dialog', async () => {
     mockRooms([{ id: '1', business_id: 'b1', name: 'Sala A', description: null }]);
-    vi.mocked(deleteRow).mockResolvedValue({ ok: true, data: { id: '1' } } as never);
+    vi.mocked(deleteRow).mockImplementation(rowResultFrom({
+      resources: [{ id: '1', business_id: 'b1', name: 'Sala A', description: null }],
+    }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="room-delete-1"]').trigger('click');

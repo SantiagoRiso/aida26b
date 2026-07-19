@@ -2,8 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { useConflictOverride } from '@/composables/useConflictOverride';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 
-const verdict = (over = true): ConflictVerdict =>
-  ({ conflicts: [], can_override: over }) as unknown as ConflictVerdict;
+const verdict = (over = true): ConflictVerdict => ({
+  can_save: !over,
+  requires_override: over,
+  can_override: over,
+  conflicts: [],
+});
 
 describe('useConflictOverride', () => {
   it('raiseConflict opens the dialog with the verdict and optional revert', () => {

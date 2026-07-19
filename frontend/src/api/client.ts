@@ -1,59 +1,16 @@
 import { useUiStore } from '@/stores/ui';
 import { API_PREFIX } from '@shared/ssot/api-paths';
-import type { ApiEnvelope, ApiErrorEnvelope, ListMeta } from '@shared/ssot/envelope';
-import { isUnknownRecord, type Decoder } from '@/api/decoders';
+import type { ListMeta } from '@shared/ssot/envelope';
+import type { Decoder } from '@/api/decoders';
+import { parseEnvelope } from '@/api/envelope-parser';
+import { recordApiMutation } from '@/api/mutation-generation';
+import { validateResponseContract } from '@/api/contract-validation';
+import type { ApiResult } from '@/api/result';
 
-// Every backend route speaks the one shared envelope (shared/src/ssot/envelope.ts).
-type UnknownEnvelope = ApiEnvelope<unknown> | ApiErrorEnvelope;
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return value !== null
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.values(value).every((item) => typeof item === 'string');
-}
-
-function isListMeta(value: unknown): value is ListMeta {
-  return isUnknownRecord(value)
-    && typeof value.page === 'number'
-    && typeof value.limit === 'number'
-    && typeof value.total === 'number';
-}
-
-function parseEnvelope(value: unknown): UnknownEnvelope | null {
-  if (!isUnknownRecord(value)) return null;
-  if (value.success === true) {
-    if (!('data' in value)) return null;
-    if ('meta' in value && value.meta !== undefined && !isListMeta(value.meta)) return null;
-    return { success: true, data: value.data, ...(isListMeta(value.meta) ? { meta: value.meta } : {}) };
-  }
-  if (value.success !== false || !isUnknownRecord(value.error)) {
-    return null;
-  }
-  const error = value.error;
-  if (typeof error.code !== 'string' || typeof error.message !== 'string') return null;
-  if ('fields' in error && error.fields !== undefined && !isStringRecord(error.fields)) return null;
-  return {
-    success: false,
-    error: {
-      code: error.code,
-      message: error.message,
-      ...(isStringRecord(error.fields) ? { fields: error.fields } : {}),
-    },
-  };
-}
-
-let mutationGeneration = 0;
-
-export function getApiMutationGeneration(): number {
-  return mutationGeneration;
-}
-
-export type ApiResult<T> =
-  | { ok: true; data: T; meta?: ListMeta }
-  | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> };
+export type { ApiResult } from '@/api/result';
 
 type RawApiResult =
+  // eslint-disable-next-line no-restricted-syntax -- Data remains untrusted until the endpoint decoder accepts it.
   | { ok: true; status: number; data: unknown; meta?: ListMeta }
   | Extract<ApiResult<never>, { ok: false }>;
 
@@ -65,6 +22,7 @@ export interface ApiFetchOptions {
   // Opt-in "Acción no permitida" toast on 403. Interactive mutations (button-triggered saves,
   // transitions, deletes) set it so the user gets feedback; background/probe reads stay silent.
   toastOnForbidden?: boolean;
+  successStatuses?: readonly number[];
 }
 
 async function performRawApiFetch(
@@ -92,7 +50,7 @@ async function performRawApiFetch(
   }
 
   if (response.status === 204) {
-    if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
+    if ((options.method ?? 'GET').toUpperCase() !== 'GET') recordApiMutation();
     return { ok: true, status: response.status, data: undefined };
   }
 
@@ -114,7 +72,7 @@ async function performRawApiFetch(
       fields: body.error.fields,
     };
   }
-  if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
+  if ((options.method ?? 'GET').toUpperCase() !== 'GET') recordApiMutation();
   return {
     ok: true,
     status: response.status,
@@ -152,8 +110,8 @@ export async function apiFetchDecoded<T>(
   }
 
   if (!raw.ok) return raw;
-  if (!decoder(raw.data)) {
-    return { ok: false, status: raw.status, code: 'bad_response', message: 'Unexpected response payload' };
-  }
-  return { ok: true, data: raw.data, meta: raw.meta };
+  return validateResponseContract({
+    decoder, path, method, status: raw.status, data: raw.data, meta: raw.meta,
+    successStatuses: apiOptions.successStatuses,
+  });
 }

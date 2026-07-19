@@ -121,6 +121,10 @@ async function mountPanel(blockMinutes = 180) {
   return wrapper;
 }
 
+function panelVm(wrapper: Awaited<ReturnType<typeof mountPanel>>) {
+  return wrapper.vm as typeof wrapper.vm & { save(): Promise<boolean> };
+}
+
 describe('BlockServicesPanel', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -159,8 +163,7 @@ describe('BlockServicesPanel', () => {
 
     await wrapper.get('[data-testid="block-service-toggle-2"]').setValue(true);
     expect(createRow).not.toHaveBeenCalled(); // local until submit
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     expect(createRow).toHaveBeenCalledWith('schedule_block_services', {
@@ -184,8 +187,7 @@ describe('BlockServicesPanel', () => {
     const duration1 = wrapper.get('[data-testid="block-service-duration-1"]');
     await duration1.setValue('60');
     expect(updateRow).not.toHaveBeenCalled(); // local until submit
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     expect(updateRow).toHaveBeenCalledWith('schedule_block_services', 'sbs-1', {
@@ -206,8 +208,7 @@ describe('BlockServicesPanel', () => {
 
     await wrapper.get('[data-testid="block-service-toggle-1"]').setValue(false);
     expect(deleteRow).not.toHaveBeenCalled(); // local until submit
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     expect(deleteRow).toHaveBeenCalledWith('schedule_block_services', 'sbs-1');
@@ -267,8 +268,7 @@ describe('BlockServicesPanel', () => {
     // Editable immediately (local); persisted only on save().
     expect(wrapper.get<HTMLInputElement>('[data-testid="block-service-duration-1"]').element.disabled).toBe(false);
     expect(updateRow).not.toHaveBeenCalled();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     // The current defaults are pinned as the block's own values.
@@ -293,8 +293,7 @@ describe('BlockServicesPanel', () => {
     const dur = wrapper.get<HTMLInputElement>('[data-testid="block-service-duration-1"]');
     expect(dur.element.disabled).toBe(true);
     expect(dur.element.value).toBe('30');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     expect(updateRow).toHaveBeenCalledWith('schedule_block_services', 'sbs-1', {
@@ -324,8 +323,7 @@ describe('BlockServicesPanel', () => {
     expect(wrapper.get('[data-testid="block-service-label-1"]').text()).toContain('Corte');
     expect(wrapper.get<HTMLInputElement>('[data-testid="block-service-duration-1"]').element.value).toBe('30');
     expect(createRow).not.toHaveBeenCalled(); // not written until submit
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     // …and its offering is created on submit.
@@ -348,8 +346,7 @@ describe('BlockServicesPanel', () => {
       return { ok: true, data: [] };
     });
     const wrapper = await mountPanel();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (wrapper.vm as any).save();
+    await panelVm(wrapper).save();
     await flushPromises();
 
     expect(createRow).not.toHaveBeenCalled(); // already offered → nothing to create on submit
@@ -366,8 +363,7 @@ describe('BlockServicesPanel', () => {
 
     const duration1 = wrapper.get('[data-testid="block-service-duration-1"]');
     await duration1.setValue('0');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ok = await (wrapper.vm as any).save();
+    const ok = await panelVm(wrapper).save();
     await flushPromises();
 
     expect(ok).toBe(false);

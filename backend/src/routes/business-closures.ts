@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext, belongsToBusiness } from './business-context';
 import {
@@ -20,6 +20,7 @@ type ClosureInput = { exception_date: string; start_time: string | null; end_tim
 type ClosureParse = { ok: true; data: ClosureInput } | { ok: false; status: number; code: string; message: string };
 
 // Shared create/update validation: the common time-off range rules plus an optional reason.
+// eslint-disable-next-line no-restricted-syntax -- Express request bodies are untrusted until this parser validates them.
 function parseClosureBody(body: Record<string, unknown>): ClosureParse {
   const parsed = parseTimeOffRange(
     { date: body.exception_date, start: body.start_time, end: body.end_time },
@@ -41,7 +42,7 @@ export function mountBusinessClosureRoutes(
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter }
 ) {
   app.post(CLOSURE_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
@@ -67,7 +68,7 @@ export function mountBusinessClosureRoutes(
   }));
 
   app.put(CLOSURE_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
@@ -102,7 +103,7 @@ export function mountBusinessClosureRoutes(
   }));
 
   app.get(CLOSURE_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     // Staff-internal: which days the clinic is closed. Clients see it only through availability.
     if (user.role === 'Client') {
@@ -116,7 +117,7 @@ export function mountBusinessClosureRoutes(
   }));
 
   app.delete(CLOSURE_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });

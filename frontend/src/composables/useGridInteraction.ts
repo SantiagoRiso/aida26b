@@ -189,7 +189,7 @@ export function useGridInteraction(opts: GridInteractionOptions) {
     if (!root) { hoverTarget.value = null; return; }
     // The toolbar and day headers sit inside the calendar root too — only the scrollable slot body maps
     // to a bookable time, so ignore anything outside it (otherwise sobreturno hover fires on the header).
-    if (!(ev.target as HTMLElement).closest('.fc-timegrid-body')) { reset(); return; }
+    if (!(ev.target instanceof Element) || !ev.target.closest('.fc-timegrid-body')) { reset(); return; }
     const col = geometry.columnAt(ev.clientX);
     const minute = col ? geometry.minutesAt(ev.clientY - (fineDrag.value ? SOBRETURNO_GHOST_OFFSET_PX : 0)) : null;
     if (!col || minute === null) { reset(); return; }
@@ -214,10 +214,10 @@ export function useGridInteraction(opts: GridInteractionOptions) {
     if (!currentViewType.value.startsWith('timeGrid')) return;
     // The toolbar (prev/next/today/view) and day headers sit inside the calendar root too — only the
     // slot body books, so a nav click never places a turno.
-    if (!(ev.target as HTMLElement).closest('.fc-timegrid-body')) return;
+    if (!(ev.target instanceof Element) || !ev.target.closest('.fc-timegrid-body')) return;
     // A click on an existing turno normally opens its detail (eventClick). In sobreturno mode it instead
     // places a new overlapping turno there, so don't defer to the event.
-    if (!fineDrag.value && (ev.target as HTMLElement).closest('.fc-timegrid-event')) return;
+    if (!fineDrag.value && ev.target.closest('.fc-timegrid-event')) return;
     const col = geometry.columnAt(ev.clientX);
     const minute = col ? geometry.minutesAt(ev.clientY - (fineDrag.value ? SOBRETURNO_GHOST_OFFSET_PX : 0)) : null;
     if (!col || minute === null) return;

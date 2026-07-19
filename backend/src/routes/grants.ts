@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext, belongsToBusiness } from './business-context';
 import { findUser } from '../db/users';
@@ -24,7 +24,7 @@ export function mountGrantRoutes(
 ) {
   // Binary grant creation: presence of a row = access. No permission columns.
   app.post(GRANT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
       await guards.audit(req, 'grant_denied', 'denied', { reason: 'role_forbidden' });
@@ -76,7 +76,7 @@ export function mountGrantRoutes(
 
   // Revoke = delete the row; no soft-delete for grants.
   app.delete(GRANT_PATTERNS.detail, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
       await guards.audit(req, 'grant_denied', 'denied', { reason: 'role_forbidden' });
@@ -115,7 +115,7 @@ export function mountGrantRoutes(
 
   // Static path registered ahead of any /:id route so it can never be captured as a param.
   app.get(GRANT_PATTERNS.grantableStaff, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     // Only those who can create grants need this list: Admin (any) or a Professional (own calendar).
     if (user.role !== 'Admin' && user.role !== 'Professional') {
@@ -131,7 +131,7 @@ export function mountGrantRoutes(
   }));
 
   app.get(GRANT_PATTERNS.list, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
-    const user = (req as AuthedRequest).user!;
+    const user = authenticatedUser(req);
 
     // Staff-internal data: clients have no business seeing who can manage which calendar.
     if (user.role === 'Client') {

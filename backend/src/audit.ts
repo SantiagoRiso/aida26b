@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type { Pool } from 'pg';
-import type { AuthedRequest } from './session';
+import { optionalAuthenticatedUser } from './session';
 import { getUserBusinessId } from './db/users';
 import { insertAuditEvent } from './db/audit';
 import type { ColumnValue } from '../../shared/src/types/types';
@@ -23,7 +23,7 @@ export function createAuditWriter(pool: Pool): AuditWriter {
       const actorId =
         override.actorId !== undefined
           ? override.actorId
-          : (req as AuthedRequest).user?.id ?? null;
+          : optionalAuthenticatedUser(req)?.id ?? null;
 
       let businessId: number | null;
       if (override.businessId !== undefined) {

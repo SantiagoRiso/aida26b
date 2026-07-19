@@ -19,6 +19,7 @@ export const HHMM_PATTERN_MESSAGE = 'must be HH:MM';
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
+// eslint-disable-next-line no-restricted-syntax -- Runtime guard validates request and database boundary values.
 export function isWeekday(value: unknown): value is Weekday {
   return typeof value === 'string' && WEEKDAYS.some((weekday) => weekday === value);
 }

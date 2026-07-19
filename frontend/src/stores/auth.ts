@@ -2,18 +2,10 @@ import { defineStore } from 'pinia';
 import { apiFetchDecoded } from '@/api/client';
 import { undefinedValue } from '@/api/decoders';
 import { wrappedAuthUser } from '@/api/contracts';
-import type { Role } from '@shared/types/roles';
+import type { AuthUser } from '@shared/ssot/contracts/auth';
 import { authPaths } from '@shared/ssot/api-paths';
 
-export interface AuthUser {
-  id: number;
-  username: string;
-  email: string | null;
-  role: Role;
-  business_id: number | null;
-  is_active: boolean;
-  must_change_password: boolean;
-}
+export type { AuthUser } from '@shared/ssot/contracts/auth';
 
 export const useAuthStore = defineStore('auth', {
   state: (): { user: AuthUser | null } => ({

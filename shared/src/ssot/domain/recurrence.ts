@@ -34,10 +34,12 @@ export const END_KIND_OPTIONS: Array<{ value: EndKind; label: LocalizedText }> =
   { value: 'open', label: { es: 'Sin fecha de fin', en: 'No end date' } },
 ];
 
+// eslint-disable-next-line no-restricted-syntax -- Runtime guard validates an untrusted recurrence request field.
 export function isFrequency(value: unknown): value is Frequency {
   return typeof value === 'string' && FREQUENCY_VALUES.some((candidate) => candidate === value);
 }
 
+// eslint-disable-next-line no-restricted-syntax -- Runtime guard validates an untrusted recurrence request field.
 export function isEndKind(value: unknown): value is EndKind {
   return typeof value === 'string' && END_KIND_VALUES.some((candidate) => candidate === value);
 }

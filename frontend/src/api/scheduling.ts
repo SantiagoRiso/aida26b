@@ -1,10 +1,13 @@
-import { apiFetchDecoded, getApiMutationGeneration } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { getApiMutationGeneration } from '@/api/mutation-generation';
 import { conflicts } from '@/api/contracts';
 import { arrayOf, booleanValue, nullable, numberValue, object, optional, stringValue } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
-import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
 import { schedulingPaths } from '@shared/ssot/api-paths';
+import type { AvailabilityResult, BookingWindowResult, ConflictCheckResult } from '@shared/ssot/contracts/scheduling';
+
+export type { AvailabilityResult, BookingWindowResult, ConflictCheckResult } from '@shared/ssot/contracts/scheduling';
 
 // Row-sourced ids arrive as strings (BIGINT wire), picker-sourced as numbers; the server accepts both.
 type Id = number | string;
@@ -20,11 +23,6 @@ export interface ConflictCheckBody {
   duration_minutes: number;
 }
 
-export interface ConflictCheckResult extends ConflictVerdict {
-  effective_price: string;
-  effective_duration_minutes: number;
-}
-
 export async function checkConflict(
   body: ConflictCheckBody,
 ): Promise<ApiResult<ConflictCheckResult>> {
@@ -32,20 +30,6 @@ export async function checkConflict(
     method: 'POST',
     body: JSON.stringify(body),
   });
-}
-
-export interface AvailabilityResult {
-  date: string;
-  slots: TimeInterval[];
-  // False = the owner does not work that day; true with empty slots = fully booked.
-  open: boolean;
-  // Set for a Client asking about a date beyond the booking window: no slots, distinct from "closed".
-  outside_window?: boolean;
-}
-
-export interface BookingWindowResult {
-  min_date: string;
-  max_date: string | null;
 }
 
 const timeInterval = object<TimeInterval>({

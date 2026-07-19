@@ -7,7 +7,7 @@ import { guardRoute } from '../helpers';
 import { sendData, sendError } from '../status_messages';
 import { readPassword } from '../auth';
 import type { AuditWriter } from '../audit';
-import { type AuthedRequest } from '../session';
+import { authenticatedUser } from '../session';
 import { requireBusinessContext } from './business-context';
 import { withTransaction } from '../db/core';
 import { DbError } from '../db/errors';
@@ -20,6 +20,7 @@ import {
   enableClientLogin,
 } from '../db/users';
 import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import type { CreatedUserResult, EnabledLoginResult } from '../../../shared/src/ssot/contracts/users';
 import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
 
 const EMAIL_RE = new RegExp(EMAIL_PATTERN);
@@ -33,6 +34,7 @@ function isUniqueViolation(error: unknown): error is DbError {
 // every user write, so it is named here; the fallback names the field the caller was
 // inserting (email vs username) so the form can react to the right input.
 // Anything else rethrows for guardRoute to map (unexpected DbError → mapped code, else 500).
+// eslint-disable-next-line no-restricted-syntax -- Catch-boundary value is narrowed before any database fields are read.
 function sendUniqueConflict(res: express.Response, error: unknown, fallbackMessage: string) {
   if (!isUniqueViolation(error)) throw error;
   const message =
@@ -77,7 +79,7 @@ async function createContactOnlyClient(
 
     await audit(req, 'user_created', 'success', { user_id: newUserId, role });
 
-    return sendData(res, { id: newUserId, role }, 201);
+    return sendData(res, { id: newUserId, role } satisfies CreatedUserResult, 201);
   } catch (error) {
     return sendUniqueConflict(res, error, 'Email already exists');
   }
@@ -115,7 +117,7 @@ async function createCredentialedUser(
 
     await audit(req, 'user_created', 'success', { user_id: newUserId, role });
 
-    return sendData(res, { id: newUserId, username, role }, 201);
+    return sendData(res, { id: newUserId, username, role } satisfies CreatedUserResult, 201);
   } catch (error) {
     return sendUniqueConflict(res, error, 'Username already exists');
   }
@@ -158,7 +160,7 @@ export function mountUserAdminRoutes(
       const dni =
         typeof req.body.dni === 'string' && req.body.dni.trim() ? req.body.dni.trim() : null;
 
-      const sessionUser = (req as AuthedRequest).user!;
+      const sessionUser = authenticatedUser(req);
 
       const mayCreate =
         sessionUser.role === 'Admin' ||
@@ -188,7 +190,7 @@ export function mountUserAdminRoutes(
     requireAdmin,
     guardRoute(async (req, res) => {
       const userId = Number(req.params.id);
-      const sessionUser = (req as AuthedRequest).user!;
+      const sessionUser = authenticatedUser(req);
 
       if (!Number.isInteger(userId)) {
         return sendError(res, 400, 'invalid_request', 'Valid user id is required');
@@ -228,7 +230,7 @@ export function mountUserAdminRoutes(
     guardRoute(async (req, res) => {
       const userId = Number(req.params.id);
       const password = readPassword(req.body.password);
-      const sessionUser = (req as AuthedRequest).user!;
+      const sessionUser = authenticatedUser(req);
 
       if (!Number.isInteger(userId) || !password) {
         return sendError(res, 400, 'invalid_request', 'Valid user id and password are required');
@@ -276,7 +278,7 @@ export function mountUserAdminRoutes(
       const userId = Number(req.params.id);
       const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
       const password = readPassword(req.body.password);
-      const sessionUser = (req as AuthedRequest).user!;
+      const sessionUser = authenticatedUser(req);
 
       const mayManage =
         sessionUser.role === 'Admin' || sessionUser.role === 'Professional' || sessionUser.role === 'Receptionist';
@@ -310,7 +312,7 @@ export function mountUserAdminRoutes(
 
         await audit(req, 'login_enabled', 'success', { user_id: userId });
 
-        return sendData(res, { id: enabled.id, username: enabled.username });
+        return sendData(res, { id: enabled.id, username: enabled.username } satisfies EnabledLoginResult);
       } catch (error) {
         return sendUniqueConflict(res, error, 'Username already exists');
       }

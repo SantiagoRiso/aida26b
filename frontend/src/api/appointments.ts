@@ -5,17 +5,21 @@ import {
   stringEnum, stringValue, union,
 } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
-import type { Conflict, ConflictVerdict } from '@shared/ssot/domain/conflict';
+import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { ScheduleSeriesBody } from '@shared/ssot/domain/recurrence';
-import type { AppointmentRow, AppointmentSeriesRow, VirtualOccurrence, Wire } from '@shared/ssot/query-types';
+import type { AppointmentResponse, AppointmentSeriesResponse, VirtualOccurrence } from '@shared/ssot/query-types';
 import { appointmentPaths } from '@shared/ssot/api-paths';
 import { END_KIND_VALUES, FREQUENCY_VALUES, SERIES_STATUS_VALUES } from '@shared/ssot/domain/recurrence';
 import { WEEKDAYS } from '@shared/ssot/domain/availability';
+import type {
+  EndSeriesResult, MaterializedOccurrenceResult, RelatedClientIdsResult,
+  ScheduleSeriesResult as ScheduleSeriesResultContract, SeriesResult, SeriesSkip, SplitSeriesResult,
+} from '@shared/ssot/contracts/appointments';
 
 // client_user_id is NOT NULL on the appointments table — the wire always carries it.
-export type Appointment = Wire<AppointmentRow>;
+export type Appointment = AppointmentResponse;
 // created_at/updated_at cross as ISO strings, same as AppointmentRow.
-export type AppointmentSeries = Wire<AppointmentSeriesRow>;
+export type AppointmentSeries = AppointmentSeriesResponse;
 // The list endpoint unions real rows with un-materialized recurring occurrences (no row, no id
 // yet). VirtualOccurrence carries only strings already, so it needs no Wire mapping.
 export type ListAppointment = Appointment | VirtualOccurrence;
@@ -34,8 +38,8 @@ export const appointmentContract = object<Appointment>({
   description: nullable(stringValue),
   price: stringValue,
   override_conflict: booleanValue,
-  override_actor_id: nullable(stringValue),
-  staff_note: nullable(stringValue),
+  override_actor_id: optional(nullable(stringValue)),
+  staff_note: optional(nullable(stringValue)),
   created_at: stringValue,
   updated_at: stringValue,
   conflict_ignored: booleanValue,
@@ -113,7 +117,7 @@ export async function listAppointments(
 // Distinct client ids the caller has any appointment with, in their role scope. Backs the
 // "clients with a prior relationship" filter without shipping the whole appointment history.
 export async function listRelatedClientIds(): Promise<ApiResult<number[]>> {
-  const result = await apiFetchDecoded(object<{ client_user_ids: number[] }>({ client_user_ids: arrayOf(numberValue) }), appointmentPaths.relatedClients());
+  const result = await apiFetchDecoded(object<RelatedClientIdsResult>({ client_user_ids: arrayOf(numberValue) }), appointmentPaths.relatedClients());
   if (!result.ok) return result;
   return { ok: true, data: result.data.client_user_ids, meta: result.meta };
 }
@@ -245,15 +249,8 @@ export async function patchAppointment(
 
 export type { ScheduleSeriesBody } from '@shared/ssot/domain/recurrence';
 
-export interface SeriesSkip {
-  date: string;
-  conflicts: Conflict[];
-}
-
-export interface ScheduleSeriesResult {
-  series: AppointmentSeries;
-  preview: { skipped: SeriesSkip[] };
-}
+export type { SeriesSkip } from '@shared/ssot/contracts/appointments';
+export type ScheduleSeriesResult = ScheduleSeriesResultContract<AppointmentSeries>;
 
 const seriesSkip = object<SeriesSkip>({ date: stringValue, conflicts: arrayOf(conflict) });
 const scheduleSeriesResult = object<ScheduleSeriesResult>({
@@ -274,8 +271,8 @@ export async function scheduleSeries(
 export async function materializeOccurrence(
   seriesId: number | string,
   occurrence_date: string,
-): Promise<ApiResult<{ appointment: Appointment }>> {
-  return apiFetchDecoded(object<{ appointment: Appointment }>({ appointment: appointmentContract }), appointmentPaths.seriesMaterialize(seriesId), {
+): Promise<ApiResult<MaterializedOccurrenceResult<Appointment>>> {
+  return apiFetchDecoded(object<MaterializedOccurrenceResult<Appointment>>({ appointment: appointmentContract }), appointmentPaths.seriesMaterialize(seriesId), {
     method: 'POST',
     body: JSON.stringify({ occurrence_date }),
   }, { toastOnForbidden: true });
@@ -291,8 +288,8 @@ export async function getSeries(seriesId: number | string): Promise<ApiResult<Ap
 export async function updateSeries(
   seriesId: number | string,
   patch: Partial<ScheduleSeriesBody>,
-): Promise<ApiResult<{ series: AppointmentSeries }>> {
-  return apiFetchDecoded(object<{ series: AppointmentSeries }>({ series: appointmentSeries }), appointmentPaths.seriesDetail(seriesId), {
+): Promise<ApiResult<SeriesResult<AppointmentSeries>>> {
+  return apiFetchDecoded(object<SeriesResult<AppointmentSeries>>({ series: appointmentSeries }), appointmentPaths.seriesDetail(seriesId), {
     method: 'PUT',
     body: JSON.stringify(patch),
   }, { toastOnForbidden: true });
@@ -304,8 +301,8 @@ export async function splitSeriesFuture(
   seriesId: number | string,
   from_date: string,
   patch: Partial<ScheduleSeriesBody>,
-): Promise<ApiResult<{ ended: AppointmentSeries; created: AppointmentSeries }>> {
-  return apiFetchDecoded(object<{ ended: AppointmentSeries; created: AppointmentSeries }>({
+): Promise<ApiResult<SplitSeriesResult<AppointmentSeries>>> {
+  return apiFetchDecoded(object<SplitSeriesResult<AppointmentSeries>>({
     ended: appointmentSeries, created: appointmentSeries,
   }), appointmentPaths.seriesFuture(seriesId), {
     method: 'POST',
@@ -319,8 +316,8 @@ export async function splitSeriesFuture(
 export async function endSeries(
   seriesId: number | string,
   from_date?: string,
-): Promise<ApiResult<{ ended: AppointmentSeries; canceled: string[] }>> {
-  return apiFetchDecoded(object<{ ended: AppointmentSeries; canceled: string[] }>({
+): Promise<ApiResult<EndSeriesResult<AppointmentSeries>>> {
+  return apiFetchDecoded(object<EndSeriesResult<AppointmentSeries>>({
     ended: appointmentSeries, canceled: arrayOf(stringValue),
   }), appointmentPaths.seriesEnd(seriesId), {
     method: 'POST',

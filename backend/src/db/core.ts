@@ -1,4 +1,3 @@
-import type { Pool, PoolClient } from 'pg';
 import { types } from 'pg';
 import { structure } from '../../../shared/src/ssot/structure';
 import type { ColumnDef } from '../../../shared/src/types/types';
@@ -14,7 +13,17 @@ export type SqlParam = string | number | boolean | Date | null | SqlParam[];
 // contract (NUMERIC/BIGINT already pass through as strings).
 types.setTypeParser(types.builtins.DATE, (v) => v);
 
-export type Queryable = Pool | PoolClient;
+export interface Queryable {
+  query(sql: string, params?: SqlParam[]): Promise<{ rows: object[] }>;
+}
+
+export interface TransactionClient extends Queryable {
+  release(): void;
+}
+
+export interface TransactionPool {
+  connect(): Promise<TransactionClient>;
+}
 
 export async function query<T>(db: Queryable, sql: string, params?: SqlParam[]): Promise<T[]> {
   try {
@@ -31,7 +40,7 @@ export async function queryOne<T>(db: Queryable, sql: string, params?: SqlParam[
 }
 
 // Own the BEGIN/COMMIT/ROLLBACK/release lifecycle so handlers never hand-roll it.
-export async function withTransaction<T>(pool: Pool, fn: (tx: PoolClient) => Promise<T>): Promise<T> {
+export async function withTransaction<T>(pool: TransactionPool, fn: (tx: TransactionClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

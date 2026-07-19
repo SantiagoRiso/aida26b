@@ -100,6 +100,10 @@ export type AppointmentRow = {
   is_virtual?: boolean;
 };
 
+// Client-role responses deliberately omit staff-only fields; staff responses include them.
+export type AppointmentResponse = Omit<Wire<AppointmentRow>, 'staff_note' | 'override_actor_id'>
+  & Partial<Pick<Wire<AppointmentRow>, 'staff_note' | 'override_actor_id'>>;
+
 // An un-materialized recurring occurrence, computed on read from an active appointment_series and
 // never stored — the list endpoint unions these with real rows for the same window. There is no
 // appointments row yet, so identity is (series_id, occurrence_date), not an id.
@@ -152,6 +156,8 @@ export type AppointmentSeriesRow = {
   created_at: Date;
   updated_at: Date;
 };
+
+export type AppointmentSeriesResponse = Wire<AppointmentSeriesRow>;
 
 export type AppointmentSeriesInsert = Pick<AppointmentSeriesRow,
   | 'client_user_id'

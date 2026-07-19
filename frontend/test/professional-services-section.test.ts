@@ -6,6 +6,9 @@ import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import ProfessionalServicesSection from '@/components/settings/ProfessionalServicesSection.vue';
+import type { TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
+import { failedCrud, listRowsFrom, rowResultFrom } from './helpers/api-fixtures';
 
 vi.mock('@/api/crud', () => ({
   listRows: vi.fn(),
@@ -21,13 +24,11 @@ const SERVICES = [
   { id: '2', business_id: 'b1', name: 'Color', description: null, default_duration_minutes: 90, default_price_ars: '5000.00' },
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mockCrud(offerings: any[]) {
-  vi.mocked(listRows).mockImplementation(async (table: string) => {
-    if (table === 'services') return { ok: true, data: SERVICES } as never;
-    if (table === 'professional_services') return { ok: true, data: offerings } as never;
-    return { ok: true, data: [] } as never;
-  });
+function mockCrud(offerings: Wire<TableRecordMap['professional_services']>[]) {
+  vi.mocked(listRows).mockImplementation(listRowsFrom({
+    services: SERVICES,
+    professional_services: offerings,
+  }));
 }
 
 function mountSection(professionalUserId: number | null = 7) {
@@ -59,10 +60,7 @@ describe('ProfessionalServicesSection', () => {
   });
 
   it('shows a hint when the business has no services yet', async () => {
-    vi.mocked(listRows).mockImplementation(async (table: string) => {
-      if (table === 'services') return { ok: true, data: [] } as never;
-      return { ok: true, data: [] } as never;
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({ services: [], professional_services: [] }));
     const w = mountSection();
     await flushPromises();
     expect(w.text()).toContain('Primero agregá servicios');
@@ -70,7 +68,9 @@ describe('ProfessionalServicesSection', () => {
 
   it('creates an offering when a service is ticked', async () => {
     mockCrud([]);
-    vi.mocked(createRow).mockResolvedValue({ ok: true, data: { id: 'ps-9', professional_user_id: '7', service_id: '2', min_booking_days: null, max_booking_days: null } } as never);
+    vi.mocked(createRow).mockImplementation(rowResultFrom({ professional_services: [
+      { id: 'ps-9', professional_user_id: '7', service_id: '2', min_booking_days: null, max_booking_days: null },
+    ] }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="offering-toggle-2"]').setValue(true);
@@ -87,7 +87,9 @@ describe('ProfessionalServicesSection', () => {
 
   it('deletes the offering when a service is unticked', async () => {
     mockCrud([{ id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: null, max_booking_days: null }]);
-    vi.mocked(deleteRow).mockResolvedValue({ ok: true, data: { id: 'ps-1' } } as never);
+    vi.mocked(deleteRow).mockImplementation(rowResultFrom({ professional_services: [
+      { id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: null, max_booking_days: null },
+    ] }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="offering-toggle-1"]').setValue(false);
@@ -98,7 +100,7 @@ describe('ProfessionalServicesSection', () => {
 
   it('reverts the checkbox when the create fails', async () => {
     mockCrud([]);
-    vi.mocked(createRow).mockResolvedValue({ ok: false, message: 'nope' } as never);
+    vi.mocked(createRow).mockImplementation(failedCrud('test_failure', 'nope'));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="offering-toggle-2"]').setValue(true);
@@ -108,7 +110,9 @@ describe('ProfessionalServicesSection', () => {
 
   it('saves a custom booking window via updateRow', async () => {
     mockCrud([{ id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: null, max_booking_days: null }]);
-    vi.mocked(updateRow).mockResolvedValue({ ok: true, data: { id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: 2, max_booking_days: 20 } } as never);
+    vi.mocked(updateRow).mockImplementation(rowResultFrom({ professional_services: [
+      { id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: 2, max_booking_days: 20 },
+    ] }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="offering-window-edit-1"]').trigger('click');
@@ -121,7 +125,9 @@ describe('ProfessionalServicesSection', () => {
 
   it('clears the window (inherit business default) via updateRow with nulls', async () => {
     mockCrud([{ id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: 2, max_booking_days: 20 }]);
-    vi.mocked(updateRow).mockResolvedValue({ ok: true, data: { id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: null, max_booking_days: null } } as never);
+    vi.mocked(updateRow).mockImplementation(rowResultFrom({ professional_services: [
+      { id: 'ps-1', professional_user_id: '7', service_id: '1', min_booking_days: null, max_booking_days: null },
+    ] }));
     const w = mountSection();
     await flushPromises();
     await w.get('[data-testid="offering-window-edit-1"]').trigger('click');

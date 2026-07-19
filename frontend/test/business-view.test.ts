@@ -42,7 +42,10 @@ function makeI18n() {
 function mountAsAdmin() {
   setActivePinia(createPinia());
   const auth = useAuthStore();
-  auth.user = { id: 1, username: 'a', role: 'Admin', business_id: 5 } as never;
+  auth.user = {
+    id: 1, username: 'a', email: null, role: 'Admin', business_id: 5,
+    is_active: true, must_change_password: false,
+  };
   return mount(BusinessView, { global: { plugins: [makeI18n()] } });
 }
 

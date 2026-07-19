@@ -9,6 +9,7 @@ import { mountSchedulingRoutes } from '../src/routes/scheduling';
 import { mountBusinessClosureRoutes } from '../src/routes/business-closures';
 import { mountAppointmentRoutes } from '../src/routes/appointments';
 import type { AuthUser } from '../src/auth';
+import type { ApiEnvelope, ApiErrorEnvelope } from '../../shared/src/ssot/envelope';
 
 // Exercises the time-off → conflict machinery end-to-end against a real Postgres: the preview count
 // (warn-then-confirm dialog) and the per-turno in_conflict flag / conflicting list filter. Both are
@@ -24,13 +25,8 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
 };
 
 type Appt = { id: string; in_conflict?: boolean; conflict_ignored?: boolean };
-type Envelope = {
-  data?: unknown;
-  meta?: { total: number };
-  error?: { code: string };
-};
 
-async function request(
+async function request<T>(
   path: string,
   { method = 'GET', body }: { method?: string; body?: Record<string, string | number | null> } = {},
 ) {
@@ -40,7 +36,15 @@ async function request(
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
+  return {
+    status: response.status,
+    body: text ? (JSON.parse(text) as ApiEnvelope<T> | ApiErrorEnvelope) : null,
+  };
+}
+
+function responseData<T>(response: Awaited<ReturnType<typeof request<T>>>): T {
+  if (response.body?.success !== true) throw new Error('Expected a successful response envelope');
+  return response.body.data;
 }
 
 // Far future so real-clock now() always sees these as upcoming; local dates in Argentina TZ (−03).
@@ -71,9 +75,9 @@ async function insertAppt(proId: number, startsAt: string, duration: number, sta
 
 async function preview(body: Record<string, string | number | null>): Promise<number> {
   currentUser = admin();
-  const res = await request('/api/time-off/conflict-preview', { method: 'POST', body });
+  const res = await request<{ count: number }>('/api/time-off/conflict-preview', { method: 'POST', body });
   expect(res.status).toBe(200);
-  return (res.body!.data as { count: number }).count;
+  return responseData(res).count;
 }
 
 let futurePro1Id: number;
@@ -175,26 +179,26 @@ describe('in_conflict flag + conflicting filter', () => {
   test('a turno is flagged only while an overlapping closure exists, and auto-clears on delete', async () => {
     const listFuture = async (): Promise<Appt | undefined> => {
       currentUser = admin();
-      const res = await request(`/api/appointments?date_from=${FUTURE_DATE}&date_to=2099-03-05&limit=50`);
+      const res = await request<Appt[]>(`/api/appointments?date_from=${FUTURE_DATE}&date_to=2099-03-05&limit=50`);
       expect(res.status).toBe(200);
-      return (res.body!.data as Appt[]).find((a) => a.id === String(futurePro1Id));
+      return responseData(res).find((a) => a.id === String(futurePro1Id));
     };
 
     expect((await listFuture())?.in_conflict).toBe(false);
 
     currentUser = admin();
-    const created = await request('/api/business-closures', { method: 'POST', body: { exception_date: FUTURE_DATE } });
+    const created = await request<{ id: string }>('/api/business-closures', { method: 'POST', body: { exception_date: FUTURE_DATE } });
     expect(created.status).toBe(201);
-    const closureId = (created.body!.data as { id: string }).id;
+    const closureId = responseData(created).id;
 
     expect((await listFuture())?.in_conflict).toBe(true);
 
     // ?conflicting=true returns the two future open turnos (past + terminal excluded).
     currentUser = admin();
-    const only = await request('/api/appointments?conflicting=true&limit=50');
+    const only = await request<Appt[]>('/api/appointments?conflicting=true&limit=50');
     expect(only.status).toBe(200);
-    expect((only.body!.data as Appt[]).length).toBe(2);
-    expect((only.body!.data as Appt[]).every((a) => a.in_conflict === true)).toBe(true);
+    expect(responseData(only).length).toBe(2);
+    expect(responseData(only).every((a) => a.in_conflict === true)).toBe(true);
 
     currentUser = admin();
     await request(`/api/business-closures/${closureId}`, { method: 'DELETE' });
@@ -204,26 +208,26 @@ describe('in_conflict flag + conflicting filter', () => {
   test('ignoring a conflicting turno drops it from the list + preview; re-flagging restores it', async () => {
     const listConflicting = async (): Promise<Appt[]> => {
       currentUser = admin();
-      const res = await request('/api/appointments?conflicting=true&limit=50');
-      return res.body!.data as Appt[];
+      const res = await request<Appt[]>('/api/appointments?conflicting=true&limit=50');
+      return responseData(res);
     };
     const isListed = async () => (await listConflicting()).some((a) => a.id === String(futurePro1Id));
 
     currentUser = admin();
-    const created = await request('/api/business-closures', { method: 'POST', body: { exception_date: FUTURE_DATE } });
-    const closureId = (created.body!.data as { id: string }).id;
+    const created = await request<{ id: string }>('/api/business-closures', { method: 'POST', body: { exception_date: FUTURE_DATE } });
+    const closureId = responseData(created).id;
     expect(await isListed()).toBe(true);
 
     currentUser = admin();
-    const ig = await request(`/api/appointments/${futurePro1Id}/ignore-conflict`, { method: 'POST', body: { ignored: true } });
+    const ig = await request<Appt>(`/api/appointments/${futurePro1Id}/ignore-conflict`, { method: 'POST', body: { ignored: true } });
     expect(ig.status).toBe(200);
-    expect((ig.body!.data as Appt).conflict_ignored).toBe(true);
+    expect(responseData(ig).conflict_ignored).toBe(true);
     expect(await isListed()).toBe(false);
     // The preview stops counting an ignored turno (only pro2's remains that day).
     expect(await preview({ date: FUTURE_DATE })).toBe(1);
 
     currentUser = admin();
-    const re = await request(`/api/appointments/${futurePro1Id}/ignore-conflict`, { method: 'POST', body: { ignored: false } });
+    const re = await request<Appt>(`/api/appointments/${futurePro1Id}/ignore-conflict`, { method: 'POST', body: { ignored: false } });
     expect(re.status).toBe(200);
     expect(await isListed()).toBe(true);
 

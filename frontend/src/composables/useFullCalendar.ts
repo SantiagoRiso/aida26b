@@ -122,7 +122,10 @@ function apptToEvent(appt: Appointment, decorators?: CalendarDecorators, showCon
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+  const escaped: Record<string, string> = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  };
+  return s.replace(/[&<>"']/g, (character) => escaped[character] ?? character);
 }
 
 export function useAppointmentCalendar(
@@ -239,7 +242,7 @@ export function useAppointmentCalendar(
         if (handlers.onEventPointerDown) {
           info.el.addEventListener('pointerdown', (ev) => {
             const current = appointments.value.find((candidate) => candidate.id === appt.id);
-            if (current) handlers.onEventPointerDown!(current, ev as PointerEvent, info.el);
+            if (current) handlers.onEventPointerDown!(current, ev, info.el);
           });
         }
         return;

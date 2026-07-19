@@ -1,4 +1,3 @@
-import type { PoolClient } from 'pg';
 import { computeServiceSlots, computeFreeWindows, evaluateConflicts, weekdayOf, seriesOccupancyForDate } from '../../../shared/src/ssot/domain';
 import type {
   TimeInterval,
@@ -7,7 +6,7 @@ import type {
   ConflictVerdict,
   OwnerKind,
 } from '../../../shared/src/ssot/domain';
-import type { Queryable } from '../db/core';
+import type { Queryable, TransactionClient } from '../db/core';
 import {
   getProfessionalOwner,
   getResourceOwner,
@@ -34,6 +33,7 @@ export type TimeOffRangeParse =
 // rules the DB CHECK enforces, surfaced as friendly errors. The date error is caller-supplied
 // because the two surfaces name the field differently.
 export function parseTimeOffRange(
+  // eslint-disable-next-line no-restricted-syntax -- Shared parser narrows fields from two untrusted Express request bodies.
   raw: { date: unknown; start: unknown; end: unknown },
   dateError: { status: number; message: string },
 ): TimeOffRangeParse {
@@ -226,7 +226,7 @@ const RESOURCE_LOCK_NS = 2;
 // parallel; the lock auto-releases on commit. Performs NO appointment write — the caller owns
 // the write.
 export async function recheckConflictsInTx(
-  client: PoolClient,
+  client: TransactionClient,
   input: {
     businessId: number;
     professionalUserId: number;

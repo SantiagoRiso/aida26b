@@ -52,7 +52,6 @@ export const logger = {
 export function requestLogger(): RequestHandler {
   return (req, res, next) => {
     const reqId = randomUUID();
-    (req as { reqId?: string }).reqId = reqId;
     const start = process.hrtime.bigint();
 
     res.on('finish', () => {

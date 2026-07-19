@@ -1,5 +1,6 @@
 import { apiFetchDecoded } from '@/api/client';
-import { arrayOf, tableRecord } from '@/api/decoders';
+import { arrayOf } from '@/api/decoders';
+import { tableRecord } from '@/api/ssot-decoder';
 import type { ApiResult } from '@/api/client';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import type { Wire } from '@shared/ssot/query-types';

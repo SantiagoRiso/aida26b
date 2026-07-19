@@ -66,7 +66,7 @@ describe('useTimeOffConflictGate', () => {
 
   // Fail open: an unsuccessful preview proceeds without a dialog so a hiccup never blocks the save.
   it('treats a non-ok preview as no conflict', async () => {
-    mockPreview.mockResolvedValue({ ok: false, code: 'boom', message: 'boom' } as never);
+    mockPreview.mockResolvedValue({ ok: false, status: 500, code: 'boom', message: 'boom' });
     const gate = useTimeOffConflictGate();
 
     await expect(gate.confirmTimeOff({ date: '2026-07-17' })).resolves.toBe(true);

@@ -1,5 +1,5 @@
 import { computed, type Ref } from 'vue';
-import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core';
+import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -50,7 +50,7 @@ export function useScheduleTemplate(
     // create is still native — selectable above — and snaps on release.
     editable: false,
     selectOverlap: false,
-    events: blocks.value.map(blockToEvent) as EventInput[],
+    events: blocks.value.map(blockToEvent),
     // Stamp the block id on the rendered element so the view's delegated pointerdown can pick it up.
     eventDidMount: (arg) => { arg.el.dataset.blockId = arg.event.id; },
     select: handlers.onSelect,

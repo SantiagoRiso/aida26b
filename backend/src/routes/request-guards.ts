@@ -1,16 +1,16 @@
 import express from 'express';
 
-import { sendError } from '../status_messages';
+import { sendError, type HttpResponse } from '../status_messages';
 import { getServerDerivedFields } from '../../../shared/src/utils/utils';
-import { type AuthedRequest } from '../session';
+import { optionalAuthenticatedUser } from '../session';
 import type { AuthUser } from '../auth';
-import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
+import type { TableKey } from '../../../shared/src/ssot/derived';
 
 // Fail closed: no authenticated user means no authority. A missing req.user must never
 // resolve to a privileged identity — defense-in-depth under requireAuth, per handler.
 // Responds 401 and returns null when unauthenticated.
-export function requireUser(req: express.Request, res: express.Response): AuthUser | null {
-  const user = (req as AuthedRequest).user;
+export function requireUser(req: express.Request, res: HttpResponse): AuthUser | null {
+  const user = optionalAuthenticatedUser(req);
   if (!user) {
     sendError(res, 401, 'unauthorized', 'Authentication required');
     return null;
@@ -21,9 +21,9 @@ export function requireUser(req: express.Request, res: express.Response): AuthUs
 // Server-stamped (derivable) columns must never be accepted from the request body.
 // Responds 422 and returns true when the body carries any.
 export function rejectServerDerivedFields(
-  res: express.Response,
+  res: HttpResponse,
   table: TableKey,
-  body: Partial<TableRecordMap[TableKey]>,
+  body: object,
 ): boolean {
   const serverDerived = new Set(getServerDerivedFields(table));
   const illegalFields = Object.keys(body).filter((k) => serverDerived.has(k));

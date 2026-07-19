@@ -15,6 +15,14 @@ export function tableOf(tableKey: TableKey): TableStructure {
   return structure.tables[tableKey] as TableStructure;
 }
 
+export function isTableKey(value: string): value is TableKey {
+  return Object.prototype.hasOwnProperty.call(structure.tables, value);
+}
+
+export function getTableKeys(): TableKey[] {
+  return Object.keys(structure.tables).filter(isTableKey);
+}
+
 export function getPkFields(tableKey: TableKey): string[] {
   const pk = tableOf(tableKey).pk;
   return Array.isArray(pk) ? pk : [pk];
@@ -56,7 +64,7 @@ export function getServerDerivedFields(tableKey: TableKey): string[] {
 
 export function getReferencedRelations(tableKey: TableKey): TableKey[] {
   const refs = tableOf(tableKey).referencedTables;
-  return (Array.isArray(refs) ? refs : []) as TableKey[];
+  return Array.isArray(refs) ? refs.filter(isTableKey) : [];
 }
 
 // Columns that carry a referencesUserRole descriptor (i.e. the referenced auth.users row must
@@ -95,10 +103,10 @@ export function getSchedulable(tableKey: TableKey): SchedulableCapability | unde
 // capability's availability sources — so the set follows the descriptors instead of being named
 // in the generic engine. Writes to these must pass the own/admin/grant schedule guard.
 let ownerScheduledTables: ReadonlySet<string> | null = null;
-export function isOwnerScheduledTable(tableKey: string): boolean {
+export function isOwnerScheduledTable(tableKey: TableKey): boolean {
   if (ownerScheduledTables == null) {
     const tables = new Set<string>();
-    for (const key of Object.keys(structure.tables) as TableKey[]) {
+    for (const key of getTableKeys()) {
       const schedulable = getSchedulable(key);
       if (!schedulable) continue;
       tables.add(schedulable.availability.weeklySource);
@@ -113,7 +121,7 @@ export function isOwnerScheduledTable(tableKey: string): boolean {
 // generic engine's owner-reassignment guard follows the descriptors, not hardcoded column names.
 export function getScheduleOwnerForeignKeys(): string[] {
   const fks = new Set<string>();
-  for (const key of Object.keys(structure.tables) as TableKey[]) {
+  for (const key of getTableKeys()) {
     const schedulable = getSchedulable(key);
     if (schedulable) fks.add(schedulable.ownerForeignKey);
   }
@@ -121,10 +129,10 @@ export function getScheduleOwnerForeignKeys(): string[] {
 }
 
 export function professionalOwnerGuardedOn(
-  tableKey: string,
+  tableKey: TableKey,
   op: Extract<CrudOp, 'create' | 'update' | 'delete'>,
 ): boolean {
-  const guard = tableOf(tableKey as TableKey).professionalOwnerGuard;
+  const guard = tableOf(tableKey).professionalOwnerGuard;
   return !!guard && guard.ops.includes(op);
 }
 
@@ -136,7 +144,7 @@ function getScheduleOwnerFkByKind(): { professional: string; resource: string } 
   if (scheduleOwnerFkByKind == null) {
     let professional = '';
     let resource = '';
-    for (const key of Object.keys(structure.tables) as TableKey[]) {
+    for (const key of getTableKeys()) {
       const schedulable = getSchedulable(key);
       if (!schedulable) continue;
       if (tableOf(key).roleDiscriminator) professional = schedulable.ownerForeignKey;
@@ -158,14 +166,14 @@ export function getResourceScheduleOwnerFk(): string {
 // Whether a table carries the resource owner column. Dual-owner schedule tables do; a
 // professional-only owner-guarded table (professional_services) does not, so its owner row
 // must be read without selecting a non-existent resource column.
-export function ownerHasResourceColumn(tableKey: string): boolean {
-  return getResourceScheduleOwnerFk() in tableOf(tableKey as TableKey).columns;
+export function ownerHasResourceColumn(tableKey: TableKey): boolean {
+  return getResourceScheduleOwnerFk() in tableOf(tableKey).columns;
 }
 
 // Writes to a schedule-owned or professional-owner-guarded table must pass the async
 // own/admin/grant schedule guard.
 export function isScheduleGuarded(
-  tableKey: string,
+  tableKey: TableKey,
   op: Extract<CrudOp, 'create' | 'update' | 'delete'>,
 ): boolean {
   return isOwnerScheduledTable(tableKey) || professionalOwnerGuardedOn(tableKey, op);

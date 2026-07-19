@@ -2,7 +2,7 @@ import { apiFetchDecoded } from '@/api/client';
 import { authUser } from '@/api/contracts';
 import { nullable, object, stringValue } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
-import type { AuthUser } from '@/stores/auth';
+import type { AuthUser } from '@shared/ssot/contracts/auth';
 import type { SelfProfileRow } from '@shared/ssot/query-types';
 import { authPaths } from '@shared/ssot/api-paths';
 

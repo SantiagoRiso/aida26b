@@ -9,8 +9,8 @@ const { apiFetchMock, mutationState } = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({
   apiFetchDecoded: apiFetchMock,
-  getApiMutationGeneration: () => mutationState.generation,
 }));
+vi.mock('@/api/mutation-generation', () => ({ getApiMutationGeneration: () => mutationState.generation }));
 
 import { getAvailabilityRange, invalidateAvailabilityCache } from '@/api/scheduling';
 

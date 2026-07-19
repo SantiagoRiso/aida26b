@@ -12,6 +12,29 @@ const noUnknownRule = [
   },
 ];
 
+const suppressionHygiene = {
+  rules: {
+    scoped: {
+      meta: { type: 'problem', schema: [] },
+      create(context) {
+        return {
+          Program() {
+            for (const comment of context.sourceCode.getAllComments()) {
+              const directive = comment.value.trim();
+              if (/^eslint-disable(?:\s|$)/u.test(directive)) {
+                context.report({ loc: comment.loc, message: 'Use eslint-disable-next-line; file-wide disables are forbidden.' });
+              }
+              if (/^eslint-disable-(?:next-)?line\b/u.test(directive) && !directive.includes(' -- ')) {
+                context.report({ loc: comment.loc, message: 'Lint suppressions require a reason after " -- ".' });
+              }
+            }
+          },
+        };
+      },
+    },
+  },
+};
+
 export default [
   {
     ignores: [
@@ -45,10 +68,12 @@ export default [
     },
     plugins: {
       '@typescript-eslint': tseslint.plugin,
+      suppressions: suppressionHygiene,
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       'no-restricted-syntax': noUnknownRule,
+      'suppressions/scoped': 'error',
     },
   },
   {
@@ -67,10 +92,12 @@ export default [
     plugins: {
       vue: vuePlugin,
       '@typescript-eslint': tseslint.plugin,
+      suppressions: suppressionHygiene,
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       'no-restricted-syntax': noUnknownRule,
+      'suppressions/scoped': 'error',
     },
   },
 ];
