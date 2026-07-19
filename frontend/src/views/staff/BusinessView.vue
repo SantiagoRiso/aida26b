@@ -31,11 +31,12 @@ const formError = ref('');
 onMounted(async () => {
   if (!businessId.value) return;
   const result = await getSettings(businessId.value);
-  if (result.ok) {
-    cutoffHours.value = result.data.cancellation_cutoff_hours;
-    minDays.value = result.data.min_booking_days;
-    maxDays.value = result.data.max_booking_days;
-  }
+  if (!result.ok) return;
+  // A slow load must not overwrite a field the user already edited while it was in flight — each
+  // field is still null until the user types or this load fills it.
+  if (cutoffHours.value === null) cutoffHours.value = result.data.cancellation_cutoff_hours;
+  if (minDays.value === null) minDays.value = result.data.min_booking_days;
+  if (maxDays.value === null) maxDays.value = result.data.max_booking_days;
 });
 
 function nonNegInt(v: number | null): boolean {

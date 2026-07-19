@@ -72,7 +72,11 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
 
   test('Auditoría screen shows a conflict_override (sobreturno) audit event from seeded data', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: es.nav.audit }).click();
+    // Wait for the mount-time audit load to resolve, else the table assertion races the fetch.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/audit') && r.request().method() === 'GET'),
+      page.getByRole('link', { name: es.nav.audit }).click(),
+    ]);
 
     // The audit_events table is seeded with at least one conflict_override entry, plus the
     // one this spec's first test just created. The event-type filter is a free-text input.
