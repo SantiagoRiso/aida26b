@@ -8,9 +8,22 @@ beforeEach(() => {
 
 async function importFresh() {
   // Dynamic import avoids module-level singleton issues.
-  const { apiFetch } = await import('@/api/client');
+  const { apiFetchDecoded } = await import('@/api/client');
+  const { unknownValue } = await import('@/api/decoders');
   const { useUiStore } = await import('@/stores/ui');
+  const apiFetch = (path: string, options?: RequestInit, apiOptions?: Parameters<typeof apiFetchDecoded>[3]) => (
+    apiFetchDecoded(unknownValue, path, options, apiOptions)
+  );
   return { apiFetch, useUiStore };
+}
+
+function isNamedEntity(value: unknown): value is { id: number; name: string } {
+  return value !== null
+    && typeof value === 'object'
+    && 'id' in value
+    && typeof value.id === 'number'
+    && 'name' in value
+    && typeof value.name === 'string';
 }
 
 function mockFetch<T>(status: number, body: T, headers?: Record<string, string>) {
@@ -26,12 +39,33 @@ describe('enveloped success — data object', () => {
   it('returns ok:true with data', async () => {
     mockFetch(200, { success: true, data: { id: 1, name: 'Test' } });
     const { apiFetch } = await importFresh();
-    const result = await apiFetch<{ id: number; name: string }>('/appointments/1');
+    const result = await apiFetch('/appointments/1');
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data).toEqual({ id: 1, name: 'Test' });
       expect(result.meta).toBeUndefined();
     }
+  });
+});
+
+describe('decoded payload contract', () => {
+  it('accepts data matching the endpoint decoder', async () => {
+    mockFetch(200, { success: true, data: { id: 1, name: 'Test' } });
+    const { apiFetchDecoded } = await import('@/api/client');
+    const result = await apiFetchDecoded(isNamedEntity, '/appointments/1');
+    expect(result).toEqual({ ok: true, data: { id: 1, name: 'Test' }, meta: undefined });
+  });
+
+  it('rejects an enveloped payload that violates the endpoint contract', async () => {
+    mockFetch(200, { success: true, data: { id: 'wrong', name: 'Test' } });
+    const { apiFetchDecoded } = await import('@/api/client');
+    const result = await apiFetchDecoded(isNamedEntity, '/appointments/1');
+    expect(result).toEqual({
+      ok: false,
+      status: 200,
+      code: 'bad_response',
+      message: 'Unexpected response payload',
+    });
   });
 });
 
@@ -43,7 +77,7 @@ describe('enveloped success — list with meta', () => {
       meta: { page: 1, limit: 20, total: 2 },
     });
     const { apiFetch } = await importFresh();
-    const result = await apiFetch<{ id: number }[]>('/appointments');
+    const result = await apiFetch('/appointments');
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(Array.isArray(result.data)).toBe(true);
@@ -74,7 +108,7 @@ describe('auth route success', () => {
     const user = { id: 1, username: 'demo_admin', role: 'Admin' };
     mockFetch(200, { success: true, data: { user } });
     const { apiFetch } = await importFresh();
-    const result = await apiFetch<{ user: typeof user }>('/auth/me');
+    const result = await apiFetch('/auth/me');
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data).toEqual({ user });
@@ -252,11 +286,12 @@ describe('204 No Content response', () => {
 
 describe('mutation generation', () => {
   it('advances only after successful writes', async () => {
-    const { apiFetch, getApiMutationGeneration } = await import('@/api/client');
+    const { apiFetchDecoded, getApiMutationGeneration } = await import('@/api/client');
+    const { unknownValue } = await import('@/api/decoders');
     const initial = getApiMutationGeneration();
     mockFetch(200, { success: true, data: { id: 1 } });
 
-    await apiFetch('/appointments', { method: 'POST' });
+    await apiFetchDecoded(unknownValue, '/appointments', { method: 'POST' });
 
     expect(getApiMutationGeneration()).toBe(initial + 1);
   });

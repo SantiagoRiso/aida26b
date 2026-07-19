@@ -1,4 +1,5 @@
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { arrayOf, nullable, numberValue, object, stringValue, union } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { LedgerEntryRow, Wire } from '@shared/ssot/query-types';
 import { ledgerPaths } from '@shared/ssot/api-paths';
@@ -9,6 +10,13 @@ export interface BalanceResult {
 }
 
 export type LedgerEntry = Wire<LedgerEntryRow>;
+const idValue = union(numberValue, stringValue);
+const balanceResult = object<BalanceResult>({ client_user_id: idValue, balance_ars: stringValue });
+const ledgerEntry = object<LedgerEntry>({
+  id: stringValue, client_user_id: stringValue, appointment_id: nullable(stringValue),
+  entry_type: stringValue, amount_ars: stringValue, description: nullable(stringValue),
+  actor_user_id: nullable(stringValue), created_at: stringValue,
+});
 
 export interface CreateEntryBody {
   client_user_id: number | string;
@@ -19,7 +27,7 @@ export interface CreateEntryBody {
 }
 
 export function getBalance(clientUserId: number | string): Promise<ApiResult<BalanceResult>> {
-  return apiFetch<BalanceResult>(ledgerPaths.clientBalance(clientUserId));
+  return apiFetchDecoded(balanceResult, ledgerPaths.clientBalance(clientUserId));
 }
 
 export function getLedger(
@@ -31,9 +39,9 @@ export function getLedger(
   if (page > 1) params.set('page', String(page));
   params.set('limit', String(limit));
   const qs = params.toString();
-  return apiFetch<LedgerEntry[]>(`${ledgerPaths.clientLedger(clientUserId)}${qs ? `?${qs}` : ''}`);
+  return apiFetchDecoded(arrayOf(ledgerEntry), `${ledgerPaths.clientLedger(clientUserId)}${qs ? `?${qs}` : ''}`);
 }
 
 export function createEntry(body: CreateEntryBody): Promise<ApiResult<LedgerEntry>> {
-  return apiFetch<LedgerEntry>(ledgerPaths.create(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
+  return apiFetchDecoded(ledgerEntry, ledgerPaths.create(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }

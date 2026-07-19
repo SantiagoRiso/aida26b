@@ -97,13 +97,16 @@ export function useCustomDrag(deps: CustomDragDeps): {
 
   function begin(ev: PointerEvent) {
     if (!session) return;
+    // All layout reads before any DOM write. Snapshotting geometry after appending the ghost / hiding
+    // the source would read rects against an invalidated layout, forcing a full timegrid reflow on the
+    // first drag frame.
     const rect = session.el.getBoundingClientRect();
+    deps.geometry.beginInteraction?.();
     session.heightPx = rect.height;
     session.lastLeft = rect.left;
     session.lastWidth = rect.width;
     session.dragging = true;
     session.ghost = createDragGhost(session.el, rect, deps.ghostParent?.() ?? document.body);
-    deps.geometry.beginInteraction?.();
     deps.onBegin(session.appt);
     ev.preventDefault();
   }
@@ -183,20 +186,20 @@ export function useCustomDrag(deps: CustomDragDeps): {
 
   function start(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
     if (ev.button !== 0) return;
-    // A virtual occurrence has no row yet — materialize-then-move is out of scope here (Task 12's
-    // detail panel already materializes on other actions). Never begins a session, so pointermove
-    // is inert for it.
-    if (appt.is_virtual) return;
+    // A virtual (recurring) occurrence drags like any turno; onCommit materializes it into a real
+    // row at the drop target (resolveActionable) before rescheduling — so a conflicting occurrence
+    // can be dragged out of conflict, moving just that date and leaving the recurrence rule intact.
     const startDate = new Date(appt.starts_at);
     const originalDate = isoDate(startDate);
     const originalStart = startDate.getHours() * 60 + startDate.getMinutes();
+    const startRect = el.getBoundingClientRect();
     session = {
       appt,
       el,
       downX: ev.clientX,
       downY: ev.clientY,
-      grabOffsetPx: ev.clientY - el.getBoundingClientRect().top,
-      heightPx: el.getBoundingClientRect().height,
+      grabOffsetPx: ev.clientY - startRect.top,
+      heightPx: startRect.height,
       dragging: false,
       ghost: null,
       lastLeft: 0,

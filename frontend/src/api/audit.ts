@@ -1,9 +1,16 @@
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { arrayOf, booleanValue, nullable, numberValue, object, recordOf, stringValue, union } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { AuditEventRow, Wire } from '@shared/ssot/query-types';
 import { auditPaths } from '@shared/ssot/api-paths';
 
 export type AuditEvent = Wire<AuditEventRow>;
+const columnValue = union(union(stringValue, numberValue), union(booleanValue, nullable(stringValue)));
+const auditEvent = object<AuditEvent>({
+  id: stringValue, actor_user_id: nullable(stringValue), event_type: stringValue,
+  entity_type: nullable(stringValue), entity_id: nullable(stringValue), outcome: stringValue,
+  ip: nullable(stringValue), details: nullable(recordOf(columnValue)), created_at: stringValue,
+});
 
 export interface AuditFilters {
   entity_type?: string;
@@ -29,5 +36,5 @@ export function listAudit(
   if (page > 1) params.set('page', String(page));
   params.set('limit', String(limit));
   const qs = params.toString();
-  return apiFetch<AuditEvent[]>(`${auditPaths.list()}${qs ? `?${qs}` : ''}`);
+  return apiFetchDecoded(arrayOf(auditEvent), `${auditPaths.list()}${qs ? `?${qs}` : ''}`);
 }

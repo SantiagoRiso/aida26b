@@ -11,11 +11,11 @@ import {
   type AppointmentSeries,
 } from '@/api/appointments';
 
-vi.mock('@/api/client', () => ({ apiFetch: vi.fn() }));
+vi.mock('@/api/client', () => ({ apiFetchDecoded: vi.fn() }));
 
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
 
-const mockedApiFetch = apiFetch as ReturnType<typeof vi.fn>;
+const mockedApiFetch = vi.mocked(apiFetchDecoded);
 
 const series: AppointmentSeries = {
   id: '1',
@@ -67,6 +67,7 @@ describe('scheduleSeries', () => {
     const result = await scheduleSeries(scheduleSeriesBody);
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesCreate(),
       { method: 'POST', body: JSON.stringify(scheduleSeriesBody) },
       { toastOnForbidden: true },
@@ -108,6 +109,7 @@ describe('materializeOccurrence', () => {
     const result = await materializeOccurrence(1, '2026-07-27');
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesMaterialize(1),
       { method: 'POST', body: JSON.stringify({ occurrence_date: '2026-07-27' }) },
       { toastOnForbidden: true },
@@ -124,6 +126,7 @@ describe('updateSeries', () => {
     const result = await updateSeries(1, patch);
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesDetail(1),
       { method: 'PUT', body: JSON.stringify(patch) },
       { toastOnForbidden: true },
@@ -142,6 +145,7 @@ describe('splitSeriesFuture', () => {
     const result = await splitSeriesFuture(1, '2026-08-01', patch);
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesFuture(1),
       { method: 'POST', body: JSON.stringify({ from_date: '2026-08-01', patch }) },
       { toastOnForbidden: true },
@@ -158,6 +162,7 @@ describe('endSeries', () => {
     const result = await endSeries(1, '2026-08-01');
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesEnd(1),
       { method: 'POST', body: JSON.stringify({ from_date: '2026-08-01' }) },
       { toastOnForbidden: true },
@@ -172,6 +177,7 @@ describe('endSeries', () => {
     await endSeries(1);
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
+      expect.any(Function),
       appointmentPaths.seriesEnd(1),
       { method: 'POST', body: JSON.stringify({}) },
       { toastOnForbidden: true },

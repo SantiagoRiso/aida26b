@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia';
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { undefinedValue } from '@/api/decoders';
+import { wrappedAuthUser } from '@/api/contracts';
 import type { Role } from '@shared/types/roles';
 import { authPaths } from '@shared/ssot/api-paths';
 
@@ -8,19 +10,20 @@ export interface AuthUser {
   username: string;
   email: string | null;
   role: Role;
-  business_id: string | null;
+  business_id: number | null;
   is_active: boolean;
   must_change_password: boolean;
 }
 
 export const useAuthStore = defineStore('auth', {
-  state: () => ({
-    user: null as AuthUser | null,
+  state: (): { user: AuthUser | null } => ({
+    user: null,
   }),
   actions: {
     async login(username: string, password: string) {
       // entry-mode: a 401 here is bad credentials, not a session expiry.
-      const result = await apiFetch<{ user: AuthUser }>(
+      const result = await apiFetchDecoded(
+        wrappedAuthUser,
         authPaths.login(),
         { method: 'POST', body: JSON.stringify({ username, password }) },
         { authMode: 'entry' },
@@ -34,13 +37,13 @@ export const useAuthStore = defineStore('auth', {
     async logout() {
       // Errors are ignored on purpose (local state clears regardless); a 403 here is unreachable
       // in practice, so no forbidden toast.
-      await apiFetch(authPaths.logout(), { method: 'POST' });
+      await apiFetchDecoded(undefinedValue, authPaths.logout(), { method: 'POST' });
       this.user = null;
     },
 
     async fetchMe() {
       // entry-mode: a 401 here is the normal "not logged in" state on boot, never session-expired.
-      const result = await apiFetch<{ user: AuthUser }>(authPaths.me(), {}, { authMode: 'entry' });
+      const result = await apiFetchDecoded(wrappedAuthUser, authPaths.me(), {}, { authMode: 'entry' });
       if (result.ok) {
         this.user = result.data.user;
       } else {
@@ -51,7 +54,8 @@ export const useAuthStore = defineStore('auth', {
 
     async changePassword(currentPassword: string, newPassword: string) {
       // Authenticated route: a 401 would flag session-expired (default auth mode).
-      const result = await apiFetch<{ user: AuthUser }>(
+      const result = await apiFetchDecoded(
+        wrappedAuthUser,
         authPaths.changePassword(),
         { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) },
         { toastOnForbidden: true },

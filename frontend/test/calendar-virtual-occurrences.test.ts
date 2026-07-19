@@ -205,8 +205,8 @@ function fakeEl(): HTMLElement {
   return el;
 }
 
-describe('useCustomDrag skips virtual occurrences', () => {
-  it('never begins a drag session for a virtual occurrence, even past the drag threshold', () => {
+describe('useCustomDrag drags virtual occurrences (materialize-on-drop)', () => {
+  it('begins a drag session for a virtual occurrence past the threshold — the commit path materializes it', () => {
     const onBegin = vi.fn();
     const drag = useCustomDrag({
       geometry: fakeGeometry(),
@@ -225,7 +225,8 @@ describe('useCustomDrag skips virtual occurrences', () => {
     drag.start(display, pointerEvent('pointerdown', 0, 0), el);
     document.dispatchEvent(pointerEvent('pointermove', 50, 50));
 
-    expect(onBegin).not.toHaveBeenCalled();
+    expect(onBegin).toHaveBeenCalledTimes(1);
+    expect(onBegin).toHaveBeenCalledWith(display);
   });
 
   it('control: a real appointment still begins a drag session past the threshold (unchanged behavior)', () => {

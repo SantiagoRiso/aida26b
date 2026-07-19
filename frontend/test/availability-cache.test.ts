@@ -8,7 +8,7 @@ const { apiFetchMock, mutationState } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/api/client', () => ({
-  apiFetch: apiFetchMock,
+  apiFetchDecoded: apiFetchMock,
   getApiMutationGeneration: () => mutationState.generation,
 }));
 
@@ -71,6 +71,7 @@ describe('availability range request reuse', () => {
     });
 
     expect(apiFetchMock).toHaveBeenCalledWith(
+      expect.any(Function),
       expect.stringContaining('owner=res%3A4'),
       { signal: controller.signal },
     );

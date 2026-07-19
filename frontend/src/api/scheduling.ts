@@ -1,4 +1,6 @@
-import { apiFetch, getApiMutationGeneration } from '@/api/client';
+import { apiFetchDecoded, getApiMutationGeneration } from '@/api/client';
+import { conflicts } from '@/api/contracts';
+import { arrayOf, booleanValue, nullable, numberValue, object, optional, stringValue } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
@@ -26,7 +28,7 @@ export interface ConflictCheckResult extends ConflictVerdict {
 export async function checkConflict(
   body: ConflictCheckBody,
 ): Promise<ApiResult<ConflictCheckResult>> {
-  return apiFetch<ConflictCheckResult>(schedulingPaths.conflictCheck(), {
+  return apiFetchDecoded(conflictCheckResult, schedulingPaths.conflictCheck(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -45,6 +47,20 @@ export interface BookingWindowResult {
   min_date: string;
   max_date: string | null;
 }
+
+const timeInterval = object<TimeInterval>({
+  start: stringValue, end: stringValue, granularity_minutes: optional(numberValue),
+});
+const availabilityResult = object<AvailabilityResult>({
+  date: stringValue, slots: arrayOf(timeInterval), open: booleanValue,
+  outside_window: optional(booleanValue),
+});
+const bookingWindowResult = object<BookingWindowResult>({ min_date: stringValue, max_date: nullable(stringValue) });
+const conflictCheckResult = object<ConflictCheckResult>({
+  can_save: booleanValue, requires_override: booleanValue, can_override: booleanValue,
+  conflicts,
+  effective_price: stringValue, effective_duration_minutes: numberValue,
+});
 
 const AVAILABILITY_CACHE_MS = 15_000;
 const availabilityCache = new Map<string, {
@@ -68,7 +84,7 @@ export async function getBookingWindow(
   service: Id,
 ): Promise<ApiResult<BookingWindowResult>> {
   const params = new URLSearchParams({ professional: String(professional), service: String(service) });
-  return apiFetch<BookingWindowResult>(`${schedulingPaths.bookingWindow()}?${params.toString()}`);
+  return apiFetchDecoded(bookingWindowResult, `${schedulingPaths.bookingWindow()}?${params.toString()}`);
 }
 
 // How many open, future turnos a not-yet-saved time-off would put in conflict — powers the
@@ -84,7 +100,7 @@ export interface TimeOffPreviewBody {
 export async function previewTimeOffConflicts(
   body: TimeOffPreviewBody,
 ): Promise<ApiResult<{ count: number }>> {
-  return apiFetch<{ count: number }>(schedulingPaths.timeOffConflictPreview(), {
+  return apiFetchDecoded(object<{ count: number }>({ count: numberValue }), schedulingPaths.timeOffConflictPreview(), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -101,7 +117,7 @@ export async function getAvailability(
   const params = new URLSearchParams({ owner, date });
   if (service !== undefined) params.set('service', String(service));
   if (exclude !== undefined) params.set('exclude', String(exclude));
-  return apiFetch<AvailabilityResult>(`${schedulingPaths.availability()}?${params.toString()}`);
+  return apiFetchDecoded(availabilityResult, `${schedulingPaths.availability()}?${params.toString()}`);
 }
 
 export async function getAvailabilityRange(
@@ -126,7 +142,7 @@ export async function getAvailabilityRange(
   if (pending && pending.signal === options.signal) return pending.request;
 
   const mutationGeneration = getApiMutationGeneration();
-  const request = apiFetch<AvailabilityResult[]>(path, { signal: options.signal })
+  const request = apiFetchDecoded(arrayOf(availabilityResult), path, { signal: options.signal })
     .then((result) => {
       if (result.ok) {
         availabilityCache.set(path, {

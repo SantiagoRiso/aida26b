@@ -233,6 +233,12 @@ defineExpose({
   opacity: 1 !important;
 }
 
+/* Appointment blocks open the detail panel on click — show the pointer cursor so they read as
+   actionable (background exception/closure overlays are .fc-bg-event, unaffected). */
+:deep(.fc-event) {
+  cursor: pointer;
+}
+
 /* Month day cells read as actionable. The timegrid cursor is driven from JS (onGridPointerMove)
    instead, so past slots don't show the actionable pointer. */
 :deep(.fc-daygrid-day-frame) {

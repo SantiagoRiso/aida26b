@@ -1,4 +1,5 @@
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { arrayOf, booleanValue, nullable, object, stringValue } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { BusinessClosureRow } from '@shared/ssot/query-types';
 import { closurePaths } from '@shared/ssot/api-paths';
@@ -8,8 +9,16 @@ import { closurePaths } from '@shared/ssot/api-paths';
 // unions it into every professional's and resource's day.
 export type BusinessClosure = BusinessClosureRow;
 
+const businessClosure = object<BusinessClosure>({
+  id: stringValue,
+  exception_date: stringValue,
+  start_time: nullable(stringValue),
+  end_time: nullable(stringValue),
+  reason: nullable(stringValue),
+});
+
 export function listClosures(options: { signal?: AbortSignal } = {}): Promise<ApiResult<BusinessClosure[]>> {
-  return apiFetch<BusinessClosure[]>(closurePaths.list(), { signal: options.signal });
+  return apiFetchDecoded(arrayOf(businessClosure), closurePaths.list(), { signal: options.signal });
 }
 
 export function createClosure(body: {
@@ -18,7 +27,7 @@ export function createClosure(body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetch<BusinessClosure>(closurePaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
+  return apiFetchDecoded(businessClosure, closurePaths.list(), { method: 'POST', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function updateClosure(id: number | string, body: {
@@ -27,9 +36,9 @@ export function updateClosure(id: number | string, body: {
   end_time?: string | null;
   reason?: string | null;
 }): Promise<ApiResult<BusinessClosure>> {
-  return apiFetch<BusinessClosure>(closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
+  return apiFetchDecoded(businessClosure, closurePaths.detail(id), { method: 'PUT', body: JSON.stringify(body) }, { toastOnForbidden: true });
 }
 
 export function deleteClosure(id: number | string): Promise<ApiResult<{ id: string; deleted: boolean }>> {
-  return apiFetch<{ id: string; deleted: boolean }>(closurePaths.detail(id), { method: 'DELETE' }, { toastOnForbidden: true });
+  return apiFetchDecoded(object<{ id: string; deleted: boolean }>({ id: stringValue, deleted: booleanValue }), closurePaths.detail(id), { method: 'DELETE' }, { toastOnForbidden: true });
 }

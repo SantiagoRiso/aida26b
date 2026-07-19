@@ -1,4 +1,5 @@
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { numberValue, object, stringValue, union } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import { adminUserPaths } from '@shared/ssot/api-paths';
 
@@ -18,16 +19,19 @@ export interface AdminUserResult {
   role: string;
 }
 
+const adminUserResult = object<AdminUserResult>({ id: union(numberValue, stringValue), username: stringValue, role: stringValue });
+const wrappedAdminUserResult = object<{ user: AdminUserResult }>({ user: adminUserResult });
+
 // createUser is not admin-only: Professionals/Receptionists may create Clients.
 export function createUser(body: AdminUserPayload): Promise<ApiResult<AdminUserResult>> {
-  return apiFetch<AdminUserResult>(adminUserPaths.create(), {
+  return apiFetchDecoded(adminUserResult, adminUserPaths.create(), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
 }
 
 export function deactivateUser(id: string | number): Promise<ApiResult<{ user: AdminUserResult }>> {
-  return apiFetch<{ user: AdminUserResult }>(adminUserPaths.deactivate(id), {
+  return apiFetchDecoded(wrappedAdminUserResult, adminUserPaths.deactivate(id), {
     method: 'POST',
   }, { toastOnForbidden: true });
 }
@@ -36,7 +40,7 @@ export function resetPassword(
   id: string | number,
   password: string,
 ): Promise<ApiResult<{ user: AdminUserResult }>> {
-  return apiFetch<{ user: AdminUserResult }>(adminUserPaths.resetPassword(id), {
+  return apiFetchDecoded(wrappedAdminUserResult, adminUserPaths.resetPassword(id), {
     method: 'POST',
     body: JSON.stringify({ password }),
   }, { toastOnForbidden: true });
@@ -47,7 +51,7 @@ export function enableClientLogin(
   id: string | number,
   body: { username: string; password: string },
 ): Promise<ApiResult<{ user: AdminUserResult }>> {
-  return apiFetch<{ user: AdminUserResult }>(adminUserPaths.enableLogin(id), {
+  return apiFetchDecoded(wrappedAdminUserResult, adminUserPaths.enableLogin(id), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });

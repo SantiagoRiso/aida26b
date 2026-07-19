@@ -1,9 +1,16 @@
-import { apiFetch } from '@/api/client';
+import { apiFetchDecoded } from '@/api/client';
+import { conflict, conflictVerdict } from '@/api/contracts';
+import {
+  arrayOf, booleanValue, literal, nullable, numberValue, object, optional,
+  stringEnum, stringValue, union,
+} from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { Conflict, ConflictVerdict } from '@shared/ssot/domain/conflict';
 import type { ScheduleSeriesBody } from '@shared/ssot/domain/recurrence';
 import type { AppointmentRow, AppointmentSeriesRow, VirtualOccurrence, Wire } from '@shared/ssot/query-types';
 import { appointmentPaths } from '@shared/ssot/api-paths';
+import { END_KIND_VALUES, FREQUENCY_VALUES, SERIES_STATUS_VALUES } from '@shared/ssot/domain/recurrence';
+import { WEEKDAYS } from '@shared/ssot/domain/availability';
 
 // client_user_id is NOT NULL on the appointments table — the wire always carries it.
 export type Appointment = Wire<AppointmentRow>;
@@ -12,6 +19,53 @@ export type AppointmentSeries = Wire<AppointmentSeriesRow>;
 // The list endpoint unions real rows with un-materialized recurring occurrences (no row, no id
 // yet). VirtualOccurrence carries only strings already, so it needs no Wire mapping.
 export type ListAppointment = Appointment | VirtualOccurrence;
+
+export const appointmentContract = object<Appointment>({
+  id: stringValue,
+  client_user_id: stringValue,
+  professional_user_id: stringValue,
+  resource_id: nullable(stringValue),
+  service_id: stringValue,
+  starts_at: stringValue,
+  duration_minutes: numberValue,
+  ends_at: stringValue,
+  state: stringValue,
+  name: nullable(stringValue),
+  description: nullable(stringValue),
+  price: stringValue,
+  override_conflict: booleanValue,
+  override_actor_id: nullable(stringValue),
+  staff_note: nullable(stringValue),
+  created_at: stringValue,
+  updated_at: stringValue,
+  conflict_ignored: booleanValue,
+  in_conflict: optional(booleanValue),
+  series_id: nullable(stringValue),
+  occurrence_date: nullable(stringValue),
+  is_virtual: optional(booleanValue),
+});
+
+const virtualOccurrence = object<VirtualOccurrence>({
+  id: literal(null), series_id: stringValue, occurrence_date: stringValue,
+  client_user_id: stringValue, professional_user_id: stringValue, service_id: stringValue,
+  resource_id: nullable(stringValue), starts_at: stringValue, duration_minutes: numberValue,
+  price: stringValue, state: literal('scheduled'), name: literal(null), description: literal(null),
+  is_virtual: literal(true), in_conflict: booleanValue,
+});
+const listAppointment = union(appointmentContract, virtualOccurrence);
+
+const appointmentSeries = object<AppointmentSeries>({
+  id: stringValue, client_user_id: stringValue, professional_user_id: stringValue,
+  service_id: stringValue, resource_id: nullable(stringValue),
+  frequency: stringEnum(FREQUENCY_VALUES), interval: numberValue,
+  weekday: nullable(stringEnum(WEEKDAYS)), week_of_month: nullable(numberValue),
+  day_of_month: nullable(numberValue), start_time: stringValue, duration_minutes: numberValue,
+  price_ars: stringValue, start_date: stringValue, end_kind: stringEnum(END_KIND_VALUES),
+  end_count: nullable(numberValue), end_date: nullable(stringValue),
+  created_by_user_id: nullable(stringValue), status: stringEnum(SERIES_STATUS_VALUES),
+  created_at: stringValue, updated_at: stringValue,
+});
+const appointmentOrVerdict = union(appointmentContract, conflictVerdict);
 
 export interface AppointmentListFilters {
   date_from?: string;
@@ -53,19 +107,19 @@ export async function listAppointments(
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
-  return apiFetch<ListAppointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
+  return apiFetchDecoded(arrayOf(listAppointment), `${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
 }
 
 // Distinct client ids the caller has any appointment with, in their role scope. Backs the
 // "clients with a prior relationship" filter without shipping the whole appointment history.
 export async function listRelatedClientIds(): Promise<ApiResult<number[]>> {
-  const result = await apiFetch<{ client_user_ids: number[] }>(appointmentPaths.relatedClients());
+  const result = await apiFetchDecoded(object<{ client_user_ids: number[] }>({ client_user_ids: arrayOf(numberValue) }), appointmentPaths.relatedClients());
   if (!result.ok) return result;
   return { ok: true, data: result.data.client_user_ids, meta: result.meta };
 }
 
 export async function getAppointment(id: number | string): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(appointmentPaths.detail(id));
+  return apiFetchDecoded(appointmentContract, appointmentPaths.detail(id));
 }
 
 export interface ScheduleBody {
@@ -87,7 +141,7 @@ export interface ScheduleBody {
 export async function scheduleAppointment(
   body: ScheduleBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.schedule(), {
+  const result = await apiFetchDecoded(appointmentOrVerdict, appointmentPaths.schedule(), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -99,7 +153,7 @@ export async function approveAppointment(
   id: number | string,
   override?: boolean,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.approve(id), {
+  const result = await apiFetchDecoded(appointmentOrVerdict, appointmentPaths.approve(id), {
     method: 'POST',
     body: JSON.stringify({ override: override ?? false }),
   }, { toastOnForbidden: true });
@@ -121,7 +175,7 @@ export async function rescheduleAppointment(
   id: number | string,
   body: RescheduleBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.reschedule(id), {
+  const result = await apiFetchDecoded(appointmentOrVerdict, appointmentPaths.reschedule(id), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -144,7 +198,7 @@ export interface RequestBody {
 export async function requestAppointment(
   body: RequestBody,
 ): Promise<ApiResult<ScheduleResult>> {
-  const result = await apiFetch<Appointment | ConflictVerdict>(appointmentPaths.request(), {
+  const result = await apiFetchDecoded(appointmentOrVerdict, appointmentPaths.request(), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -156,7 +210,7 @@ export async function transitionAppointment(
   id: number | string,
   to: string,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(appointmentPaths.transition(id), {
+  return apiFetchDecoded(appointmentContract, appointmentPaths.transition(id), {
     method: 'POST',
     body: JSON.stringify({ to }),
   }, { toastOnForbidden: true });
@@ -167,7 +221,7 @@ export async function ignoreAppointmentConflict(
   id: number | string,
   ignored = true,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(appointmentPaths.ignoreConflict(id), {
+  return apiFetchDecoded(appointmentContract, appointmentPaths.ignoreConflict(id), {
     method: 'POST',
     body: JSON.stringify({ ignored }),
   }, { toastOnForbidden: true });
@@ -183,7 +237,7 @@ export async function patchAppointment(
   id: number | string,
   body: PatchBody,
 ): Promise<ApiResult<Appointment>> {
-  return apiFetch<Appointment>(appointmentPaths.detail(id), {
+  return apiFetchDecoded(appointmentContract, appointmentPaths.detail(id), {
     method: 'PATCH',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -201,10 +255,16 @@ export interface ScheduleSeriesResult {
   preview: { skipped: SeriesSkip[] };
 }
 
+const seriesSkip = object<SeriesSkip>({ date: stringValue, conflicts: arrayOf(conflict) });
+const scheduleSeriesResult = object<ScheduleSeriesResult>({
+  series: appointmentSeries,
+  preview: object({ skipped: arrayOf(seriesSkip) }),
+});
+
 export async function scheduleSeries(
   body: ScheduleSeriesBody,
 ): Promise<ApiResult<ScheduleSeriesResult>> {
-  return apiFetch<ScheduleSeriesResult>(appointmentPaths.seriesCreate(), {
+  return apiFetchDecoded(scheduleSeriesResult, appointmentPaths.seriesCreate(), {
     method: 'POST',
     body: JSON.stringify(body),
   }, { toastOnForbidden: true });
@@ -215,7 +275,7 @@ export async function materializeOccurrence(
   seriesId: number | string,
   occurrence_date: string,
 ): Promise<ApiResult<{ appointment: Appointment }>> {
-  return apiFetch<{ appointment: Appointment }>(appointmentPaths.seriesMaterialize(seriesId), {
+  return apiFetchDecoded(object<{ appointment: Appointment }>({ appointment: appointmentContract }), appointmentPaths.seriesMaterialize(seriesId), {
     method: 'POST',
     body: JSON.stringify({ occurrence_date }),
   }, { toastOnForbidden: true });
@@ -225,14 +285,14 @@ export async function materializeOccurrence(
 // path. Backs the reschedule-scope weekday decision and the rule editor's prefill, both of which
 // need the series' current rule shape (frequency/weekday/etc.), not carried on the appointment row.
 export async function getSeries(seriesId: number | string): Promise<ApiResult<AppointmentSeries>> {
-  return apiFetch<AppointmentSeries>(appointmentPaths.seriesDetail(seriesId));
+  return apiFetchDecoded(appointmentSeries, appointmentPaths.seriesDetail(seriesId));
 }
 
 export async function updateSeries(
   seriesId: number | string,
   patch: Partial<ScheduleSeriesBody>,
 ): Promise<ApiResult<{ series: AppointmentSeries }>> {
-  return apiFetch<{ series: AppointmentSeries }>(appointmentPaths.seriesDetail(seriesId), {
+  return apiFetchDecoded(object<{ series: AppointmentSeries }>({ series: appointmentSeries }), appointmentPaths.seriesDetail(seriesId), {
     method: 'PUT',
     body: JSON.stringify(patch),
   }, { toastOnForbidden: true });
@@ -245,7 +305,9 @@ export async function splitSeriesFuture(
   from_date: string,
   patch: Partial<ScheduleSeriesBody>,
 ): Promise<ApiResult<{ ended: AppointmentSeries; created: AppointmentSeries }>> {
-  return apiFetch<{ ended: AppointmentSeries; created: AppointmentSeries }>(appointmentPaths.seriesFuture(seriesId), {
+  return apiFetchDecoded(object<{ ended: AppointmentSeries; created: AppointmentSeries }>({
+    ended: appointmentSeries, created: appointmentSeries,
+  }), appointmentPaths.seriesFuture(seriesId), {
     method: 'POST',
     body: JSON.stringify({ from_date, patch }),
   }, { toastOnForbidden: true });
@@ -258,7 +320,9 @@ export async function endSeries(
   seriesId: number | string,
   from_date?: string,
 ): Promise<ApiResult<{ ended: AppointmentSeries; canceled: string[] }>> {
-  return apiFetch<{ ended: AppointmentSeries; canceled: string[] }>(appointmentPaths.seriesEnd(seriesId), {
+  return apiFetchDecoded(object<{ ended: AppointmentSeries; canceled: string[] }>({
+    ended: appointmentSeries, canceled: arrayOf(stringValue),
+  }), appointmentPaths.seriesEnd(seriesId), {
     method: 'POST',
     body: JSON.stringify(from_date !== undefined ? { from_date } : {}),
   }, { toastOnForbidden: true });

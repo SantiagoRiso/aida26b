@@ -18,7 +18,7 @@ import { useStateLabel } from '@/composables/useStateLabel';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useAppointmentLabels } from '@/composables/useAppointmentLabels';
-import { toDisplayAppointment } from '@/composables/seriesOccurrence';
+import { toDisplayAppointment, resolveActionable } from '@/composables/seriesOccurrence';
 import { appointmentFromExtendedProps } from '@/composables/calendarEventPayload';
 import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
@@ -640,7 +640,15 @@ function requestMove(
   moveConfirmBody.value = t('calendar.moveConfirm', { when: `${when}${durationNote}` });
   moveConfirmProceed.value = async () => {
     moveConfirmOpen.value = false;
-    await doReschedule(appt.id, resolved, revert);
+    // A recurring occurrence has no row yet — materialize it (idempotent; real turnos pass through)
+    // so the move persists against a real id. Dragging moves only this occurrence's date.
+    const actionable = await resolveActionable(appt);
+    if (!actionable) {
+      toast.error('rescheduleFailed');
+      revert();
+      return;
+    }
+    await doReschedule(actionable.id, resolved, revert);
   };
   moveConfirmRevert.value = revert;
   moveConfirmOpen.value = true;

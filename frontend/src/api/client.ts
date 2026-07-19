@@ -1,6 +1,7 @@
 import { useUiStore } from '@/stores/ui';
 import { API_PREFIX } from '@shared/ssot/api-paths';
 import type { ApiEnvelope, ApiErrorEnvelope, ListMeta } from '@shared/ssot/envelope';
+import { isUnknownRecord, type Decoder } from '@/api/decoders';
 
 // Every backend route speaks the one shared envelope (shared/src/ssot/envelope.ts).
 type UnknownEnvelope = ApiEnvelope<unknown> | ApiErrorEnvelope;
@@ -13,23 +14,23 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 }
 
 function isListMeta(value: unknown): value is ListMeta {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const meta = value as Record<string, unknown>;
-  return typeof meta.page === 'number' && typeof meta.limit === 'number' && typeof meta.total === 'number';
+  return isUnknownRecord(value)
+    && typeof value.page === 'number'
+    && typeof value.limit === 'number'
+    && typeof value.total === 'number';
 }
 
 function parseEnvelope(value: unknown): UnknownEnvelope | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const envelope = value as Record<string, unknown>;
-  if (envelope.success === true) {
-    if (!('data' in envelope)) return null;
-    if ('meta' in envelope && envelope.meta !== undefined && !isListMeta(envelope.meta)) return null;
-    return { success: true, data: envelope.data, ...('meta' in envelope ? { meta: envelope.meta as ListMeta } : {}) };
+  if (!isUnknownRecord(value)) return null;
+  if (value.success === true) {
+    if (!('data' in value)) return null;
+    if ('meta' in value && value.meta !== undefined && !isListMeta(value.meta)) return null;
+    return { success: true, data: value.data, ...(isListMeta(value.meta) ? { meta: value.meta } : {}) };
   }
-  if (envelope.success !== false || envelope.error === null || typeof envelope.error !== 'object' || Array.isArray(envelope.error)) {
+  if (value.success !== false || !isUnknownRecord(value.error)) {
     return null;
   }
-  const error = envelope.error as Record<string, unknown>;
+  const error = value.error;
   if (typeof error.code !== 'string' || typeof error.message !== 'string') return null;
   if ('fields' in error && error.fields !== undefined && !isStringRecord(error.fields)) return null;
   return {
@@ -37,7 +38,7 @@ function parseEnvelope(value: unknown): UnknownEnvelope | null {
     error: {
       code: error.code,
       message: error.message,
-      ...('fields' in error ? { fields: error.fields as Record<string, string> } : {}),
+      ...(isStringRecord(error.fields) ? { fields: error.fields } : {}),
     },
   };
 }
@@ -52,6 +53,10 @@ export type ApiResult<T> =
   | { ok: true; data: T; meta?: ListMeta }
   | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> };
 
+type RawApiResult =
+  | { ok: true; status: number; data: unknown; meta?: ListMeta }
+  | Extract<ApiResult<never>, { ok: false }>;
+
 export interface ApiFetchOptions {
   // 'authenticated' (default): a 401 flags session-expired in the ui store.
   // 'entry': used for boot /auth/me and /auth/login — a 401 is a normal unauthenticated/bad-cred
@@ -62,16 +67,15 @@ export interface ApiFetchOptions {
   toastOnForbidden?: boolean;
 }
 
-async function performApiFetch<T>(
+async function performRawApiFetch(
   path: string,
   options: RequestInit = {},
   { authMode = 'authenticated', toastOnForbidden = false }: ApiFetchOptions = {},
-): Promise<ApiResult<T>> {
+): Promise<RawApiResult> {
   const ui = useUiStore();
 
-  const headers: HeadersInit = options.body
-    ? { 'Content-Type': 'application/json', ...(options.headers as Record<string, string> | undefined) }
-    : (options.headers ?? {});
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   // API responses carry live data and must never be served from the HTTP cache. A cached stale
   // response (e.g. an index.html served during a dev-proxy hiccup) otherwise poisons GETs.
@@ -89,7 +93,7 @@ async function performApiFetch<T>(
 
   if (response.status === 204) {
     if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
-    return { ok: true, data: undefined as T };
+    return { ok: true, status: response.status, data: undefined };
   }
 
   const body = parseEnvelope(await response.json().catch(() => null));
@@ -113,31 +117,43 @@ async function performApiFetch<T>(
   if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
   return {
     ok: true,
-    // Endpoint modules own the payload contract; the shared envelope itself has been validated.
-    data: body.data as T,
+    status: response.status,
+    data: body.data,
     meta: 'meta' in body ? body.meta : undefined,
   };
 }
 
-const inFlightGets = new Map<string, Promise<ApiResult<unknown>>>();
+const inFlightGets = new Map<string, Promise<RawApiResult>>();
 
-export function apiFetch<T>(
+export async function apiFetchDecoded<T>(
+  decoder: Decoder<T>,
   path: string,
   options: RequestInit = {},
   apiOptions: ApiFetchOptions = {},
 ): Promise<ApiResult<T>> {
   const method = (options.method ?? 'GET').toUpperCase();
   const canShare = method === 'GET' && !options.signal && !options.body && !options.headers;
-  if (!canShare) return performApiFetch<T>(path, options, apiOptions);
+  let raw: RawApiResult;
+  if (!canShare) {
+    raw = await performRawApiFetch(path, options, apiOptions);
+  } else {
+    const key = `${apiOptions.authMode ?? 'authenticated'}|${apiOptions.toastOnForbidden ?? false}|${path}`;
+    const existing = inFlightGets.get(key);
+    if (existing) {
+      raw = await existing;
+    } else {
+      const request = performRawApiFetch(path, options, apiOptions);
+      inFlightGets.set(key, request);
+      void request.finally(() => {
+        if (inFlightGets.get(key) === request) inFlightGets.delete(key);
+      });
+      raw = await request;
+    }
+  }
 
-  const key = `${apiOptions.authMode ?? 'authenticated'}|${apiOptions.toastOnForbidden ?? false}|${path}`;
-  const existing = inFlightGets.get(key);
-  if (existing) return existing as Promise<ApiResult<T>>;
-
-  const request = performApiFetch<T>(path, options, apiOptions);
-  inFlightGets.set(key, request);
-  void request.finally(() => {
-    if (inFlightGets.get(key) === request) inFlightGets.delete(key);
-  });
-  return request;
+  if (!raw.ok) return raw;
+  if (!decoder(raw.data)) {
+    return { ok: false, status: raw.status, code: 'bad_response', message: 'Unexpected response payload' };
+  }
+  return { ok: true, data: raw.data, meta: raw.meta };
 }

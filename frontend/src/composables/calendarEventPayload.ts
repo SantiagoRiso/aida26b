@@ -1,4 +1,4 @@
-import type { Appointment } from '@/api/appointments';
+import { appointmentContract, type Appointment } from '@/api/appointments';
 import type { ExceptionRow } from '@/composables/scheduleExceptions';
 
 type ClosurePayload = { id: string; reason: string | null };
@@ -9,36 +9,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string';
-}
-
-function isOptionalBoolean(value: unknown): boolean {
-  return value === undefined || typeof value === 'boolean';
-}
-
-function isAppointment(value: unknown): value is Appointment {
-  if (!isRecord(value)) return false;
-  return typeof value.id === 'string'
-    && typeof value.client_user_id === 'string'
-    && typeof value.professional_user_id === 'string'
-    && isNullableString(value.resource_id)
-    && typeof value.service_id === 'string'
-    && typeof value.starts_at === 'string'
-    && typeof value.duration_minutes === 'number'
-    && typeof value.ends_at === 'string'
-    && typeof value.state === 'string'
-    && isNullableString(value.name)
-    && isNullableString(value.description)
-    && typeof value.price === 'string'
-    && typeof value.override_conflict === 'boolean'
-    && isNullableString(value.override_actor_id)
-    && isNullableString(value.staff_note)
-    && typeof value.created_at === 'string'
-    && typeof value.updated_at === 'string'
-    && typeof value.conflict_ignored === 'boolean'
-    && isNullableString(value.series_id)
-    && isNullableString(value.occurrence_date)
-    && isOptionalBoolean(value.in_conflict)
-    && isOptionalBoolean(value.is_virtual);
 }
 
 function isException(value: unknown): value is ExceptionRow {
@@ -60,7 +30,7 @@ function isClosure(value: unknown): value is ClosurePayload {
 }
 
 export function appointmentFromExtendedProps(props: unknown): Appointment | null {
-  return isRecord(props) && isAppointment(props.appointment) ? props.appointment : null;
+  return isRecord(props) && appointmentContract(props.appointment) ? props.appointment : null;
 }
 
 export function exceptionFromExtendedProps(props: unknown): ExceptionRow | null {
