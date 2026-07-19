@@ -83,7 +83,8 @@ jobs:
       - name: Build frontend
         run: npm run build --prefix frontend
 
-      # Build the backend (produces backend/dist/server.js — required before starting it below).
+      # Build the backend. tsconfig rootDir spans the repo (backend imports shared/), so tsc mirrors
+      # the tree under dist/ — the entry lands at backend/dist/backend/src/server.js.
       - name: Build backend
         run: npm run build --prefix backend
 
@@ -101,7 +102,7 @@ jobs:
 
       # Start Express (serves built frontend + API) in the background for E2E.
       - name: Start backend server
-        run: node backend/dist/server.js &
+        run: node backend/dist/backend/src/server.js &
         env:
           PORT: 3000
 
