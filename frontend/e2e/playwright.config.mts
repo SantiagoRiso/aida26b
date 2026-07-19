@@ -16,8 +16,10 @@ export default defineConfig({
   testDir: __dirname,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  // Files may run concurrently; each file remains internally ordered because fullyParallel is false.
-  workers: Number(process.env.E2E_WORKERS ?? 2),
+  // Serial by default: every spec runs against one shared seeded dataset and specs mutate the same
+  // demo entities (a client's ledger, a professional's slots, business settings), so running files
+  // concurrently makes a different spec fail each run. Set E2E_WORKERS to parallelise anyway.
+  workers: Number(process.env.E2E_WORKERS ?? 1),
   fullyParallel: false,
   use: {
     baseURL,
