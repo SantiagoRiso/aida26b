@@ -408,6 +408,8 @@ export const en: Messages = {
     search: 'Search',
     emptyHeading: 'No events',
     emptyBody: 'No events match the current filters.',
+    errorHeading: 'Could not load the audit log',
+    errorBody: 'Try again in a few moments.',
     colEvent: 'Event',
     colEntity: 'Entity',
     colActor: 'Actor',

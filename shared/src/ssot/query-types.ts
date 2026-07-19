@@ -234,7 +234,8 @@ export type BusinessSettingsRow = {
 };
 
 // audit_events projected for the admin audit view. details is the JSON blob written by the
-// audit writer (a Record<string, ColumnValue>), read back verbatim.
+// audit writer, read back verbatim. A value may be a list as well as a scalar — ending a series
+// records the ids it cancelled.
 export type AuditEventRow = {
   id: string;
   actor_user_id: string | null;
@@ -243,6 +244,6 @@ export type AuditEventRow = {
   entity_id: string | null;
   outcome: string;
   ip: string | null;
-  details: Record<string, ColumnValue> | null;
+  details: Record<string, ColumnValue | ColumnValue[]> | null;
   created_at: Date;
 };

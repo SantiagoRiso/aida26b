@@ -27,6 +27,7 @@ const isAdmin = computed(() => auth.user?.role === 'Admin');
 
 const events = ref<AuditEvent[]>([]);
 const loading = ref(false);
+const loadFailed = ref(false);
 const page = ref(1);
 const limit = 50;
 const total = ref(0);
@@ -61,6 +62,7 @@ const OUTCOMES = AUDIT_OUTCOMES;
 async function load() {
   if (!isAdmin.value) return;
   loading.value = true;
+  loadFailed.value = false;
   const result = await listAudit(
     {
       entity_type: filterEntityType.value || undefined,
@@ -75,7 +77,12 @@ async function load() {
   );
   if (result.ok) {
     events.value = result.data;
-    if (result.meta) total.value = result.meta.total;
+    total.value = result.meta ? result.meta.total : 0;
+  } else {
+    // A failed load must not read as "no events" — that hides the failure and misreports the record.
+    events.value = [];
+    total.value = 0;
+    loadFailed.value = true;
   }
   loading.value = false;
 }
@@ -185,6 +192,13 @@ if (isAdmin.value) {
 
       <div v-if="loading">
         <Skeleton variant="row" :rows="8" />
+      </div>
+
+      <div v-else-if="loadFailed">
+        <EmptyState
+          :heading="t('audit.errorHeading')"
+          :body="t('audit.errorBody')"
+        />
       </div>
 
       <div v-else-if="events.length === 0">

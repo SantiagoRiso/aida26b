@@ -5,7 +5,10 @@ import type { AuditEventRow, Wire } from '@shared/ssot/query-types';
 import { auditPaths } from '@shared/ssot/api-paths';
 
 export type AuditEvent = Wire<AuditEventRow>;
-const columnValue = union(union(stringValue, numberValue), union(booleanValue, nullable(stringValue)));
+// A details value is a scalar or a list of them; one unexpected shape would fail the whole page
+// decode and blank the screen, so this must match what the audit writer actually records.
+const scalarValue = union(union(stringValue, numberValue), union(booleanValue, nullable(stringValue)));
+const columnValue = union(scalarValue, arrayOf(scalarValue));
 const auditEvent = object<AuditEvent>({
   id: stringValue, actor_user_id: nullable(stringValue), event_type: stringValue,
   entity_type: nullable(stringValue), entity_id: nullable(stringValue), outcome: stringValue,
