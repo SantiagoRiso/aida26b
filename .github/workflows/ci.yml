@@ -41,6 +41,9 @@ jobs:
       POSTGRES_SUPERUSER: aida26_user
       POSTGRES_SUPERPASS: aida26pass
       NODE_ENV: test
+      # Argentina-only app: run the whole job (Node runner + Chromium's default clock) in the business
+      # timezone so times render as they do in production, not the runner's UTC.
+      TZ: America/Argentina/Buenos_Aires
       PORT: 3000
       # Tells playwright.config.ts to skip the webServer block (CI manages the stack).
       CI: "true"
