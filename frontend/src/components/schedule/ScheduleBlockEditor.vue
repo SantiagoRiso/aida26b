@@ -198,7 +198,9 @@ const blockDrag = useTemplateBlockDrag({
 
 const RESIZE_EDGE_PX = 8;
 function blockUnder(ev: PointerEvent): HTMLElement | null {
-  return (ev.target as HTMLElement).closest('.fc-timegrid-event') as HTMLElement | null;
+  if (!(ev.target instanceof Element)) return null;
+  const event = ev.target.closest('.fc-timegrid-event');
+  return event instanceof HTMLElement ? event : null;
 }
 
 function onBlockPointerDown(ev: PointerEvent) {

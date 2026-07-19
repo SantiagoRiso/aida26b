@@ -74,7 +74,7 @@ async function createContactOnlyClient(
       const inserted = await insertContactOnlyClient(tx, {
         email: emailRaw, displayName, dni, businessId,
       });
-      return Number(inserted!.id);
+      return Number(inserted.id);
     });
 
     await audit(req, 'user_created', 'success', { user_id: newUserId, role });
@@ -112,7 +112,7 @@ async function createCredentialedUser(
         username, email, displayName, dni,
         passwordHash, passwordSalt, role, businessId,
       });
-      return Number(inserted!.id);
+      return Number(inserted.id);
     });
 
     await audit(req, 'user_created', 'success', { user_id: newUserId, role });

@@ -145,8 +145,8 @@ export function mountAppointmentRoutes(
         name,
         description,
       });
-      await auditInTx(tx, user, 'appointment_requested', 'success', Number(inserted!.id));
-      return inserted!;
+      await auditInTx(tx, user, 'appointment_requested', 'success', Number(inserted.id));
+      return inserted;
     });
 
     return sendData(res, stripStaffFields(appt), 201);
@@ -215,8 +215,8 @@ export function mountAppointmentRoutes(
           name,
           description,
         });
-        await auditInTx(tx, user, 'appointment_scheduled', 'success', Number(appt!.id));
-        return appt!;
+        await auditInTx(tx, user, 'appointment_scheduled', 'success', Number(appt.id));
+        return appt;
       },
     );
 
@@ -274,8 +274,9 @@ export function mountAppointmentRoutes(
           overrideConflict: forced,
           overrideActorId: forced ? user.id : (row.override_actor_id ?? null),
         });
+        if (!appt) throw httpError(404, 'not_found', 'Appointment not found');
         await auditInTx(tx, user, 'appointment_approved', 'success', id);
-        return appt!;
+        return appt;
       },
     );
 
@@ -379,8 +380,9 @@ export function mountAppointmentRoutes(
           name: body.name ?? null,
           description: body.description ?? null,
         });
+        if (!appt) throw httpError(404, 'not_found', 'Appointment not found');
         await auditInTx(tx, user, 'appointment_rescheduled', 'success', id);
-        return appt!;
+        return appt;
       },
     );
 
@@ -459,6 +461,7 @@ export function mountAppointmentRoutes(
 
     const appt = await withTransaction(pool, async (tx) => {
       const updated = await transitionAppointmentState(tx, id, to);
+      if (!updated) throw httpError(404, 'not_found', 'Appointment not found');
 
       await auditInTx(tx, user, `appointment_${to}`, 'success', id);
 
@@ -476,7 +479,7 @@ export function mountAppointmentRoutes(
         }
       }
 
-      return updated!;
+      return updated;
     });
 
     if (user.role === 'Client') {
@@ -514,8 +517,9 @@ export function mountAppointmentRoutes(
 
     const appt = await withTransaction(pool, async (tx) => {
       const updated = await setAppointmentConflictIgnored(tx, id, ignored);
+      if (!updated) throw httpError(404, 'not_found', 'Appointment not found');
       await auditInTx(tx, user, ignored ? 'appointment_conflict_ignored' : 'appointment_conflict_reflagged', 'success', id);
-      return updated!;
+      return updated;
     });
 
     return sendData(res, appt);
@@ -570,10 +574,11 @@ export function mountAppointmentRoutes(
     // no audit trail — matches the durability invariant of every other appointment mutation.
     const appt = await withTransaction(pool, async (tx) => {
       const updated = await patchAppointmentFields(tx, id, { name, description, staffNote });
+      if (!updated) throw httpError(404, 'not_found', 'Appointment not found');
       await auditInTx(tx, user, 'appointment_patched', 'success', id, 'appointments', {
         fields: Object.keys(body).filter((k) => ['name', 'description', 'staff_note'].includes(k)),
       });
-      return updated!;
+      return updated;
     });
 
     return sendData(res, appt);

@@ -99,8 +99,14 @@ export function mountSchedulingRoutes(
     if (Object.keys(fields).length > 0) {
       return sendError(res, 422, 'invalid_request', 'Invalid availability query', fields);
     }
+    if (!owner) {
+      return sendError(res, 422, 'invalid_request', 'Invalid availability query', {
+        owner: 'must be prof:<id> or res:<id>',
+      });
+    }
 
-    const kind = owner![1] === 'prof' ? 'professional' : 'resource';
+    const kind = owner[1] === 'prof' ? 'professional' : 'resource';
+    const ownerId = Number(owner[2]);
     const serviceRaw = typeof req.query.service === 'string' ? Number(req.query.service) : NaN;
     const serviceId = Number.isInteger(serviceRaw) && serviceRaw > 0 ? serviceRaw : undefined;
     // A service yields service-sized bookable slots (SlotPicker); with none, a professional's raw
@@ -122,22 +128,25 @@ export function mountSchedulingRoutes(
       const states = await Promise.all(dates.map((day) => loadOwnerState(
         pool,
         businessId,
-        { kind, id: Number(owner![2]) },
+        { kind, id: ownerId },
         day,
         { excludeAppointmentId: exclude },
       )));
       if (states.some((state) => state == null)) {
         return sendError(res, 404, 'not_found', 'Owner not found in this business');
       }
-      const response = states.map((state, index) => ({
-        date: dates[index],
-        slots: state!.freeSlots,
-        open: state!.gridSlots.length > 0,
-      } satisfies AvailabilityResult));
+      const response = states.map((state, index) => {
+        if (!state) throw new Error('Owner state disappeared after validation');
+        return {
+          date: dates[index],
+          slots: state.freeSlots,
+          open: state.gridSlots.length > 0,
+        } satisfies AvailabilityResult;
+      });
       return sendData(res, response);
     }
 
-    const state = await loadOwnerState(pool, businessId, { kind, id: Number(owner![2]) }, date, {
+    const state = await loadOwnerState(pool, businessId, { kind, id: ownerId }, date, {
       serviceId,
       excludeAppointmentId: exclude,
     });
@@ -146,7 +155,7 @@ export function mountSchedulingRoutes(
     // Client self-service can't book outside the booking window — return no slots for those dates
     // so the picker offers nothing. Staff (calendar) are exempt and see real availability.
     if (user.role === 'Client' && kind === 'professional' && serviceId !== undefined) {
-      const bounds = await resolveBookingWindow(pool, businessId, Number(owner![2]), serviceId);
+      const bounds = await resolveBookingWindow(pool, businessId, ownerId, serviceId);
       if (bounds && isOutsideBookingWindow(date, bounds)) {
         const response = { date, slots: [], open: false, outside_window: true } satisfies AvailabilityResult;
         return sendData(res, response);

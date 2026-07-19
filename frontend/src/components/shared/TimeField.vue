@@ -114,9 +114,10 @@ function bumpMinute(delta: number) {
   commit(Math.floor(total / 60), total % 60);
 }
 
-function onInput(e: Event) {
-  const el = e.target as HTMLInputElement;
-  const deleting = ((e as InputEvent).inputType || '').startsWith('delete');
+function onInput(e: InputEvent) {
+  if (!(e.target instanceof HTMLInputElement)) return;
+  const el = e.target;
+  const deleting = (e.inputType || '').startsWith('delete');
   display.value = format(el.value, deleting);
   el.value = display.value;
   emit('update:modelValue', display.value);
@@ -130,8 +131,8 @@ function normalize() {
 // Blur fires when focus leaves the whole component (the popover buttons keep focus via
 // mousedown.prevent), so this both closes the popover and normalizes the typed value.
 function onBlur(e: FocusEvent) {
-  const next = e.relatedTarget as Node | null;
-  if (next && (e.currentTarget as HTMLElement).contains(next)) return;
+  const next = e.relatedTarget;
+  if (next instanceof Node && e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)) return;
   open.value = false;
   normalize();
   emit('blur');

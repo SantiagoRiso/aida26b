@@ -123,7 +123,7 @@ async function fetchAppointments() {
       limit: 200,
     }, { signal: controller.signal });
   } catch (error) {
-    if ((error as Error).name === 'AbortError') return;
+    if (error instanceof Error && error.name === 'AbortError') return;
     throw error;
   }
   if (request !== appointmentRequest) return;
@@ -601,7 +601,7 @@ function handleEventClick(arg: EventClickArg) {
 function handleEventPointerDown(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
   suppressEventClick = false;
   if (!auth.user || auth.user.role === 'Client') return;
-  if ((ev.target as HTMLElement).closest('.fc-event-resizer')) return;
+  if (ev.target instanceof Element && ev.target.closest('.fc-event-resizer')) return;
   if (!el.classList.contains('fc-timegrid-event')) return;
   customDrag.start(appt, ev, el);
 }

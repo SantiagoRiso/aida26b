@@ -39,6 +39,12 @@ export async function queryOne<T>(db: Queryable, sql: string, params?: SqlParam[
   return rows[0] ?? null;
 }
 
+export async function queryRequired<T>(db: Queryable, sql: string, params?: SqlParam[]): Promise<T> {
+  const row = await queryOne<T>(db, sql, params);
+  if (row == null) throw new Error('Database statement returned no row');
+  return row;
+}
+
 // Own the BEGIN/COMMIT/ROLLBACK/release lifecycle so handlers never hand-roll it.
 export async function withTransaction<T>(pool: TransactionPool, fn: (tx: TransactionClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();

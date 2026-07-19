@@ -13,16 +13,22 @@ export async function pickId(pool: PoolLike, sql: string, params: SqlParam[]): P
   return r.rows[0]?.id ?? null;
 }
 
+async function requireId(pool: PoolLike, sql: string, params: SqlParam[]): Promise<string> {
+  const id = await pickId(pool, sql, params);
+  if (id == null) throw new Error('Seed insert returned no id');
+  return id;
+}
+
 // Reuses the single active business if one exists (e.g. created by seed-admin or the other
 // seeder), so multiple seed scripts run against the same demo tenant instead of diverging.
 export async function upsertBusiness(pool: PoolLike, name: string, timezone: string): Promise<string> {
   const existing = await pickId(pool, `SELECT id FROM businesses ORDER BY id LIMIT 1`, []);
   if (existing) return existing;
-  return (await pickId(
+  return requireId(
     pool,
     `INSERT INTO businesses (name, timezone, currency_code) VALUES ($1, $2, 'ARS') RETURNING id`,
     [name, timezone],
-  ))!;
+  );
 }
 
 export async function upsertUser(
@@ -83,12 +89,12 @@ export async function upsertService(
     [businessId, name],
   );
   if (existing) return existing;
-  return (await pickId(
+  return requireId(
     pool,
     `INSERT INTO services (business_id, name, description, default_duration_minutes, default_price_ars)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
     [businessId, name, description, durationMinutes, priceArs],
-  ))!;
+  );
 }
 
 export async function upsertResource(
@@ -103,11 +109,11 @@ export async function upsertResource(
     [businessId, name],
   );
   if (existing) return existing;
-  return (await pickId(
+  return requireId(
     pool,
     `INSERT INTO resources (business_id, name, description) VALUES ($1, $2, $3) RETURNING id`,
     [businessId, name, description],
-  ))!;
+  );
 }
 
 // Idempotent block insert keyed by (owner, weekday, start). Returns the block id so its offered
@@ -127,12 +133,12 @@ export async function upsertBlock(
     [id, weekday, start],
   );
   if (existing) return existing;
-  return (await pickId(
+  return requireId(
     pool,
     `INSERT INTO schedule_blocks (${col}, weekday, start_time, end_time)
      VALUES ($1, $2, $3::time, $4::time) RETURNING id`,
     [id, weekday, start, end],
-  ))!;
+  );
 }
 
 export async function upsertClientPrice(

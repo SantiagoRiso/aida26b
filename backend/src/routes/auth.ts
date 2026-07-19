@@ -60,7 +60,7 @@ export function mountAuthRoutes(
       return sendError(res, 401, 'invalid_credentials', 'Invalid credentials');
     }
 
-    const user = auth.publicUser(row!);
+    const user = auth.publicUser(row);
     const token = auth.newSessionToken();
 
     await createSession(pool, user.id, auth.hashToken(token));
@@ -115,7 +115,7 @@ export function mountAuthRoutes(
     }
 
     // Reusing the current password defeats a forced reset, so reject it.
-    const sameAsCurrent = await auth.verifyPassword(newPassword, current!.password_salt, current!.password_hash);
+    const sameAsCurrent = await auth.verifyPassword(newPassword, current.password_salt, current.password_hash);
     if (sameAsCurrent) {
       return sendError(res, 400, 'password_reuse', 'New password must be different from the current password');
     }

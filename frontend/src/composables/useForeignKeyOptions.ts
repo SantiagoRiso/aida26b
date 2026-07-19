@@ -1,8 +1,9 @@
 import { ref, computed, watch } from 'vue';
 import type { Ref } from 'vue';
 import { listRows } from '@/api/crud';
-import type { ColumnValue, ForeignKeyDef } from '@shared/types/types';
+import type { ForeignKeyDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
+import { isTableKey } from '@shared/utils/utils';
 
 export interface SelectOption {
   value: string;
@@ -22,10 +23,9 @@ const cache = new Map<string, FkTableEntry>();
 
 function toOptions(rows: ReadonlyArray<object>, fk: ForeignKeyDef): SelectOption[] {
   return rows.map((row) => {
-    const r = row as Record<string, ColumnValue>;
     return {
-      value: String(r[fk.valueField] ?? ''),
-      label: String(r[fk.labelField] ?? ''),
+      value: String(Reflect.get(row, fk.valueField) ?? ''),
+      label: String(Reflect.get(row, fk.labelField) ?? ''),
     };
   });
 }
@@ -79,8 +79,12 @@ export function useForeignKeyOptions(
   fk: ForeignKeyDef,
   getParentValue?: () => string | undefined,
 ) {
-  if (!fk.dependsOn) {
-    const entry = acquire(fk.table as TableKey);
+  if (!isTableKey(fk.table)) throw new Error(`Unknown foreign-key table '${fk.table}'`);
+  const table = fk.table;
+  const dependency = fk.dependsOn;
+
+  if (!dependency) {
+    const entry = acquire(table);
     const options = computed(() => toOptions(entry.rows.value, fk));
     return { options, loading: entry.loading, labelFor: makeLabelFor(options) };
   }
@@ -97,8 +101,8 @@ export function useForeignKeyOptions(
     }
     loading.value = true;
     try {
-      const result = await listRows(fk.table as TableKey, {
-        filters: { [fk.dependsOn!.foreignField]: parentValue },
+      const result = await listRows(table, {
+        filters: { [dependency.foreignField]: parentValue },
         limit: FK_OPTIONS_LIMIT,
       });
       options.value = result.ok ? toOptions(result.data, fk) : [];

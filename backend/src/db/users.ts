@@ -1,4 +1,4 @@
-import { query, queryOne } from './core';
+import { query, queryOne, queryRequired } from './core';
 import type { Queryable, SqlParam } from './core';
 import type { Role } from '../../../shared/src/types/roles';
 import type { UserProbeRow, SelfProfileRow } from '../../../shared/src/ssot/query-types';
@@ -76,8 +76,8 @@ export function insertUser(
     role: string;
     businessId: number;
   },
-): Promise<{ id: string } | null> {
-  return queryOne<{ id: string }>(
+): Promise<{ id: string }> {
+  return queryRequired<{ id: string }>(
     db,
     `INSERT INTO auth.users
        (username, email, display_name, dni, password_hash, password_salt, role, business_id, must_change_password)
@@ -91,8 +91,8 @@ export function insertUser(
 export function insertContactOnlyClient(
   db: Queryable,
   u: { email: string; displayName: string; dni: string | null; businessId: number },
-): Promise<{ id: string } | null> {
-  return queryOne<{ id: string }>(
+): Promise<{ id: string }> {
+  return queryRequired<{ id: string }>(
     db,
     `INSERT INTO auth.users (email, display_name, dni, role, business_id)
      VALUES ($1, $2, $3, 'Client', $4)

@@ -1,4 +1,4 @@
-import { query, queryOne } from './core';
+import { query, queryOne, queryRequired } from './core';
 import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
 import { appointmentInConflictSql } from './scheduling';
@@ -40,8 +40,8 @@ export function insertRequestedAppointment(
     name: string | null;
     description: string | null;
   },
-): Promise<AppointmentRow | null> {
-  return queryOne<AppointmentRow>(
+): Promise<AppointmentRow> {
+  return queryRequired<AppointmentRow>(
     db,
     `INSERT INTO appointments
        (client_user_id, professional_user_id, service_id,
@@ -72,8 +72,8 @@ export function insertScheduledAppointment(
     seriesId?: number | null;
     occurrenceDate?: string | null;
   },
-): Promise<AppointmentRow | null> {
-  return queryOne<AppointmentRow>(
+): Promise<AppointmentRow> {
+  return queryRequired<AppointmentRow>(
     db,
     `INSERT INTO appointments
        (client_user_id, professional_user_id, resource_id, service_id,

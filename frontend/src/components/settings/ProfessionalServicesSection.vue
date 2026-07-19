@@ -74,7 +74,9 @@ watch(() => props.professionalUserId, load);
 // row.offered and imperatively resync the input's checked state — a net-unchanged offered value
 // (false→true→false on a failed create) won't re-patch the DOM on its own.
 async function onToggle(row: OfferingRow, event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
+  if (!(event.target instanceof HTMLInputElement)) return;
+  const input = event.target;
+  const checked = input.checked;
   if (props.professionalUserId == null || row.busy) return;
   row.busy = true;
   if (checked) {
@@ -92,7 +94,7 @@ async function onToggle(row: OfferingRow, event: Event) {
       success('saved');
     } else {
       row.offered = false;
-      (event.target as HTMLInputElement).checked = row.offered;
+      input.checked = row.offered;
       error('genericError');
     }
   } else if (row.rowId) {
@@ -107,7 +109,7 @@ async function onToggle(row: OfferingRow, event: Event) {
       success('saved');
     } else {
       row.offered = true;
-      (event.target as HTMLInputElement).checked = row.offered;
+      input.checked = row.offered;
       error('genericError');
     }
   }

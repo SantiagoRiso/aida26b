@@ -155,7 +155,8 @@ function resetToDefaults(row: ServiceRow) {
 
 // All toggles/edits are local until save(); nothing persists until the modal's submit.
 function onToggle(row: ServiceRow, event: Event) {
-  row.offered = (event.target as HTMLInputElement).checked;
+  if (!(event.target instanceof HTMLInputElement)) return;
+  row.offered = event.target.checked;
   resetToDefaults(row); // a fresh offer (or an un-offer) starts from inheriting the service default
   clearErrors(row.serviceId);
 }
@@ -163,7 +164,8 @@ function onToggle(row: ServiceRow, event: Event) {
 // "Manage this block's duration/price separately from the service." On: the shown (default) values
 // become editable and are pinned as the block's own on save. Off: revert to inheriting.
 function onToggleIndependent(row: ServiceRow, event: Event) {
-  const checked = (event.target as HTMLInputElement).checked;
+  if (!(event.target instanceof HTMLInputElement)) return;
+  const checked = event.target.checked;
   row.independent = checked;
   if (!checked) {
     row.durationMinutes = row.defaultDuration;
