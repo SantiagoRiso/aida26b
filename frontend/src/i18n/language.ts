@@ -4,7 +4,7 @@ import type { Language } from '@shared/types/languages';
 const STORAGE_KEY = 'language';
 
 function isSupportedLanguage(value: string | null): value is Language {
-  return (LANGUAGES as readonly string[]).includes(value ?? '');
+  return value !== null && LANGUAGES.some((language) => language === value);
 }
 
 // Plain function, not a store — i18n/index.ts reads this at module init, before Pinia exists.

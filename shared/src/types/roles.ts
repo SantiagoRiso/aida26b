@@ -6,5 +6,5 @@ export const ROLES = ['Admin', 'Professional', 'Receptionist', 'Client'] as cons
 export type Role = (typeof ROLES)[number];
 
 export function isRole(value: string): value is Role {
-  return (ROLES as readonly string[]).includes(value);
+  return ROLES.some((role) => role === value);
 }

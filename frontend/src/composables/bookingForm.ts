@@ -18,6 +18,17 @@ export function addDaysISO(iso: string, days: number): string {
   return isoDate(new Date(y, m - 1, d + days));
 }
 
+// starts_at is stored UTC; the date/time inputs (and the backend) work in local wall-clock time,
+// so derive them from a Date rather than slicing the ISO string (which would leak the UTC offset).
+export function localDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: isoDate(d),
+    time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+  };
+}
+
 export function intervalMinutes(start: string, end: string): number {
   return toMinutes(end) - toMinutes(start);
 }

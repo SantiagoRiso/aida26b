@@ -238,6 +238,7 @@ test('scheduler-schema: all required scheduler tables exist', async () => {
       'schedule_block_services',
       'schedule_exceptions',
       'appointments',
+      'appointment_series',
       'ledger_entries',
       'audit_events',
       'calendar_grants',
@@ -515,6 +516,22 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
       0,
       `appointments must not grant DELETE to aida26_user`
     );
+
+    // appointment_series: app writes series rows via bespoke recurrence handlers (SELECT/INSERT/UPDATE);
+    // DELETE stays withheld — ending a series is an UPDATE (status='ended'), never a hard delete.
+    const seriesPerms = await pool.query<{ privilege_type: string }>(
+      `SELECT privilege_type
+       FROM   information_schema.role_table_grants
+       WHERE  grantee = 'aida26_user'
+         AND  table_schema = 'public'
+         AND  table_name = 'appointment_series'
+         AND  privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')`,
+    );
+    const seriesGrants = new Set(seriesPerms.rows.map((x) => x.privilege_type));
+    assert.ok(seriesGrants.has('SELECT'), 'appointment_series must grant SELECT to aida26_user');
+    assert.ok(seriesGrants.has('INSERT'), 'appointment_series must grant INSERT to aida26_user');
+    assert.ok(seriesGrants.has('UPDATE'), 'appointment_series must grant UPDATE to aida26_user');
+    assert.ok(!seriesGrants.has('DELETE'), 'appointment_series must not grant DELETE to aida26_user');
   } finally {
     await pool.end();
   }
@@ -570,6 +587,25 @@ test('scheduler-schema: appointments has valid status check constraint', async (
     assert.equal(await columnExists(pool, 'public', 'appointments', 'duration_minutes'), true, 'appointments must have duration_minutes');
     assert.equal(await columnExists(pool, 'public', 'appointments', 'ends_at'),          true, 'appointments must have generated ends_at');
     assert.equal(await columnExists(pool, 'public', 'appointments', 'price'),            true, 'appointments must have price');
+  } finally {
+    await pool.end();
+  }
+});
+
+test('scheduler-schema: appointments has series_id and occurrence_date for recurring appointments', async () => {
+  await resetTestDb();
+  const pool = makeTestPool();
+  try {
+    await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
+
+    assert.equal(await columnExists(pool, 'public', 'appointments', 'series_id'), true, 'appointments must have series_id column');
+    assert.equal(await columnExists(pool, 'public', 'appointments', 'occurrence_date'), true, 'appointments must have occurrence_date column');
+    assert.equal(await fkExists(pool, 'public', 'appointments', 'series_id'), true, 'appointments.series_id FK must exist');
+
+    const target = await fkTarget(pool, 'public', 'appointments', 'series_id');
+    assert.ok(target, 'appointments.series_id FK target must be resolvable');
+    assert.equal(target!.toTable, 'appointment_series', 'appointments.series_id must reference appointment_series');
+    assert.equal(target!.toColumn, 'id', 'appointments.series_id must reference the PK column id');
   } finally {
     await pool.end();
   }

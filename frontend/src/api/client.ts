@@ -3,7 +3,44 @@ import { API_PREFIX } from '@shared/ssot/api-paths';
 import type { ApiEnvelope, ApiErrorEnvelope, ListMeta } from '@shared/ssot/envelope';
 
 // Every backend route speaks the one shared envelope (shared/src/ssot/envelope.ts).
-type Envelope<T> = ApiEnvelope<T> | ApiErrorEnvelope;
+type UnknownEnvelope = ApiEnvelope<unknown> | ApiErrorEnvelope;
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === 'string');
+}
+
+function isListMeta(value: unknown): value is ListMeta {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const meta = value as Record<string, unknown>;
+  return typeof meta.page === 'number' && typeof meta.limit === 'number' && typeof meta.total === 'number';
+}
+
+function parseEnvelope(value: unknown): UnknownEnvelope | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const envelope = value as Record<string, unknown>;
+  if (envelope.success === true) {
+    if (!('data' in envelope)) return null;
+    if ('meta' in envelope && envelope.meta !== undefined && !isListMeta(envelope.meta)) return null;
+    return { success: true, data: envelope.data, ...('meta' in envelope ? { meta: envelope.meta as ListMeta } : {}) };
+  }
+  if (envelope.success !== false || envelope.error === null || typeof envelope.error !== 'object' || Array.isArray(envelope.error)) {
+    return null;
+  }
+  const error = envelope.error as Record<string, unknown>;
+  if (typeof error.code !== 'string' || typeof error.message !== 'string') return null;
+  if ('fields' in error && error.fields !== undefined && !isStringRecord(error.fields)) return null;
+  return {
+    success: false,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...('fields' in error ? { fields: error.fields as Record<string, string> } : {}),
+    },
+  };
+}
 
 let mutationGeneration = 0;
 
@@ -55,11 +92,11 @@ async function performApiFetch<T>(
     return { ok: true, data: undefined as T };
   }
 
-  const body = (await response.json().catch(() => ({}))) as Envelope<T>;
+  const body = parseEnvelope(await response.json().catch(() => null));
 
   // A non-enveloped body (e.g. an HTML error page) has no `success` field — fail cleanly rather
   // than dereferencing body.error and throwing an opaque TypeError up through callers.
-  if (typeof body !== 'object' || body === null || !('success' in body)) {
+  if (body === null) {
     if (response.status === 403 && toastOnForbidden) ui.toast('error', 'notPermitted');
     return { ok: false, status: response.status, code: 'bad_response', message: `Unexpected response (${response.status})` };
   }
@@ -76,7 +113,8 @@ async function performApiFetch<T>(
   if ((options.method ?? 'GET').toUpperCase() !== 'GET') mutationGeneration += 1;
   return {
     ok: true,
-    data: body.data,
+    // Endpoint modules own the payload contract; the shared envelope itself has been validated.
+    data: body.data as T,
     meta: 'meta' in body ? body.meta : undefined,
   };
 }

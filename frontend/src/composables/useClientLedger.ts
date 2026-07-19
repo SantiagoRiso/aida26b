@@ -6,11 +6,10 @@ import type { Appointment } from '@/api/appointments';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor } from '@/router/access';
 import { LEDGER_WRITE_ROLES } from '@shared/ssot/domain/finance';
-import type { Role } from '@shared/types/roles';
 
 export function useClientLedger(clientId: number, appointments: Ref<Appointment[]>) {
   const auth = useAuthStore();
-  const role = computed(() => auth.user?.role as Role | undefined);
+const role = computed(() => auth.user?.role);
 
   const balance = ref<string | null>(null);
   const entries = ref<LedgerEntry[]>([]);

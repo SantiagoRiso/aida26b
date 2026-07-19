@@ -6,7 +6,6 @@ import { enableClientLogin } from '@/api/admin-users';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor, descriptorWriteRoles } from '@/router/access';
 import { useToast } from '@/composables/useToast';
-import type { Role } from '@shared/types/roles';
 import type { TableRecordMap } from '@shared/ssot/derived';
 
 export function useClientAccount(
@@ -21,7 +20,7 @@ export function useClientAccount(
   const auth = useAuthStore();
   const toast = useToast();
   const { t } = useI18n();
-  const role = computed(() => auth.user?.role as Role | undefined);
+const role = computed(() => auth.user?.role);
 
   const canDeactivate = computed(() => !!role.value && roleAllowedFor(descriptorWriteRoles('clients', 'delete'), role.value));
   // Contact-only client (no username) — offer to turn it into a logging-in account.

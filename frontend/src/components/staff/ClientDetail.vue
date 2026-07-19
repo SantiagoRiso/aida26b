@@ -123,7 +123,7 @@ onMounted(load);
         <div>
           <h1 class="text-2xl font-semibold">{{ client.display_name }}</h1>
           <p class="text-sm text-neutral">
-            <span v-if="client.dni">{{ label(clientColumns.dni.label) }} {{ client.dni }} · </span>{{ client.email ?? '—' }} · {{ client.phone ?? '—' }}
+            <span v-if="client.dni">{{ label(clientColumns.dni.label) }} {{ client.dni }} · </span>{{ client.email ?? t('generic.emptyValue') }} · {{ client.phone ?? t('generic.emptyValue') }}
           </p>
           <p v-if="client.notes" class="mt-1 text-sm text-neutral italic">{{ client.notes }}</p>
         </div>
@@ -160,7 +160,7 @@ onMounted(load);
             class="text-xl font-semibold tabular-nums"
             :class="balancePositive ? 'text-destructive' : 'text-success'"
           >
-            {{ balance != null ? formatARS(balance) : '—' }}
+            {{ balance != null ? formatARS(balance) : t('generic.emptyValue') }}
           </span>
         </div>
 
@@ -192,7 +192,7 @@ onMounted(load);
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums font-semibold">{{ formatARS(entry.amount_ars) }}</td>
-                <td class="px-4 py-3 text-neutral">{{ entry.description ?? '—' }}</td>
+                <td class="px-4 py-3 text-neutral">{{ entry.description ?? t('generic.emptyValue') }}</td>
               </tr>
             </tbody>
           </table>

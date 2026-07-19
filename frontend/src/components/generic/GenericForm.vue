@@ -223,7 +223,7 @@ async function onSubmit() {
         class="flex flex-col gap-1"
       >
         <span class="text-sm font-semibold text-neutral">{{ label(col.label) }}</span>
-        <span class="rounded-md bg-surface px-3 py-2 text-sm text-neutral">{{ initialByColumn[field] ?? '—' }}</span>
+        <span class="rounded-md bg-surface px-3 py-2 text-sm text-neutral">{{ initialByColumn[field] ?? i18n.global.t('generic.emptyValue') }}</span>
       </div>
     </template>
 

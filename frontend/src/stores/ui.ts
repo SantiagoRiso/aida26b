@@ -13,7 +13,7 @@ export interface Toast {
 
 export const useUiStore = defineStore('ui', {
   state: () => ({
-    language: readStoredLanguage() as Language,
+    language: readStoredLanguage(),
     toasts: [] as Toast[],
     sessionExpired: false,
   }),

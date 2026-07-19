@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { seedDemo } from '../src/seed-demo';
+import { listVirtualOccurrences } from '../src/services/series-listing';
 import { resetTestDb, makeTestPool } from './helpers';
 import type { SqlParam } from '../src/db/core';
 
@@ -11,6 +12,14 @@ let pool: Pool;
 async function count(sql: string, params: SqlParam[] = []): Promise<number> {
   const r = await pool.query<{ count: string }>(sql, params);
   return Number(r.rows[0].count);
+}
+
+// Now-relative fixture dates — never hardcode calendar dates.
+function isoDaysFromNow(days: number): string {
+  const d = new Date();
+  d.setUTCHours(12, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 // Seeding hashes ~42 passwords (scrypt) per run and inserts a month-plus of data; two runs
@@ -155,11 +164,74 @@ describe('demo seed feature coverage (SC4)', () => {
   });
 });
 
+async function ownerIds(username: string): Promise<{ businessId: number; proId: number }> {
+  const biz = await pool.query<{ id: string }>(`SELECT id FROM businesses LIMIT 1`);
+  const pro = await pool.query<{ id: string }>(`SELECT id FROM auth.users WHERE username = $1`, [username]);
+  return { businessId: Number(biz.rows[0].id), proId: Number(pro.rows[0].id) };
+}
+
+describe('demo seed recurring series', () => {
+  it('seeds a weekly series for every professional, two for demo_pro', async () => {
+    // 2 conflict-free series on demo_reset + 7 across the dense-filled professionals (demo_pro twice).
+    expect(await count(`SELECT COUNT(*)::int count FROM appointment_series`)).toBe(9);
+
+    // No professional is left without a series.
+    const prosWithout = await count(
+      `SELECT COUNT(*)::int count FROM auth.users u
+        WHERE u.role = 'Professional'
+          AND NOT EXISTS (SELECT 1 FROM appointment_series s WHERE s.professional_user_id = u.id)`,
+    );
+    expect(prosWithout).toBe(0);
+
+    const demoProSeries = await count(
+      `SELECT COUNT(*)::int count FROM appointment_series s
+         JOIN auth.users u ON u.id = s.professional_user_id
+        WHERE u.username = 'demo_pro'`,
+    );
+    expect(demoProSeries).toBe(2);
+  });
+
+  it('includes both open-ended and count-bounded series', async () => {
+    expect(await count(`SELECT COUNT(*)::int count FROM appointment_series WHERE end_kind = 'open'`)).toBe(4);
+    expect(await count(`SELECT COUNT(*)::int count FROM appointment_series WHERE end_kind = 'count'`)).toBe(5);
+  });
+
+  it('renders demo_reset occurrences conflict-free (that owner has no dense fill)', async () => {
+    const { businessId, proId } = await ownerIds('demo_reset');
+    const virtuals = await listVirtualOccurrences(pool, {
+      businessId,
+      roleScope: { kind: 'professional', userId: proId },
+      windowStart: isoDaysFromNow(0),
+      windowEnd: isoDaysFromNow(60),
+    });
+
+    expect(virtuals.length).toBeGreaterThan(0);
+    expect(virtuals.every((v) => v.is_virtual)).toBe(true);
+    expect(new Set(virtuals.map((v) => v.series_id)).size).toBe(2);
+    expect(virtuals.every((v) => v.in_conflict === false)).toBe(true);
+  });
+
+  it('rings demo_pro occurrences that land on an existing scheduled turno', async () => {
+    // Marge's calendar is ~80% filled, so at least one upcoming occurrence of her series overlaps a
+    // scheduled turno — the recurring clash the calendar flags on the occurrence (and, in the list
+    // endpoint, on the real turno too).
+    const { businessId, proId } = await ownerIds('demo_pro');
+    const virtuals = await listVirtualOccurrences(pool, {
+      businessId,
+      roleScope: { kind: 'professional', userId: proId },
+      windowStart: isoDaysFromNow(0),
+      windowEnd: isoDaysFromNow(45),
+    });
+
+    expect(virtuals.some((v) => v.in_conflict)).toBe(true);
+  });
+});
+
 describe('demo seed idempotency', () => {
   it('a third run adds no new rows to any core table', async () => {
     const tables = ['businesses', 'auth.users', 'services', 'resources', 'schedule_blocks',
       'schedule_block_services', 'schedule_exceptions', 'client_professional_services',
-      'calendar_grants', 'appointments', 'ledger_entries', 'audit_events'];
+      'calendar_grants', 'appointments', 'ledger_entries', 'audit_events', 'appointment_series'];
     const before: Record<string, number> = {};
     for (const t of tables) before[t] = await count(`SELECT COUNT(*)::int count FROM ${t}`);
 

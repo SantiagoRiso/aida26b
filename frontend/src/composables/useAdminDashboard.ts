@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { listAppointments } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
 
@@ -18,15 +19,18 @@ export function useAdminDashboard() {
   async function loadAdmin() {
     loadingAdmin.value = true;
     const [todayRes, pendingRes, auditRes] = await Promise.all([
+      // date_from/date_to make the server fold in virtual (un-materialized) recurring occurrences,
+      // which meta.total counts too — fetch the rows and count only real ones so this stat matches
+      // actual booked turnos, not a recurrence forecast.
       listAppointments({
         date_from: todayStart.toISOString().slice(0, 10),
         date_to: todayEnd.toISOString().slice(0, 10),
-        limit: 1,
+        limit: 500,
       }),
       listAppointments({ state: 'requested', limit: 1 }),
       listAudit({}, 1, 5),
     ]);
-    if (todayRes.ok) adminTodayCount.value = todayRes.meta?.total ?? 0;
+    if (todayRes.ok) adminTodayCount.value = todayRes.data.filter((a) => !isVirtualOccurrence(a)).length;
     if (pendingRes.ok) adminPendingCount.value = pendingRes.meta?.total ?? 0;
     if (auditRes.ok) recentAudit.value = auditRes.data;
     loadingAdmin.value = false;

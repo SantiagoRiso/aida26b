@@ -17,7 +17,7 @@ async function load() {
   const id = auth.user?.id;
   if (id == null) { rows.value = []; return; }
   const res = await listRows('schedule_exceptions', { filters: { professional_user_id: String(id) }, limit: 500 });
-  rows.value = res.ok ? (res.data as ExceptionRow[]) : [];
+  rows.value = res.ok ? res.data : [];
 }
 onMounted(load);
 

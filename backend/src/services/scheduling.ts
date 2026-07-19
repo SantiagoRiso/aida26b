@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { computeServiceSlots, computeFreeWindows, evaluateConflicts, weekdayOf } from '../../../shared/src/ssot/domain';
+import { computeServiceSlots, computeFreeWindows, evaluateConflicts, weekdayOf, seriesOccupancyForDate } from '../../../shared/src/ssot/domain';
 import type {
   TimeInterval,
   ServiceBlock,
@@ -20,6 +20,7 @@ import {
   getEffectiveBookingWindow,
   acquireOwnerLock,
 } from '../db/scheduling';
+import { getActiveSeriesForOwner, getActiveSeriesForResource, getMaterializedOverrides } from '../db/series';
 import { BUSINESS_TZ, DATE_RE, HHMM_RE, addMinutes, addDaysISO } from '../time';
 import { httpError } from '../errors';
 import { belongsToBusiness } from '../routes/business-context';
@@ -156,6 +157,21 @@ export async function loadOwnerState(
       state: a.state,
     }));
   const bookedIntervals: TimeInterval[] = booked.map((b) => ({ start: b.start, end: b.end }));
+
+  // Un-materialized recurring occurrences occupy time too: expand this owner's active series onto
+  // `date` and fold them into both the conflict aggregator's booked list and the availability
+  // subtraction, so a recurring slot requires a staff override the same way a real booking does.
+  const seriesRows =
+    ref.kind === 'professional'
+      ? await getActiveSeriesForOwner(q, String(businessId), String(ref.id), date, date)
+      : await getActiveSeriesForResource(q, String(businessId), String(ref.id), date, date);
+  if (seriesRows.length > 0) {
+    const overrides = await getMaterializedOverrides(q, seriesRows.map((s) => s.id), date, date);
+    const materializedKeys = new Set(overrides.map((o) => `${o.series_id}|${o.occurrence_date}`));
+    const virtual = seriesOccupancyForDate(seriesRows, date, materializedKeys);
+    booked.push(...virtual);
+    bookedIntervals.push(...virtual.map((v) => ({ start: v.start, end: v.end })));
+  }
 
   const gridSlots = serviceBlocks
     ? computeServiceSlots({ blocks: serviceBlocks, exceptions })

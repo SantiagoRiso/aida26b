@@ -1,4 +1,4 @@
-import { HHMM_PATTERN, BUSINESS_TZ } from '../../shared/src/ssot/domain/availability';
+import { HHMM_PATTERN, BUSINESS_TZ, ARGENTINA_OFFSET_MS } from '../../shared/src/ssot/domain/availability';
 
 // Shared by the booking and scheduling paths so the two cannot disagree on timezone, formats,
 // or the same-day rule. The timezone fact itself lives in the shared SSOT.
@@ -22,6 +22,21 @@ export function crossesMidnight(start: string, durationMinutes: number): boolean
 
 export function buildStartsAt(date: string, start: string): string {
   return `${date} ${start}:00 ${BUSINESS_TZ}`;
+}
+
+// A list filter's date_from/date_to may already be a bare date or a full ISO instant; virtual
+// occurrence expansion always needs a plain calendar date in BUSINESS_TZ.
+export function toBusinessDate(input: string): string {
+  return DATE_RE.test(input) ? input : new Date(input).toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+}
+
+// Same date+HH:MM -> business-tz instant as buildStartsAt, but rendered as a wire-ready ISO string
+// (Argentina has no DST, so the fixed offset is exact) rather than a Postgres timestamptz literal —
+// a virtual occurrence has no appointments row to construct via a SQL insert param.
+export function businessDateTimeToISO(date: string, start: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const [hh, mm] = start.split(':').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh, mm, 0) - ARGENTINA_OFFSET_MS).toISOString();
 }
 
 // Shift an ISO date by whole days via local midnight, so a timezone offset can't drift the day.

@@ -53,6 +53,11 @@ const EXPECTED_PATTERNS: Record<string, Record<string, string>> = {
     transition: '/api/appointments/:id/transition',
     ignoreConflict: '/api/appointments/:id/ignore-conflict',
     relatedClients: '/api/appointments/related-clients',
+    seriesCreate: '/api/appointments/series',
+    seriesDetail: '/api/appointments/series/:id',
+    seriesMaterialize: '/api/appointments/series/:id/materialize',
+    seriesFuture: '/api/appointments/series/:id/future',
+    seriesEnd: '/api/appointments/series/:id/end',
   },
   SCHEDULING_PATTERNS: {
     conflictCheck: '/api/conflict-check',

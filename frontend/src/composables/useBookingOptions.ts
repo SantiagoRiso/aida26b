@@ -2,6 +2,7 @@ import { ref, computed } from 'vue';
 import { listRows } from '@/api/crud';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { useAuthStore } from '@/stores/auth';
 import { scopeProfessionalOptions } from '@/composables/useFullCalendar';
@@ -52,7 +53,9 @@ export function useBookingOptions(config: BookingOptionsConfig = {}) {
     if (svcRes.ok) services.value = svcRes.data;
     if (psRes.ok) profServices.value = psRes.data;
     if (clientRes?.ok) clients.value = clientRes.data;
-    if (apptRes?.ok) myAppointments.value = apptRes.data;
+    // Recency ranking reads past interactions — a virtual (un-materialized, always-future)
+    // occurrence has no history value here, so it's filtered out.
+    if (apptRes?.ok) myAppointments.value = apptRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
   }
   void load();
 

@@ -35,12 +35,15 @@ export function createAuditWriter(pool: Pool): AuditWriter {
 
       if (businessId === null) return;
 
+      const entityType = typeof details.entity_type === 'string' ? details.entity_type : null;
+      const entityId = typeof details.entity_id === 'number' ? details.entity_id : null;
+
       await insertAuditEvent(pool, {
         businessId,
         actorId,
         eventType,
-        entityType: (details.entity_type as string) ?? null,
-        entityId: (details.entity_id as number) ?? null,
+        entityType,
+        entityId,
         outcome,
         ip: req.ip ?? null,
         detailsJson: JSON.stringify(details),

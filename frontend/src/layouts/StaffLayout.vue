@@ -2,7 +2,7 @@
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
-import { ArrowRightOnRectangleIcon } from '@heroicons/vue/24/outline';
+import MaterialIcon from '@/components/shared/MaterialIcon.vue';
 import SidebarNav from '@/components/staff/SidebarNav.vue';
 import { useStateLabel } from '@/composables/useStateLabel';
 
@@ -37,7 +37,7 @@ async function logout() {
           class="flex w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-semibold hover:bg-surface"
           @click="logout"
         >
-          <ArrowRightOnRectangleIcon class="h-4 w-4" aria-hidden="true" />
+          <MaterialIcon name="logout" class="h-4 w-4" />
           {{ t('nav.logout') }}
         </button>
       </div>

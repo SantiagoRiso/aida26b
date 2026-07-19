@@ -292,8 +292,9 @@ defineExpose({
   );
 }
 
-/* Sobreturno (override / overbooked): an alarm-clock badge in the bottom-right and a light-blue time,
-   so an overbooked slot is obvious on any professional colour. Anchors to FC's positioned event. */
+/* Sobreturno (override / overbooked): a Material alarm badge in the bottom-right and a light-blue
+   time, so an overbooked slot is obvious on any professional colour. The icon is masked (not a
+   background image) so it renders white on any fill. Anchors to FC's positioned event. */
 :deep(.appt-sobreturno)::after {
   content: '';
   position: absolute;
@@ -301,9 +302,9 @@ defineExpose({
   right: 2px;
   width: 13px;
   height: 13px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='13' r='8'/%3E%3Cpath d='M12 9v4l2 2'/%3E%3Cpath d='M5 3 2 6'/%3E%3Cpath d='m22 6-3-3'/%3E%3Cpath d='m6.4 18.7-2.9 2.9'/%3E%3Cpath d='m17.6 18.7 2.9 2.9'/%3E%3C/svg%3E");
-  background-size: contain;
-  background-repeat: no-repeat;
+  background-color: #fff;
+  -webkit-mask: url('/icons/alarm.svg') center / contain no-repeat;
+  mask: url('/icons/alarm.svg') center / contain no-repeat;
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.7));
   pointer-events: none;
   z-index: 1;
@@ -337,6 +338,33 @@ defineExpose({
   border-radius: 9999px;
   pointer-events: none;
   z-index: 2;
+}
+
+/* Virtual (recurring) occurrence: a Material repeat badge in the same bottom-right corner the
+   sobreturno clock uses (a virtual is never a sobreturno, so they never share the spot). Masked so
+   it renders white on any fill. The in-conflict "!" sits bottom-left, so a conflicting virtual can
+   carry both. */
+:deep(.fc-virtual-occurrence)::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  right: 2px;
+  width: 13px;
+  height: 13px;
+  background-color: #fff;
+  -webkit-mask: url('/icons/repeat.svg') center / contain no-repeat;
+  mask: url('/icons/repeat.svg') center / contain no-repeat;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.7));
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* A virtual (un-materialized) recurring occurrence reads as a normal booked turno — solid fill and
+   border in the professional's colour — set apart only by the repeat badge and a faint fade hinting
+   it isn't a stored row yet. Deliberately NOT the dashed candy-stripe treatment used for pending
+   requests. appt-in-conflict / appt-sobreturno still layer on top unchanged when a virtual carries them. */
+:deep(.fc-virtual-occurrence) {
+  opacity: 0.9;
 }
 
 :deep(.appt-state-canceled),

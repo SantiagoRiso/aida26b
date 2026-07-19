@@ -1,5 +1,7 @@
 import type { ColumnValue } from '../types/types';
 import type { BookedAppointment } from './domain/conflict';
+import type { EndKind, Frequency, SeriesStatus } from './domain/recurrence';
+import type { Weekday } from './domain/availability';
 
 // Result shapes that are not full-table records (projections and joins). One home for the
 // vocabulary; per-domain db modules import their return types from here. Rows stay snake_case
@@ -87,9 +89,88 @@ export type AppointmentRow = {
   // in_conflict). The one stored bit; reversible.
   conflict_ignored: boolean;
   // Present only on list reads: an open, future turno overlapping active time-off (a business
-  // closure or its professional's exception), not yet ignored. Computed per read, never stored.
+  // closure or its professional's exception) or a conflicting virtual occurrence of an active
+  // recurrence rule, not yet ignored. Computed per read, never stored.
   in_conflict?: boolean;
+  // Links a materialized occurrence back to its recurrence rule. Null for one-off appointments.
+  series_id: string | null;
+  occurrence_date: string | null;
+  // Always absent/false on a real row — distinguishes it from a VirtualOccurrence when both share
+  // a ListAppointment[] response.
+  is_virtual?: boolean;
 };
+
+// An un-materialized recurring occurrence, computed on read from an active appointment_series and
+// never stored — the list endpoint unions these with real rows for the same window. There is no
+// appointments row yet, so identity is (series_id, occurrence_date), not an id.
+export type VirtualOccurrence = {
+  id: null;
+  series_id: string;
+  occurrence_date: string;
+  client_user_id: string;
+  professional_user_id: string;
+  service_id: string;
+  resource_id: string | null;
+  starts_at: string;
+  duration_minutes: number;
+  price: string;
+  state: 'scheduled';
+  name: null;
+  description: null;
+  is_virtual: true;
+  in_conflict: boolean;
+};
+
+// The appointments list response shape: real rows (some carrying series_id when materialized)
+// unioned with virtual occurrences of the same active series within the requested window.
+export type ListAppointment = AppointmentRow | VirtualOccurrence;
+
+// appointment_series wire row: the recurrence rule, never the occurrences themselves (those are
+// computed, then materialize as ordinary `appointments` rows). BIGINT/NUMERIC arrive as strings;
+// INTEGER/SMALLINT arrive as numbers — same split AppointmentRow already follows for duration_minutes
+// vs. price. Emitted verbatim, never coerced.
+export type AppointmentSeriesRow = {
+  id: string;
+  client_user_id: string;
+  professional_user_id: string;
+  service_id: string;
+  resource_id: string | null;
+  frequency: Frequency;
+  interval: number;
+  weekday: Weekday | null;
+  week_of_month: number | null;
+  day_of_month: number | null;
+  start_time: string;
+  duration_minutes: number;
+  price_ars: string;
+  start_date: string;
+  end_kind: EndKind;
+  end_count: number | null;
+  end_date: string | null;
+  created_by_user_id: string | null;
+  status: SeriesStatus;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type AppointmentSeriesInsert = Pick<AppointmentSeriesRow,
+  | 'client_user_id'
+  | 'professional_user_id'
+  | 'service_id'
+  | 'resource_id'
+  | 'frequency'
+  | 'interval'
+  | 'weekday'
+  | 'week_of_month'
+  | 'day_of_month'
+  | 'start_time'
+  | 'duration_minutes'
+  | 'price_ars'
+  | 'start_date'
+  | 'end_kind'
+  | 'end_count'
+  | 'end_date'
+> & { created_by_user_id: string };
 
 // Wall-clock date/start of an appointment, derived in SQL at the business timezone.
 export type AppointmentWallClock = { date: string; start: string };

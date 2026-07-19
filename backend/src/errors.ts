@@ -24,9 +24,15 @@ export function httpForStructuredError(
   // eslint-disable-next-line no-restricted-syntax -- fields being narrowed are themselves unverified until the typeof checks below confirm them
   const e = err as { status?: unknown; code?: unknown; message?: unknown; fields?: unknown };
   if (typeof e.status === 'number' && typeof e.code === 'string' && typeof e.message === 'string') {
-    const fields =
-      e.fields && typeof e.fields === 'object' ? (e.fields as Record<string, string>) : undefined;
+    const fields = isStringRecord(e.fields) ? e.fields : undefined;
     return { status: e.status, code: e.code, message: e.message, fields };
   }
   return null;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === 'string');
 }

@@ -21,7 +21,12 @@ import type {
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
-import { classifyException, type ExceptionRow } from '@/composables/scheduleExceptions';
+import { classifyException } from '@/composables/scheduleExceptions';
+import {
+  appointmentFromExtendedProps,
+  closureFromExtendedProps,
+  exceptionFromExtendedProps,
+} from '@/composables/calendarEventPayload';
 
 // 8-hue palette for multi-professional color coding (per-professional, not per-state).
 // Colors assigned deterministically by professional id so they are stable across sessions.
@@ -101,11 +106,17 @@ function apptToEvent(appt: Appointment, decorators?: CalendarDecorators, showCon
     // override_conflict → a sobreturno (booked over a conflict / outside availability); marked with a
     // corner flag so staff can spot overbooked slots at a glance. in_conflict → the turno now overlaps
     // active time-off (a closure or the professional's exception); ringed so it stands out for triage.
+    // is_virtual (recurring, not yet materialized) gets its own cue — shown to every viewer, not just
+    // staff, since it's informational rather than a staff-only operational flag.
     classNames: [
       `appt-state-${appt.state}`,
+      ...(appt.is_virtual ? ['fc-virtual-occurrence'] : []),
       ...(showConflictCues && appt.override_conflict ? ['appt-sobreturno'] : []),
       ...(showConflictCues && appt.in_conflict ? ['appt-in-conflict'] : []),
     ],
+    // No row exists yet — materialize-then-move is out of scope, so a virtual occurrence never
+    // drags or resizes natively (month view); the timegrid's custom drag skips it independently.
+    ...(appt.is_virtual ? { editable: false, startEditable: false, durationEditable: false } : {}),
     extendedProps: { appointment: appt },
   };
 }
@@ -180,8 +191,10 @@ export function useAppointmentCalendar(
     // Compact one-line-first rendering so short events show "HH:MM Título" instead of
     // clipping the time and title mid-letter.
     eventContent: (arg) => {
-      const appt = arg.event.extendedProps.appointment as Appointment | undefined;
+      const appt = appointmentFromExtendedProps(arg.event.extendedProps);
       const compact = appt ? decorators?.compactContent?.(appt) : null;
+      // The recurring cue for a virtual occurrence is a corner badge (fc-virtual-occurrence::after in
+      // CalendarView.vue), sharing the sobreturno clock's bottom-right spot — not inline in the text.
       if (!compact) {
         return {
           html: `<div class="fc-ev-compact"><div class="fc-ev-primary"><span class="fc-ev-time">${arg.timeText.split(' - ')[0] ?? ''}</span> <span class="fc-ev-title">${escapeHtml(arg.event.title)}</span></div></div>`,
@@ -213,7 +226,7 @@ export function useAppointmentCalendar(
     // Stamp each rendered event element with a stable test id so Playwright
     // can target by attribute rather than by coordinates or visible text.
     eventDidMount: (info: EventMountArg) => {
-      const appt = info.event.extendedProps.appointment as Appointment | undefined;
+      const appt = appointmentFromExtendedProps(info.event.extendedProps);
       if (appt) {
         info.el.setAttribute('data-testid', `appt-${appt.id}`);
         info.el.setAttribute('data-appt-state', appt.state);
@@ -234,7 +247,7 @@ export function useAppointmentCalendar(
       // Background exception overlays aren't clickable/hoverable via eventContent (FullCalendar
       // never renders content for display:'background' events), so the reason surfaces as a
       // native browser tooltip instead.
-      const exception = info.event.extendedProps.exception as ExceptionRow | undefined;
+      const exception = exceptionFromExtendedProps(info.event.extendedProps);
       if (exception) {
         const kind = classifyException(exception);
         const tip = exception.reason || i18n.global.t(`exception.kind.${kind}`);
@@ -242,7 +255,7 @@ export function useAppointmentCalendar(
         info.el.setAttribute('data-testid', `exception-${exception.id}`);
         return;
       }
-      const closure = info.event.extendedProps.closure as { id: string; reason: string | null } | undefined;
+      const closure = closureFromExtendedProps(info.event.extendedProps);
       if (closure) {
         const holiday = i18n.global.t('calendar.businessHoliday');
         info.el.setAttribute('title', closure.reason ? `${holiday}: ${closure.reason}` : holiday);

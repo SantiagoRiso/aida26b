@@ -1,3 +1,10 @@
+<script lang="ts">
+// How far ahead the portal asks the backend to expand a client's recurring series into virtual
+// occurrences. Without a bounded date_from/date_to the backend never expands series at all, so a
+// client would never see an upcoming recurring turno.
+export const SERIES_PORTAL_HORIZON_DAYS = 90;
+</script>
+
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -5,12 +12,16 @@ import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { toDisplayAppointment } from '@/composables/seriesOccurrence';
+import { appointmentFromExtendedProps } from '@/composables/calendarEventPayload';
+import { dayISO } from '@/composables/availabilityShading';
 import { listRows } from '@/api/crud';
 import { getMySettings } from '@/api/business';
 import { canCancelAppointment, DEFAULT_CANCELLATION_CUTOFF_HOURS, isOpenAppointmentState } from '@shared/ssot/domain';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { EventClickArg } from '@fullcalendar/core';
 import { PlusIcon } from '@heroicons/vue/24/outline';
+import MaterialIcon from '@/components/shared/MaterialIcon.vue';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useCurrency } from '@/composables/useCurrency';
 import { useStateLabel } from '@/composables/useStateLabel';
@@ -42,11 +53,19 @@ const loading = ref(false);
 
 async function load() {
   loading.value = true;
-  const res = await listAppointments({ limit: 100 });
+  // A bounded range is what makes the backend expand recurring series into virtual occurrences —
+  // an unranged request only ever returns materialized rows.
+  const res = await listAppointments({
+    date_from: dayISO(new Date(), 0),
+    date_to: dayISO(new Date(), SERIES_PORTAL_HORIZON_DAYS),
+    limit: 100,
+  });
   loading.value = false;
   if (res.ok) {
-    // Server already scopes to the caller's own appointments for Client role.
-    appointments.value = res.data;
+    // Server already scopes to the caller's own appointments for Client role. Virtual (recurring,
+    // not-yet-materialized) occurrences are normalized to the same shape as real rows so the rest
+    // of this view (and the embedded calendar) render them without a special case.
+    appointments.value = res.data.map(toDisplayAppointment);
   }
 }
 
@@ -93,7 +112,7 @@ const { calendarOptions } = useAppointmentCalendar(
   {
     onSelect: () => {},
     onEventClick: (arg: EventClickArg) => {
-      const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
+      const appt = appointmentFromExtendedProps(arg.event.extendedProps);
       if (appt) {
         selectedAppt.value = appt;
         detailOpen.value = true;
@@ -123,7 +142,9 @@ function isCancelable(appt: Appointment): boolean {
 }
 
 function cancelBlockedReason(appt: Appointment): string | null {
-  if (appt.state !== 'scheduled' || isCancelable(appt)) return null;
+  // A virtual occurrence is read-only here (no cancel affordance at all), so it never needs
+  // the "past the cutoff" explanation either.
+  if (appt.is_virtual || appt.state !== 'scheduled' || isCancelable(appt)) return null;
   // Visible explanation, not just a tooltip.
   return t('portal.cancelCutoffWarning', { hours: cutoffHours.value });
 }
@@ -199,6 +220,14 @@ const past = computed(() =>
               <div class="flex-1 space-y-1">
                 <div class="flex items-center gap-2 flex-wrap">
                   <StatusBadge :state="appt.state" />
+                  <span
+                    v-if="appt.is_virtual"
+                    class="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent"
+                    :title="t('calendar.recurringTooltip')"
+                  >
+                    <MaterialIcon name="repeat" class="h-3.5 w-3.5" />
+                    {{ t('portal.recurringBadge') }}
+                  </span>
                   <span class="text-sm font-semibold">
                     {{ formatWeekday(appt.starts_at) }} {{ formatDateTime(appt.starts_at) }}
                   </span>
@@ -224,8 +253,9 @@ const past = computed(() =>
                 </p>
               </div>
 
-              <!-- Cancel only; clients get no reschedule affordance. -->
-              <div v-if="isOpenAppointmentState(appt.state)" class="flex-shrink-0">
+              <!-- Cancel only; clients get no reschedule affordance. A virtual occurrence has no
+                   row yet — read-only here, matching the rest of the portal's limited-cancel scope. -->
+              <div v-if="isOpenAppointmentState(appt.state) && !appt.is_virtual" class="flex-shrink-0">
                 <button
                   v-if="isCancelable(appt)"
                   type="button"
@@ -293,7 +323,17 @@ const past = computed(() =>
     @after-leave="selectedAppt = null"
   >
     <div v-if="selectedAppt" class="space-y-3 text-sm">
-      <StatusBadge :state="selectedAppt.state" />
+      <div class="flex items-center gap-2 flex-wrap">
+        <StatusBadge :state="selectedAppt.state" />
+        <span
+          v-if="selectedAppt.is_virtual"
+          class="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent"
+          :title="t('calendar.recurringTooltip')"
+        >
+          <MaterialIcon name="repeat" class="h-3.5 w-3.5" />
+          {{ t('portal.recurringBadge') }}
+        </span>
+      </div>
       <div>
         <p class="text-xs text-neutral">{{ t('portal.professional') }}</p>
         <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? t('portal.appointmentFallback', { id: selectedAppt.id }) }}</p>
@@ -326,7 +366,7 @@ const past = computed(() =>
         {{ cancelBlockedReason(selectedAppt) }}
       </p>
       <button
-        v-if="isOpenAppointmentState(selectedAppt.state) && isCancelable(selectedAppt)"
+        v-if="!selectedAppt.is_virtual && isOpenAppointmentState(selectedAppt.state) && isCancelable(selectedAppt)"
         type="button"
         class="min-h-[36px] w-full rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
         @click="() => { const a = selectedAppt!; detailOpen = false; requestCancel(a); }"

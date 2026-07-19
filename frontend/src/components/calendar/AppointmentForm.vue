@@ -4,12 +4,13 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { scheduleAppointment, rescheduleAppointment } from '@/api/appointments';
-import type { Appointment, ScheduleBody } from '@/api/appointments';
+import { scheduleAppointment, rescheduleAppointment, scheduleSeries } from '@/api/appointments';
+import type { Appointment, ScheduleBody, ScheduleSeriesBody, ScheduleSeriesResult, SeriesSkip } from '@/api/appointments';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useBookingOptions } from '@/composables/useBookingOptions';
 import { useToast } from '@/composables/useToast';
+import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import Selector from '@/components/shared/Selector.vue';
@@ -17,11 +18,19 @@ import SlotPicker from './SlotPicker.vue';
 import DateField from '@/components/shared/DateField.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
-import { isoDate, addDaysISO, intervalMinutes } from '@/composables/bookingForm';
+import { isoDate, addDaysISO, intervalMinutes, localDateTime } from '@/composables/bookingForm';
 import { useBookingWindow } from '@/composables/useBookingWindow';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
+import { weekdayOf } from '@shared/ssot/domain/availability';
 import { structure } from '@shared/ssot/structure';
 import { useLabel } from '@/composables/useLabel';
+import RecurrenceRuleFields from './RecurrenceRuleFields.vue';
+import {
+  defaultRecurrenceState,
+  recurrenceShape,
+  validateRecurrenceFields,
+  type RecurrenceState,
+} from '@/composables/seriesRule';
 
 const props = defineProps<{
   // Presence switches the form to edit/reschedule mode.
@@ -49,6 +58,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { label } = useLabel();
 const toast = useToast();
+const { describe: describeConflictVerdict } = useConflictVerdict();
 const appointmentColumns = structure.tables.appointments.columns;
 
 interface FormState {
@@ -63,16 +73,6 @@ interface FormState {
   description: string;
 }
 
-// starts_at is stored UTC; the date/time inputs (and the backend) work in local wall-clock time,
-// so derive them from a Date rather than slicing the ISO string (which would leak the UTC offset).
-function localDateTime(iso: string): { date: string; time: string } {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
-    time: `${p(d.getHours())}:${p(d.getMinutes())}`,
-  };
-}
 const apptStart = props.appointment ? localDateTime(props.appointment.starts_at) : null;
 
 const form = reactive<FormState>({
@@ -182,8 +182,86 @@ function buildBody(override: boolean): ScheduleBody {
   };
 }
 
+// Create-mode only ("Repetir"): builds a recurring series instead of a single appointment.
+// Reuses the same client/professional/service/resource/date/start/duration the single-create
+// path already collects — only the recurrence shape (frequency/interval/end) is new state.
+const recurrenceEnabled = ref(false);
+const recurrence = reactive<RecurrenceState>(defaultRecurrenceState());
+const seriesResult = ref<ScheduleSeriesResult | null>(null);
+
+// Defaults the weekday to match the chosen date, but only until the user picks one explicitly —
+// a manual pick is a deliberate choice, not something a later date edit should clobber.
+const weekdayTouched = ref(false);
+watch(
+  () => form.date,
+  (d) => {
+    if (d && !weekdayTouched.value) recurrence.weekday = weekdayOf(d);
+  },
+  { immediate: true },
+);
+
+const showsWeekday = computed(() => recurrenceShape(recurrence).showsWeekday);
+const showsWeekOfMonth = computed(() => recurrenceShape(recurrence).showsWeekOfMonth);
+const showsDayOfMonth = computed(() => recurrenceShape(recurrence).showsDayOfMonth);
+
+function buildSeriesBody(): ScheduleSeriesBody {
+  return {
+    client_user_id: Number(form.client_user_id),
+    professional_user_id: Number(form.professional_user_id),
+    service_id: Number(form.service_id),
+    resource_id: form.resource_id ? Number(form.resource_id) : undefined,
+    frequency: recurrence.frequency,
+    interval: Number(recurrence.interval),
+    weekday: showsWeekday.value ? recurrence.weekday : undefined,
+    week_of_month: showsWeekOfMonth.value ? Number(recurrence.week_of_month) : undefined,
+    day_of_month: showsDayOfMonth.value ? Number(recurrence.day_of_month) : undefined,
+    start_time: form.start,
+    start_date: form.date,
+    duration_minutes: Number(form.duration_minutes),
+    end_kind: recurrence.end_kind,
+    end_count: recurrence.end_kind === 'count' ? Number(recurrence.end_count) : undefined,
+    end_date: recurrence.end_kind === 'until' ? recurrence.end_date : undefined,
+  };
+}
+
+// Minimal client-side check (required fields per frequency/end_kind, interval >= 1); the server
+// re-validates authoritatively — this only avoids a round-trip for obviously incomplete input.
+function validateRecurrence(): boolean {
+  const errors = validateRecurrenceFields(recurrence, t);
+  if (Object.keys(errors).length > 0) {
+    fieldErrors.value = errors;
+    return false;
+  }
+  return true;
+}
+
+// The API never builds display strings; reuse the same conflict→i18n mapping the override
+// dialog uses so a skipped date's reasons read identically everywhere.
+function describeSkip(skip: SeriesSkip): string[] {
+  return describeConflictVerdict({
+    conflicts: skip.conflicts,
+    can_save: false,
+    can_override: false,
+    requires_override: false,
+  }).lines;
+}
+
 async function save(override = false): Promise<void> {
   fieldErrors.value = {};
+
+  if (recurrenceEnabled.value && !props.appointment) {
+    if (!validateRecurrence()) return;
+    saving.value = true;
+    const result = await scheduleSeries(buildSeriesBody());
+    saving.value = false;
+    if (!result.ok) {
+      toast.error('scheduleFailed');
+      if (result.fields) fieldErrors.value = result.fields;
+      return;
+    }
+    seriesResult.value = result.data;
+    return;
+  }
 
   // No client-side short-circuit on a missing client: the server must see the request so it
   // can return a conflict verdict first (warn-first) — only once no override is pending does
@@ -242,6 +320,7 @@ function submit() {
 
 <template>
   <form class="grid grid-cols-1 gap-4 sm:grid-cols-2" @submit.prevent="submit">
+   <template v-if="!seriesResult">
     <div class="flex flex-col gap-1">
       <label class="text-sm font-semibold" for="appt-client">{{ t('calendar.clientLabel') }} *</label>
       <Selector
@@ -369,6 +448,23 @@ function submit() {
       </div>
     </div>
 
+    <template v-if="!props.appointment">
+      <label
+        class="inline-flex items-center gap-2 self-start text-sm font-medium cursor-pointer sm:col-span-2"
+      >
+        <input id="appt-recurrence" v-model="recurrenceEnabled" type="checkbox" class="h-4 w-4 accent-accent" />
+        {{ t('calendar.recurrenceToggle') }}
+      </label>
+
+      <RecurrenceRuleFields
+        v-if="recurrenceEnabled"
+        :recurrence="recurrence"
+        :field-errors="fieldErrors"
+        :min-end-date="form.date || null"
+        @weekday-picked="weekdayTouched = true"
+      />
+    </template>
+
     <div class="flex flex-col gap-1 sm:col-span-2">
       <label class="text-sm font-semibold" for="appt-name">{{ label(appointmentColumns.name.label) }}</label>
       <input
@@ -398,5 +494,27 @@ function submit() {
         {{ t('actions.cancel') }}
       </AppButton>
     </div>
+   </template>
+
+   <div v-else data-testid="series-report" class="flex flex-col gap-3 sm:col-span-2">
+     <h3 class="text-sm font-semibold">{{ t('calendar.seriesSkippedTitle') }}</h3>
+     <p v-if="seriesResult.preview.skipped.length === 0" class="text-sm text-neutral">
+       {{ t('calendar.seriesNoConflicts') }}
+     </p>
+     <p v-else class="text-sm text-neutral">{{ t('calendar.seriesConflictsNote') }}</p>
+     <ul v-if="seriesResult.preview.skipped.length > 0" class="flex flex-col gap-2">
+       <li v-for="skip in seriesResult.preview.skipped" :key="skip.date" class="text-sm">
+         <span class="font-medium">{{ skip.date }}</span>
+         <ul class="list-disc list-inside text-neutral">
+           <li v-for="(line, i) in describeSkip(skip)" :key="i">{{ line }}</li>
+         </ul>
+       </li>
+     </ul>
+     <div class="flex gap-2 pt-2">
+       <AppButton type="button" variant="primary" @click="emit('cancel')">
+         {{ t('actions.close') }}
+       </AppButton>
+     </div>
+   </div>
   </form>
 </template>

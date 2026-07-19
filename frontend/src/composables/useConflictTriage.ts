@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { listAppointments, transitionAppointment, approveAppointment, ignoreAppointmentConflict } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import type { VoidAppointmentState } from '@shared/ssot/domain/appointment-lifecycle';
 import { useToast } from '@/composables/useToast';
 import { useConflictOverride } from '@/composables/useConflictOverride';
@@ -18,8 +19,12 @@ export function useConflictTriage() {
   async function loadConflicts() {
     const res = await listAppointments({ conflicting: true, limit: 50 });
     if (res.ok) {
-      conflictTurnos.value = res.data;
-      conflictTotal.value = res.meta?.total ?? res.data.length;
+      // Triage actions (ignore/resolve/approve) call transitionAppointment/ignoreAppointmentConflict
+      // directly on appt.id — no materialize-on-action wiring here, so a virtual (un-materialized,
+      // even if flagged in_conflict) is filtered out rather than offered an action that would 404.
+      const real = res.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
+      conflictTurnos.value = real;
+      conflictTotal.value = res.meta?.total ?? real.length;
     }
   }
 

@@ -1,6 +1,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { createEntry } from '@/api/ledger';
 import { isCurrent, canSettle as canSettleAt, transitionFor, showsCurrentCard } from '@/views/staff/dashboard-current';
 import type { SettleAction } from '@/views/staff/dashboard-current';
@@ -52,7 +53,10 @@ export function useSettleCard() {
       limit: 200,
     });
     if (!res.ok) return;
-    settleCandidates.value = res.data;
+    // Settling calls transitionAppointment directly on appt.id — no materialize-on-action wiring
+    // here, so a virtual (un-materialized) occurrence is filtered out rather than offered a
+    // settle action that would 404.
+    settleCandidates.value = res.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
     for (const a of settleCandidates.value) {
       if (!(a.id in amounts.value)) amounts.value[a.id] = a.price ?? '';
     }

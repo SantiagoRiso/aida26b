@@ -11,6 +11,7 @@ import { getBalance } from '@/api/ledger';
 import { getAvailability } from '@/api/scheduling';
 import { listAppointments, approveAppointment, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence, toDisplayAppointment } from '@/composables/seriesOccurrence';
 import { toMinutes } from '@shared/ssot/domain/availability';
 import { structure } from '@shared/ssot/structure';
 import { nextDay } from '@/composables/scheduleExceptions';
@@ -50,8 +51,11 @@ async function load() {
   const res = await listAppointments({ state: 'requested', limit: 200 });
   loading.value = false;
   if (res.ok) {
+    // A virtual occurrence is always 'scheduled' (never 'requested'), so this filter is defensive
+    // typing rather than an expected runtime case — approve/reject here call transitionAppointment/
+    // approveAppointment directly on appt.id, with no materialize-on-action wiring.
     requests.value = res.data
-      .slice()
+      .filter((a): a is Appointment => !isVirtualOccurrence(a))
       .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
   }
 }
@@ -84,10 +88,10 @@ function clientName(a: Appointment): string {
   return clientLabelFor(a.client_user_id) ?? a.name ?? t('portal.appointmentFallback', { id: a.id });
 }
 function professionalName(a: Appointment): string {
-  return professionalLabelFor(a.professional_user_id) ?? '—';
+  return professionalLabelFor(a.professional_user_id) ?? t('generic.emptyValue');
 }
 function serviceName(a: Appointment): string {
-  return serviceLabelFor(a.service_id) ?? '—';
+  return serviceLabelFor(a.service_id) ?? t('generic.emptyValue');
 }
 function resourceName(a: Appointment): string | null {
   return resourceLabelFor(a.resource_id);
@@ -148,8 +152,11 @@ async function openDetail(appt: Appointment) {
   ]);
   if (prof && prof.ok) clientProfile.value = prof.data;
   clientBalance.value = bal && bal.ok ? bal.data.balance_ars : null;
-  clientAppts.value = appts && appts.ok ? appts.data : [];
-  dayAppts.value = proDay.ok ? proDay.data : [];
+  // Read-only history list, no materialize-on-action wiring — a virtual occurrence is filtered out.
+  clientAppts.value = appts && appts.ok ? appts.data.filter((a): a is Appointment => !isVirtualOccurrence(a)) : [];
+  // Feeds the read-only day calendar below (useAppointmentCalendar), which already renders a
+  // virtual occurrence with its own styling — normalized in, not filtered.
+  dayAppts.value = proDay.ok ? proDay.data.map(toDisplayAppointment) : [];
   dayFreeSlots.value = avail.ok
     ? avail.data.slots.map((s) => ({ start: toMinutes(s.start), end: toMinutes(s.end) }))
     : [];
@@ -407,7 +414,7 @@ async function confirmReject() {
           <section class="flex flex-col gap-2 border-t border-border pt-4">
             <h3 class="text-sm font-semibold text-neutral">{{ t('calendar.clientLabel') }}</h3>
             <p class="text-base font-semibold text-heading">{{ clientProfile?.display_name ?? clientName(detailAppt) }}</p>
-            <p class="text-sm text-neutral">{{ clientProfile?.email ?? '—' }} · {{ clientProfile?.phone ?? '—' }}</p>
+            <p class="text-sm text-neutral">{{ clientProfile?.email ?? t('generic.emptyValue') }} · {{ clientProfile?.phone ?? t('generic.emptyValue') }}</p>
           </section>
 
           <section class="flex flex-col gap-2">
@@ -420,7 +427,7 @@ async function confirmReject() {
                 class="text-lg font-semibold tabular-nums"
                 :class="balancePositive ? 'text-destructive' : 'text-success'"
               >
-                {{ clientBalance != null ? formatARS(clientBalance) : '—' }}
+                {{ clientBalance != null ? formatARS(clientBalance) : t('generic.emptyValue') }}
               </span>
             </div>
           </section>

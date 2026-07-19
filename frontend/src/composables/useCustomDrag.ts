@@ -183,6 +183,10 @@ export function useCustomDrag(deps: CustomDragDeps): {
 
   function start(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
     if (ev.button !== 0) return;
+    // A virtual occurrence has no row yet — materialize-then-move is out of scope here (Task 12's
+    // detail panel already materializes on other actions). Never begins a session, so pointermove
+    // is inert for it.
+    if (appt.is_virtual) return;
     const startDate = new Date(appt.starts_at);
     const originalDate = isoDate(startDate);
     const originalStart = startDate.getHours() * 60 + startDate.getMinutes();

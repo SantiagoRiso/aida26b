@@ -5,12 +5,12 @@ import { getRow, listRows, deleteRow } from '@/api/crud';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { useCurrency } from '@/composables/useCurrency';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor, descriptorWriteRoles } from '@/router/access';
-import type { Role } from '@shared/types/roles';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { isOpenAppointmentState } from '@shared/ssot/domain';
 import Skeleton from '@/components/shared/Skeleton.vue';
@@ -44,7 +44,7 @@ const loading = ref(true);
 const showEditProfile = ref(false);
 const deactivateConfirmOpen = ref(false);
 
-const role = computed(() => auth.user?.role as Role | undefined);
+const role = computed(() => auth.user?.role);
 const isSelf = computed(() => String(auth.user?.id) === String(professionalId));
 const canEditProfile = computed(() => {
   if (!role.value) return false;
@@ -99,7 +99,9 @@ async function loadAppointments() {
     date_from: new Date().toISOString(),
     limit: 200,
   });
-  appointments.value = res.ok ? res.data : [];
+  // Read-only upcoming list, no materialize-on-action wiring — a virtual (un-materialized)
+  // occurrence is filtered out rather than shown as inert.
+  appointments.value = res.ok ? res.data.filter((a): a is Appointment => !isVirtualOccurrence(a)) : [];
 }
 
 async function load() {

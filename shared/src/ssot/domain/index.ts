@@ -1,14 +1,18 @@
 import { businessTables, AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES } from './business';
 import { peopleTables, ROLE_OPTIONS, ROLE_LABELS } from './people';
 import { catalogTables } from './catalog';
+import { recurrenceTables } from './recurrence';
 import { schedulingTables } from './scheduling';
 import { financeTables } from './finance';
 
-// Key order matches the migration's dependency order.
+// Key order matches the migration's dependency order. appointment_series depends only on
+// auth.users/services/resources (all defined earlier) and is itself referenced by
+// appointments.series_id, so it precedes schedulingTables.
 export const schedulerTables = {
   ...businessTables,
   ...peopleTables,
   ...catalogTables,
+  ...recurrenceTables,
   ...schedulingTables,
   ...financeTables,
 };
@@ -20,6 +24,7 @@ export {
   computeServiceSlots,
   computeFreeWindows,
   weekdayOf,
+  isWeekday,
   detectOverlap,
   toMinutes,
   toHHMM,
@@ -53,6 +58,31 @@ export type {
 } from './conflict';
 export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES, LEDGER_WRITE_ROLES } from './finance';
 export type { LedgerEntryType } from './finance';
+export {
+  FREQUENCY_VALUES,
+  END_KIND_VALUES,
+  SERIES_STATUS_VALUES,
+  ACTIVE_SERIES_STATUS,
+  ENDED_SERIES_STATUS,
+  UNTIL_END_KIND,
+  FREQUENCY_OPTIONS,
+  END_KIND_OPTIONS,
+  isFrequency,
+  isEndKind,
+  validateRecurrenceRule,
+  parseRecurrenceRule,
+} from './recurrence';
+export type {
+  Frequency,
+  EndKind,
+  SeriesStatus,
+  ScheduleSeriesBody,
+  RecurrenceRuleFields,
+  ValidatedRecurrenceRuleFields,
+} from './recurrence';
+export { expandSeries, seriesRuleFromRow } from './recurrence-expand';
+export type { SeriesRule } from './recurrence-expand';
+export { seriesOccupancyForDate } from './recurrence-occupancy';
 export { AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES };
 export type { AuditOutcome } from './business';
 export { ROLE_OPTIONS, ROLE_LABELS };

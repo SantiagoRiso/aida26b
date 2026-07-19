@@ -40,6 +40,11 @@ export const appointmentPaths = {
   transition: (id: Id) => `/appointments/${id}/transition`,
   ignoreConflict: (id: Id) => `/appointments/${id}/ignore-conflict`,
   relatedClients: () => '/appointments/related-clients',
+  seriesCreate: () => '/appointments/series',
+  seriesDetail: (id: Id) => `/appointments/series/${id}`,
+  seriesMaterialize: (id: Id) => `/appointments/series/${id}/materialize`,
+  seriesFuture: (id: Id) => `/appointments/series/${id}/future`,
+  seriesEnd: (id: Id) => `/appointments/series/${id}/end`,
 };
 
 export const schedulingPaths = {
@@ -109,6 +114,11 @@ export const APPOINTMENT_PATTERNS = {
   transition: pattern(appointmentPaths.transition(':id')),
   ignoreConflict: pattern(appointmentPaths.ignoreConflict(':id')),
   relatedClients: pattern(appointmentPaths.relatedClients()),
+  seriesCreate: pattern(appointmentPaths.seriesCreate()),
+  seriesDetail: pattern(appointmentPaths.seriesDetail(':id')),
+  seriesMaterialize: pattern(appointmentPaths.seriesMaterialize(':id')),
+  seriesFuture: pattern(appointmentPaths.seriesFuture(':id')),
+  seriesEnd: pattern(appointmentPaths.seriesEnd(':id')),
 };
 
 export const SCHEDULING_PATTERNS = {

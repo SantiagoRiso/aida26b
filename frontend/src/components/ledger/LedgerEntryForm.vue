@@ -6,6 +6,7 @@ import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { useLabel } from '@/composables/useLabel';
@@ -70,7 +71,9 @@ watch(showAppointmentPicker, async (show) => {
     loadingAppointments.value = true;
     const result = await listAppointments({ client_user_id: props.clientUserId, limit: 200 });
     if (result.ok) {
-      appointments.value = result.data;
+      // A charge must link to a real appointment row — a virtual (un-materialized) occurrence has
+      // none yet, so it's not a selectable option here.
+      appointments.value = result.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
     }
     loadingAppointments.value = false;
   }
@@ -162,7 +165,7 @@ async function submit() {
           :key="appt.id"
           :value="appt.id"
         >
-          {{ appt.name || appt.starts_at.slice(0, 10) }} — ${{ appt.price }}
+          {{ appt.name || appt.starts_at.slice(0, 10) }}{{ appt.price != null ? ' · $' + appt.price : '' }}
         </option>
       </select>
       <FieldError :message="fieldErrors.appointment_id" />

@@ -367,6 +367,28 @@ export const schedulingTables = {
         filterable: false,
         sortable: false,
       },
+      // NULL for a standalone turno. Set by materialize-on-touch when a recurring occurrence is
+      // first acted on; the row then wins over its virtual twin.
+      series_id: {
+        type: 'string',
+        label: { es: 'Serie', en: 'Series' },
+        editable: false,
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+        foreignKey: { table: 'appointment_series', valueField: 'id', labelField: 'id' },
+      },
+      // The on-pattern date a materialized row stands for; NULL for standalone turnos. Stays the
+      // pattern anchor even after a single-occurrence move, so it keeps de-duping its virtual twin.
+      occurrence_date: {
+        type: 'string',
+        label: { es: 'Fecha de ocurrencia', en: 'Occurrence Date' },
+        input: 'date',
+        editable: false,
+        validator: { nullable: true },
+        filterable: true,
+        sortable: false,
+      },
     },
     pk: 'id',
     uiName: { es: 'Turno', en: 'Appointment' },

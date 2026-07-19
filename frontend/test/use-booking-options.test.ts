@@ -182,6 +182,40 @@ describe('useBookingOptions — recency ranking', () => {
 
     expect(mockListAppointments).not.toHaveBeenCalled();
   });
+
+  it('excludes virtual occurrences from recency ranking — no real interaction to rank by yet', async () => {
+    setUser({ id: 7, role: 'Client' });
+    mockListAppointments.mockResolvedValue({
+      ok: true,
+      data: [{
+        id: null,
+        series_id: '99',
+        occurrence_date: new Date(Date.now() + day).toISOString().slice(0, 10),
+        client_user_id: '7',
+        professional_user_id: '2',
+        service_id: '30',
+        resource_id: null,
+        starts_at: new Date(Date.now() + day).toISOString(),
+        duration_minutes: 30,
+        price: '1000.00',
+        state: 'scheduled',
+        name: null,
+        description: null,
+        is_virtual: true,
+        in_conflict: false,
+      }],
+    } as never);
+    const { rankedProfessionals } = useBookingOptions({ rankByRecency: true });
+    await flushPromises();
+
+    // Same order as "no recent interactions" — a virtual occurrence carries no attendance
+    // history, so it must not give professional '2' a recency boost.
+    expect(rankedProfessionals.value.map((p) => p.display_name)).toEqual([
+      'Dr. Arnie Pye',
+      'Dr. Zoidberg',
+      'Dra. Marge Bouvier',
+    ]);
+  });
 });
 
 describe('useBookingOptions — client roster', () => {

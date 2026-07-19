@@ -20,7 +20,8 @@ export function descriptorWriteRoles(
   opts?: { exclude?: Role[] },
 ): Role[] {
   const allowed = tableOf(table).roleRequired?.[op] ?? [];
-  return opts?.exclude ? allowed.filter((r) => !opts.exclude!.includes(r)) : allowed;
+  const excluded = opts?.exclude;
+  return excluded ? allowed.filter((role) => !excluded.includes(role)) : allowed;
 }
 
 // Ownership and calendar-grant checks are server-enforced; this only covers

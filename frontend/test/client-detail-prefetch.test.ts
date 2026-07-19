@@ -42,4 +42,28 @@ describe('client detail prefetch', () => {
     mocks.generation = 1;
     expect(takeClientDetailPrefetch(7)).toBeNull();
   });
+
+  // ClientDetail's pending/history lists have no materialize-on-action wiring — a virtual
+  // (un-materialized) occurrence must be dropped here rather than handed to the panel as an entry.
+  it('drops virtual occurrences from the prefetched appointment list', async () => {
+    mocks.listAppointments.mockResolvedValue({
+      ok: true,
+      data: [
+        { id: '1', client_user_id: '7', is_virtual: undefined },
+        {
+          id: null, series_id: '9',
+          occurrence_date: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+          client_user_id: '7', is_virtual: true,
+        },
+      ],
+    });
+
+    prefetchClientDetail(7);
+    const result = await takeClientDetailPrefetch(7);
+    if (!result) throw new Error('expected a prefetch result');
+    if (!result.appointments.ok) throw new Error('expected an ok appointments result');
+
+    expect(result.appointments.data).toHaveLength(1);
+    expect(result.appointments.data[0]!.id).toBe('1');
+  });
 });

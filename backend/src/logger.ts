@@ -26,7 +26,11 @@ const VERSION = resolveVersion();
 
 function currentLevel(): Level {
   const env = process.env.LOG_LEVEL;
-  return env && env in LEVELS ? (env as Level) : 'info';
+  return isLevel(env) ? env : 'info';
+}
+
+function isLevel(value: string | undefined): value is Level {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(LEVELS, value);
 }
 
 type LogFields = Record<string, string | number>;

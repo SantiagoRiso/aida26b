@@ -67,6 +67,10 @@ export function insertScheduledAppointment(
     overrideActorId: number | null;
     name: string | null;
     description: string | null;
+    // Links a materialize-on-touch occurrence back to its recurrence rule. Absent for every
+    // existing caller, so the columns default to null and behavior is unchanged.
+    seriesId?: number | null;
+    occurrenceDate?: string | null;
   },
 ): Promise<AppointmentRow | null> {
   return queryOne<AppointmentRow>(
@@ -74,12 +78,14 @@ export function insertScheduledAppointment(
     `INSERT INTO appointments
        (client_user_id, professional_user_id, resource_id, service_id,
         starts_at, duration_minutes, state, price,
-        override_conflict, override_actor_id, name, description)
-     VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, $10, $11)
+        override_conflict, override_actor_id, name, description,
+        series_id, occurrence_date)
+     VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, $10, $11, $12, $13)
      RETURNING *`,
     [
       a.clientUserId, a.professionalUserId, a.resourceId, a.serviceId, a.startsAt,
       a.durationMinutes, a.price, a.overrideConflict, a.overrideActorId, a.name, a.description,
+      a.seriesId ?? null, a.occurrenceDate ?? null,
     ],
   );
 }
@@ -197,6 +203,11 @@ export type AppointmentListFilter = {
   conflicting?: boolean;
   limit: number;
   offset: number;
+  // Date-range list callers union real rows with virtual (unmaterialized) occurrences and paginate
+  // the combined, sorted set in memory — the window bounds the row count, so this fetches every
+  // matching real row instead of SQL-paginating a slice that would then be re-sliced. limit/offset
+  // are ignored when set.
+  unpaginated?: boolean;
 };
 
 export async function listAppointments(
@@ -231,6 +242,22 @@ export async function listAppointments(
   // The row query also computes the in_conflict flag, so it carries an extra tz param (after the
   // shared WHERE params) that the count query does not; hence the two build their param lists apart.
   const flagTz = `$${params.length + 1}`;
+
+  if (f.unpaginated) {
+    // Every matching row comes back unbounded — total is exactly what was fetched, so there is no
+    // separate count query to keep in sync with it.
+    const rows = await query<AppointmentRow>(
+      db,
+      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict
+         FROM appointments a
+         JOIN auth.users u ON u.id = a.professional_user_id
+        WHERE ${where}
+        ORDER BY a.starts_at`,
+      [...params, f.tz],
+    );
+    return { rows, total: rows.length };
+  }
+
   const limitPh = `$${params.length + 2}`;
   const offsetPh = `$${params.length + 3}`;
 

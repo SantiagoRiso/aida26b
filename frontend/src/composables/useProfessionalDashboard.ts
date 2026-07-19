@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
 
 export function useProfessionalDashboard() {
@@ -25,8 +26,12 @@ export function useProfessionalDashboard() {
         limit: 5,
       }),
     ]);
-    if (upcomingRes.ok) proUpcoming.value = upcomingRes.data.slice(0, 5);
-    if (pendingRes.ok) proPending.value = pendingRes.data;
+    // Dashboard summary widgets, read-only — a virtual (un-materialized) occurrence is filtered
+    // out rather than shown as an inert card.
+    if (upcomingRes.ok) {
+      proUpcoming.value = upcomingRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a)).slice(0, 5);
+    }
+    if (pendingRes.ok) proPending.value = pendingRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
     loadingPro.value = false;
   }
 

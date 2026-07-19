@@ -1,6 +1,6 @@
 import { useLabel } from '@/composables/useLabel';
 import { APPOINTMENT_STATES, ROLE_LABELS } from '@shared/ssot/domain';
-import type { Role } from '@shared/types/roles';
+import { isRole } from '@shared/types/roles';
 
 // SSOT is the single label source for data vocabulary (states, roles); vue-i18n keeps UI
 // chrome only. Unknown values render verbatim (defensive: server may add states first).
@@ -13,7 +13,7 @@ export function useStateLabel() {
   }
 
   function roleLabel(role: string): string {
-    const text = ROLE_LABELS[role as Role];
+    const text = isRole(role) ? ROLE_LABELS[role] : undefined;
     return text ? label(text) : role;
   }
 

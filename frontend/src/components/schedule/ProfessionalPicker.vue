@@ -56,6 +56,7 @@ const selected = computed<string | null>({
       :options="options"
       :label-if-single="!allowAll"
       :show-empty-option="!allowAll"
+      :placeholder="allowAll ? '' : t('generic.select')"
     />
   </label>
 </template>

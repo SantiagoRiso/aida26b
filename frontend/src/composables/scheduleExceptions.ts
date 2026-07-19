@@ -3,17 +3,7 @@ import type { TableRecordMap } from '@shared/ssot/derived';
 
 export type ExceptionKind = 'off' | 'block' | 'extra';
 
-export interface ExceptionRow {
-  id: string;
-  professional_user_id: string | null;
-  resource_id: string | null;
-  exception_date: string;
-  is_unavailable: boolean;
-  start_time: string | null;
-  end_time: string | null;
-  granularity_minutes: number | null;
-  reason: string | null;
-}
+export type ExceptionRow = TableRecordMap['schedule_exceptions'];
 
 // Full-day off has no time window; a partial window is either blocked (is_unavailable) or an
 // extra-hours opening — the DB CHECK guarantees these three shapes are exhaustive.

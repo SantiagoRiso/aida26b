@@ -12,6 +12,9 @@ import {
   WEEKDAYS,
   schedulerTables,
   BUSINESS_TZ,
+  FREQUENCY_VALUES,
+  END_KIND_VALUES,
+  SERIES_STATUS_VALUES,
 } from '../../shared/src/ssot/domain';
 
 // Migrations are immutable (forward-only, checksummed), so the SQL side cannot derive from the
@@ -24,6 +27,7 @@ const cutover = readFileSync(join(MIGRATIONS, '20260625_120000_scheduler_schema_
 const phase4 = readFileSync(join(MIGRATIONS, '20260701_100000_phase4_appointments_ledger_audit.sql'), 'utf8');
 const granularityMig = readFileSync(join(MIGRATIONS, '20260701_090000_schedule_exceptions_granularity.sql'), 'utf8');
 const blocksServicesMig = readFileSync(join(MIGRATIONS, '20260711_090000_schedule_blocks_services.sql'), 'utf8');
+const seriesMig = readFileSync(join(MIGRATIONS, '20260718_090000_appointment_series.sql'), 'utf8');
 
 // The quoted values inside the first `IN ( ... )` that `anchor` captures (group 1).
 function inList(sql: string, anchor: RegExp): string[] {
@@ -140,6 +144,14 @@ describe('SSOT ↔ immutable-migration drift guards', () => {
 
     const missing = [...descriptorColumns].filter((c) => !viewColumns.has(c));
     expect(missing).toEqual([]);
+  });
+
+  it('recurrence value sets match the appointment_series CHECK clauses', () => {
+    // `status` also appears in the column's own type/default clause before its CHECK — the
+    // regex must land on the `CHECK (status IN (...))` list, not `DEFAULT 'active'`.
+    expect(sorted(inList(seriesMig, /frequency IN \(([^)]+)\)/))).toEqual(sorted(FREQUENCY_VALUES));
+    expect(sorted(inList(seriesMig, /end_kind IN \(([^)]+)\)/))).toEqual(sorted(END_KIND_VALUES));
+    expect(sorted(inList(seriesMig, /status[^(]*IN \(([^)]+)\)/))).toEqual(sorted(SERIES_STATUS_VALUES));
   });
 
   it('businesses.currency_code default/CHECK match the column validator pattern', () => {

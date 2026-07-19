@@ -327,7 +327,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
         <div class="border-t border-border mt-3 pt-3">
           <p class="text-base font-semibold">
             {{ t('portal.estimatedCost') }}:
-            <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : '—' }}</span>
+            <span class="text-accent">{{ effectivePrice ? formatARS(effectivePrice) : t('generic.emptyValue') }}</span>
           </p>
           <!-- Framed as expected cost, not an invoice. -->
           <p class="text-xs text-neutral mt-1">

@@ -117,6 +117,7 @@ describe('scheduler entity set (academic surface removed)', () => {
     'schedule_block_services',
     'schedule_exceptions',
     'appointments',
+    'appointment_series',
     'ledger_entries',
     'audit_events',
     'calendar_grants',
@@ -266,6 +267,80 @@ describe('appointment shape', () => {
   it('names the booked price `price`, not `price_snapshot`', () => {
     expect(cols.price).toBeTruthy();
     expect(cols.price_snapshot).toBeUndefined();
+  });
+
+  it('carries nullable, server-derived series_id and occurrence_date columns', () => {
+    expect(cols.series_id).toBeTruthy();
+    expect(cols.series_id.validator?.nullable).toBe(true);
+    expect(cols.series_id.editable).toBe(false);
+    expect(cols.series_id.foreignKey?.table).toBe('appointment_series');
+    expect(cols.occurrence_date).toBeTruthy();
+    expect(cols.occurrence_date.validator?.nullable).toBe(true);
+    expect(cols.occurrence_date.editable).toBe(false);
+  });
+});
+
+describe('appointment_series shape (protected, bespoke authz)', () => {
+  const table = structure.tables.appointment_series as TableStructure;
+  const cols = table.columns as Record<string, ColumnDef>;
+
+  it('is protected with no crud/roleRequired/ownership/grantScope metadata', () => {
+    expect(table.protected).toBe(true);
+    expect(table.crud).toBeUndefined();
+    expect(table.roleRequired).toBeUndefined();
+    expect(table.ownership).toBeUndefined();
+    expect(table.grantScope).toBeUndefined();
+  });
+
+  it('derives business via professional_user_id -> auth.users', () => {
+    expect(table.businessJoin?.paths).toEqual([
+      { parentTable: 'auth.users', localFk: 'professional_user_id', parentPk: 'id' },
+    ]);
+  });
+
+  it('declares a status discriminator over the status column', () => {
+    expect(table.status?.column).toBe('status');
+    const values = table.status?.values.map((v) => v.value) ?? [];
+    expect(values).toEqual(['active', 'ended']);
+  });
+
+  it('declares every column from the design spec', () => {
+    expect(Object.keys(cols)).toEqual(
+      expect.arrayContaining([
+        'id',
+        'client_user_id',
+        'professional_user_id',
+        'service_id',
+        'resource_id',
+        'frequency',
+        'interval',
+        'weekday',
+        'week_of_month',
+        'day_of_month',
+        'start_time',
+        'duration_minutes',
+        'price_ars',
+        'start_date',
+        'end_kind',
+        'end_count',
+        'end_date',
+        'created_by_user_id',
+        'status',
+      ]),
+    );
+  });
+
+  it('marks server-derived FK columns editable: false', () => {
+    for (const key of ['client_user_id', 'professional_user_id', 'service_id', 'resource_id', 'created_by_user_id']) {
+      expect(cols[key].editable, key).toBe(false);
+      expect(cols[key].foreignKey, key).toBeTruthy();
+    }
+  });
+
+  it('keeps resource_id/weekday/week_of_month/day_of_month/end_count/end_date nullable', () => {
+    for (const key of ['resource_id', 'weekday', 'week_of_month', 'day_of_month', 'end_count', 'end_date']) {
+      expect(cols[key].validator?.nullable, key).toBe(true);
+    }
   });
 });
 

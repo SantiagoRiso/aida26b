@@ -88,15 +88,24 @@ export async function openScreen(page: Page, label: string): Promise<void> {
 // FullCalendar events carry a stable data-testid (see useFullCalendar.ts eventDidMount).
 // Clicks "next" week bounded number of times until the target appointment renders —
 // the seeded/fixture week's distance from "today" varies with whenever the suite runs.
+// appointmentId accepts a virtual occurrence key too (`virtual:<seriesId>:<date>`, see
+// appointmentKey in seriesOccurrence.ts) — real and virtual events share the same nav logic.
 export async function navigateCalendarToAppointment(
   page: Page,
-  appointmentId: number,
+  appointmentId: number | string,
   maxClicks = 12,
   direction: 'next' | 'prev' = 'next',
 ): Promise<void> {
   const target = page.locator(`[data-testid="appt-${appointmentId}"]`);
   for (let i = 0; i < maxClicks; i++) {
-    if (await target.first().isVisible().catch(() => false)) return;
+    // The initial (current-week) view may already contain a now-relative fixture; an instant check
+    // there races the async event render and pages right past it. The first pass waits for the
+    // render; later passes stay instant so active paging isn't slowed, and the final assertion below
+    // still lands on whichever week paging ended on (no regression for genuinely out-of-view targets).
+    const found = i === 0
+      ? await target.first().waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false)
+      : await target.first().isVisible().catch(() => false);
+    if (found) return;
     const nextFetch = page.waitForResponse(
       (r) => r.url().includes('/appointments') && r.request().method() === 'GET',
       { timeout: 10_000 },

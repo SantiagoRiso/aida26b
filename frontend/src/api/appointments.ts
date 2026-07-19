@@ -1,11 +1,17 @@
 import { apiFetch } from '@/api/client';
 import type { ApiResult } from '@/api/client';
-import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import type { AppointmentRow, Wire } from '@shared/ssot/query-types';
+import type { Conflict, ConflictVerdict } from '@shared/ssot/domain/conflict';
+import type { ScheduleSeriesBody } from '@shared/ssot/domain/recurrence';
+import type { AppointmentRow, AppointmentSeriesRow, VirtualOccurrence, Wire } from '@shared/ssot/query-types';
 import { appointmentPaths } from '@shared/ssot/api-paths';
 
 // client_user_id is NOT NULL on the appointments table — the wire always carries it.
 export type Appointment = Wire<AppointmentRow>;
+// created_at/updated_at cross as ISO strings, same as AppointmentRow.
+export type AppointmentSeries = Wire<AppointmentSeriesRow>;
+// The list endpoint unions real rows with un-materialized recurring occurrences (no row, no id
+// yet). VirtualOccurrence carries only strings already, so it needs no Wire mapping.
+export type ListAppointment = Appointment | VirtualOccurrence;
 
 export interface AppointmentListFilters {
   date_from?: string;
@@ -27,15 +33,15 @@ export type ScheduleResult =
 
 function toScheduleResult(data: Appointment | ConflictVerdict): ScheduleResult {
   if ('requires_override' in data) {
-    return { saved: false, verdict: data as ConflictVerdict };
+    return { saved: false, verdict: data };
   }
-  return { saved: true, appointment: data as Appointment };
+  return { saved: true, appointment: data };
 }
 
 export async function listAppointments(
   filters: AppointmentListFilters = {},
   options: { signal?: AbortSignal } = {},
-): Promise<ApiResult<Appointment[]>> {
+): Promise<ApiResult<ListAppointment[]>> {
   const params = new URLSearchParams();
   if (filters.date_from) params.set('date_from', filters.date_from);
   if (filters.date_to) params.set('date_to', filters.date_to);
@@ -47,7 +53,7 @@ export async function listAppointments(
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
-  return apiFetch<Appointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
+  return apiFetch<ListAppointment[]>(`${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
 }
 
 // Distinct client ids the caller has any appointment with, in their role scope. Backs the
@@ -180,5 +186,80 @@ export async function patchAppointment(
   return apiFetch<Appointment>(appointmentPaths.detail(id), {
     method: 'PATCH',
     body: JSON.stringify(body),
+  }, { toastOnForbidden: true });
+}
+
+export type { ScheduleSeriesBody } from '@shared/ssot/domain/recurrence';
+
+export interface SeriesSkip {
+  date: string;
+  conflicts: Conflict[];
+}
+
+export interface ScheduleSeriesResult {
+  series: AppointmentSeries;
+  preview: { skipped: SeriesSkip[] };
+}
+
+export async function scheduleSeries(
+  body: ScheduleSeriesBody,
+): Promise<ApiResult<ScheduleSeriesResult>> {
+  return apiFetch<ScheduleSeriesResult>(appointmentPaths.seriesCreate(), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, { toastOnForbidden: true });
+}
+
+// Idempotent — a second call for the same occurrence_date returns the same materialized row.
+export async function materializeOccurrence(
+  seriesId: number | string,
+  occurrence_date: string,
+): Promise<ApiResult<{ appointment: Appointment }>> {
+  return apiFetch<{ appointment: Appointment }>(appointmentPaths.seriesMaterialize(seriesId), {
+    method: 'POST',
+    body: JSON.stringify({ occurrence_date }),
+  }, { toastOnForbidden: true });
+}
+
+// Business-scoped, staff-only, 404-hiding cross-tenant — same authz as the write routes on this
+// path. Backs the reschedule-scope weekday decision and the rule editor's prefill, both of which
+// need the series' current rule shape (frequency/weekday/etc.), not carried on the appointment row.
+export async function getSeries(seriesId: number | string): Promise<ApiResult<AppointmentSeries>> {
+  return apiFetch<AppointmentSeries>(appointmentPaths.seriesDetail(seriesId));
+}
+
+export async function updateSeries(
+  seriesId: number | string,
+  patch: Partial<ScheduleSeriesBody>,
+): Promise<ApiResult<{ series: AppointmentSeries }>> {
+  return apiFetch<{ series: AppointmentSeries }>(appointmentPaths.seriesDetail(seriesId), {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  }, { toastOnForbidden: true });
+}
+
+// This-and-future split: ends the current rule the day before from_date and opens a new series
+// (old identity/frozen values merged with patch) starting exactly on from_date.
+export async function splitSeriesFuture(
+  seriesId: number | string,
+  from_date: string,
+  patch: Partial<ScheduleSeriesBody>,
+): Promise<ApiResult<{ ended: AppointmentSeries; created: AppointmentSeries }>> {
+  return apiFetch<{ ended: AppointmentSeries; created: AppointmentSeries }>(appointmentPaths.seriesFuture(seriesId), {
+    method: 'POST',
+    body: JSON.stringify({ from_date, patch }),
+  }, { toastOnForbidden: true });
+}
+
+// Stops the series from from_date (defaults server-side to the series' own start_date — the whole
+// series). canceled carries the BIGINT appointment ids of already-materialized occurrences that
+// got canceled, same string wire type as AppointmentRow.id.
+export async function endSeries(
+  seriesId: number | string,
+  from_date?: string,
+): Promise<ApiResult<{ ended: AppointmentSeries; canceled: string[] }>> {
+  return apiFetch<{ ended: AppointmentSeries; canceled: string[] }>(appointmentPaths.seriesEnd(seriesId), {
+    method: 'POST',
+    body: JSON.stringify(from_date !== undefined ? { from_date } : {}),
   }, { toastOnForbidden: true });
 }

@@ -15,7 +15,7 @@ export function useScheduleExceptions(
       ? { professional_user_id: String(f.professional_user_id) }
       : { resource_id: String(f.resource_id) };
     const res = await listRows('schedule_exceptions', { filters, limit: 500 });
-    all.value = res.ok ? (res.data as ExceptionRow[]) : [];
+    all.value = res.ok ? res.data : [];
   }
   const rows = computed(() => filterByRange(all.value, range.value.from, range.value.to));
   const bgEvents = computed<EventInput[]>(() => rows.value.map(exceptionToBgEvent));

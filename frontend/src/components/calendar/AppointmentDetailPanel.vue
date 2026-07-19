@@ -14,11 +14,13 @@ import { structure } from '@shared/ssot/structure';
 import type { Appointment } from '@/api/appointments';
 import { transitionAppointment, patchAppointment, ignoreAppointmentConflict } from '@/api/appointments';
 import { getMySettings } from '@/api/business';
+import { resolveActionable } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useCurrency } from '@/composables/useCurrency';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useLabel } from '@/composables/useLabel';
+import MaterialIcon from '@/components/shared/MaterialIcon.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import StatusBadge from '@/components/portal/StatusBadge.vue';
@@ -34,6 +36,13 @@ const emit = defineEmits<{
   reschedule: [appt: Appointment];
   // Approve may surface a conflict — parent handles the override dialog.
   approve: [appt: Appointment];
+  // Canceling a series-bound appointment needs a scope choice — parent hosts that dialog.
+  'cancel-series': [appt: Appointment];
+  // Rescheduling a series-bound appointment needs the same scope choice, made before any
+  // materialize/reschedule call (unlike 'this', 'future'/'whole' never touch this one row).
+  'reschedule-series': [appt: Appointment];
+  // Opens the recurrence-rule editor (frequency/interval/end) — parent fetches the series.
+  'edit-series-rule': [appt: Appointment];
 }>();
 
 const { t } = useI18n();
@@ -121,7 +130,13 @@ function startEditNote() {
 async function saveNote() {
   if (!props.appointment) return;
   saving.value = true;
-  const result = await patchAppointment(props.appointment.id, { staff_note: staffNoteEdit.value });
+  const actionable = await resolveActionable(props.appointment);
+  if (!actionable) {
+    saving.value = false;
+    toast.error('genericError');
+    return;
+  }
+  const result = await patchAppointment(actionable.id, { staff_note: staffNoteEdit.value });
   saving.value = false;
   if (result.ok) {
     editingNote.value = false;
@@ -133,8 +148,21 @@ async function saveNote() {
 
 async function doTransition(to: string) {
   if (!props.appointment) return;
+  const appt = props.appointment;
+  // Canceling a series-bound turno needs a scope choice (this / this-and-future / whole series);
+  // the parent hosts that chooser and drives the actual calls.
+  if (to === 'canceled' && appt.series_id != null) {
+    emit('cancel-series', appt);
+    return;
+  }
   saving.value = true;
-  const result = await transitionAppointment(props.appointment.id, to);
+  const actionable = await resolveActionable(appt);
+  if (!actionable) {
+    saving.value = false;
+    toast.error('genericError');
+    return;
+  }
+  const result = await transitionAppointment(actionable.id, to);
   saving.value = false;
   if (result.ok) {
     emit('mutated', result.data);
@@ -150,8 +178,29 @@ function handleApprove() {
   if (props.appointment) emit('approve', props.appointment);
 }
 
-function handleReschedule() {
-  if (props.appointment) emit('reschedule', props.appointment);
+// A virtual occurrence has no row to reschedule yet — materialize it first, then hand the
+// (now real) appointment to the parent's reschedule form. A series-bound appointment needs a scope
+// choice first (this / this-and-future / whole series) — the parent hosts that chooser and only
+// materializes/opens the single-appointment form for the 'this' choice.
+async function handleReschedule() {
+  if (!props.appointment) return;
+  const appt = props.appointment;
+  if (appt.series_id != null) {
+    emit('reschedule-series', appt);
+    return;
+  }
+  saving.value = true;
+  const actionable = await resolveActionable(appt);
+  saving.value = false;
+  if (!actionable) {
+    toast.error('genericError');
+    return;
+  }
+  emit('reschedule', actionable);
+}
+
+function handleEditSeriesRule() {
+  if (props.appointment) emit('edit-series-rule', props.appointment);
 }
 
 const isStaff = auth.user?.role !== 'Client';
@@ -159,7 +208,13 @@ const isStaff = auth.user?.role !== 'Client';
 async function doIgnore(ignored: boolean) {
   if (!props.appointment) return;
   saving.value = true;
-  const result = await ignoreAppointmentConflict(props.appointment.id, ignored);
+  const actionable = await resolveActionable(props.appointment);
+  if (!actionable) {
+    saving.value = false;
+    toast.error('genericError');
+    return;
+  }
+  const result = await ignoreAppointmentConflict(actionable.id, ignored);
   saving.value = false;
   if (result.ok) emit('mutated', result.data);
   else toast.error('genericError');
@@ -273,7 +328,7 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
           </div>
         </template>
         <p v-else class="text-sm text-neutral whitespace-pre-line min-h-[1.5rem]">
-          {{ appointment.staff_note || '—' }}
+          {{ appointment.staff_note || t('generic.emptyValue') }}
         </p>
       </div>
 
@@ -320,6 +375,21 @@ function transitionVariant(to: string): 'primary' | 'destructive' | 'neutral' {
           @click="doTransition(to)"
         >
           {{ transitionLabel(to) }}
+        </AppButton>
+      </div>
+
+      <!-- Always available while the series is bound, regardless of this occurrence's own state —
+           the underlying recurrence keeps generating other occurrences either way. -->
+      <div v-if="isStaff && appointment.series_id != null" class="border-t border-border pt-3 space-y-2">
+        <span
+          class="inline-flex items-center gap-1 text-xs font-semibold text-accent"
+          :title="t('calendar.recurringTooltip')"
+        >
+          <MaterialIcon name="repeat" class="h-4 w-4" />
+          {{ t('calendar.recurringLabel') }}
+        </span>
+        <AppButton variant="neutral" @click="handleEditSeriesRule">
+          {{ t('calendar.editSeries') }}
         </AppButton>
       </div>
 

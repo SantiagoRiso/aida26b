@@ -233,7 +233,7 @@ if (isAdmin.value) {
                 <span v-if="event.entity_id" class="ml-1 text-xs opacity-60">#{{ event.entity_id }}</span>
               </td>
               <td class="px-4 py-3 tabular-nums text-neutral">
-                {{ event.actor_user_id ?? '—' }}
+                {{ event.actor_user_id ?? t('generic.emptyValue') }}
               </td>
               <td class="px-4 py-3">
                 <span

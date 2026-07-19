@@ -90,7 +90,7 @@ onMounted(load);
         <p
           :class="['mt-1 text-3xl font-bold tabular-nums', balancePositive ? 'text-destructive' : 'text-success']"
         >
-          {{ balanceArs != null ? formatARS(balanceArs) : '—' }}
+          {{ balanceArs != null ? formatARS(balanceArs) : t('generic.emptyValue') }}
         </p>
         <p v-if="balancePositive" class="mt-2 text-sm text-destructive">
           {{ t('portal.balanceDue') }}
@@ -145,7 +145,7 @@ onMounted(load);
               </td>
               <td class="px-4 py-3 text-neutral">
                 <!-- Interpolate, never v-html: backend text is untrusted (XSS guard). -->
-                {{ entry.description ?? '—' }}
+                {{ entry.description ?? t('generic.emptyValue') }}
               </td>
             </tr>
           </tbody>

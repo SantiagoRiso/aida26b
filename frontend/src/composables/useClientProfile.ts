@@ -3,12 +3,11 @@ import { getRow } from '@/api/crud';
 import { invalidateFkOptions } from '@/composables/useForeignKeyOptions';
 import { useAuthStore } from '@/stores/auth';
 import { roleAllowedFor, descriptorWriteRoles } from '@/router/access';
-import type { Role } from '@shared/types/roles';
 import type { TableRecordMap } from '@shared/ssot/derived';
 
 export function useClientProfile(clientId: number, onChanged: () => void) {
   const auth = useAuthStore();
-  const role = computed(() => auth.user?.role as Role | undefined);
+const role = computed(() => auth.user?.role);
 
   const client = ref<TableRecordMap['clients'] | null>(null);
   const showEditProfile = ref(false);

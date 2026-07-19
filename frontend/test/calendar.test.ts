@@ -230,7 +230,7 @@ describe('useAppointmentCalendar hides non-events', () => {
       starts_at: starts, duration_minutes: 30, ends_at: ends, state,
       name: null, description: null, price: '100.00',
       override_conflict: false, override_actor_id: null, staff_note: null, conflict_ignored: false,
-      created_at: starts, updated_at: starts,
+      created_at: starts, updated_at: starts, series_id: null, occurrence_date: null,
     };
   }
 

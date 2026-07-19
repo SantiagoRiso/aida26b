@@ -148,9 +148,9 @@ onMounted(load);
                 {{ t('clients.noRelationship') }}
               </span>
             </td>
-            <td class="px-4 py-3 text-neutral">{{ c.dni ?? '—' }}</td>
-            <td class="px-4 py-3 text-neutral">{{ c.email ?? '—' }}</td>
-            <td class="px-4 py-3 text-neutral">{{ c.phone ?? '—' }}</td>
+            <td class="px-4 py-3 text-neutral">{{ c.dni ?? t('generic.emptyValue') }}</td>
+            <td class="px-4 py-3 text-neutral">{{ c.email ?? t('generic.emptyValue') }}</td>
+            <td class="px-4 py-3 text-neutral">{{ c.phone ?? t('generic.emptyValue') }}</td>
           </tr>
         </tbody>
       </table>

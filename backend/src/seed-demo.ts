@@ -277,6 +277,55 @@ async function upsertGrant(
   );
 }
 
+// appointment_series carries no natural unique constraint (see db/series.ts), so idempotency is a
+// guarded INSERT...SELECT...WHERE NOT EXISTS, dedup keyed on the fields that identify "the same
+// recurring booking" (client, professional, service, start time, weekday, start date). Demo series
+// are always weekly with no resource — the only shape the fixtures below need.
+async function upsertSeries(
+  pool: PoolLike,
+  opts: {
+    clientUserId: string;
+    professionalUserId: string;
+    serviceId: string;
+    weekday: string;
+    startTime: string;
+    durationMinutes: number;
+    priceArs: string;
+    startDate: string;
+    endKind: 'open' | 'count';
+    endCount?: number | null;
+    createdByUserId: string;
+  },
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO appointment_series
+       (client_user_id, professional_user_id, service_id, resource_id,
+        frequency, "interval", weekday, week_of_month, day_of_month,
+        start_time, duration_minutes, price_ars,
+        start_date, end_kind, end_count, end_date, created_by_user_id, status)
+     SELECT $1::bigint, $2::bigint, $3::bigint, NULL,
+            'weekly', 1, $4::varchar, NULL, NULL,
+            $5::time, $6::int, $7::numeric,
+            $8::date, $9::varchar, $10::int, NULL, $11::bigint, 'active'
+     WHERE NOT EXISTS (
+       SELECT 1 FROM appointment_series
+       WHERE client_user_id       = $12::bigint
+         AND professional_user_id = $13::bigint
+         AND service_id           = $14::bigint
+         AND start_time           = $15::time
+         AND weekday              = $16::varchar
+         AND frequency            = 'weekly'
+         AND start_date           = $17::date
+     )`,
+    [
+      opts.clientUserId, opts.professionalUserId, opts.serviceId,
+      opts.weekday, opts.startTime, opts.durationMinutes, opts.priceArs,
+      opts.startDate, opts.endKind, opts.endCount ?? null, opts.createdByUserId,
+      opts.clientUserId, opts.professionalUserId, opts.serviceId, opts.startTime, opts.weekday, opts.startDate,
+    ],
+  );
+}
+
 async function upsertAppointment(
   pool: PoolLike,
   opts: {
@@ -758,6 +807,74 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
       state: 'scheduled', price: effPrice(primary), name: 'Sobreturno',
       overrideConflict: true, overrideActorId: uids['demo_admin'],
       description: 'Sobreturno autorizado por admin (se superpone con el turno regular)',
+    });
+  }
+
+  // Recurring series. Every professional carries at least one weekly series so recurring
+  // occurrences show up across the whole demo; demo_pro (Marge) carries two. start_date sits a few
+  // weeks before SEED_START (deterministic via shift()) so each series already has past + upcoming
+  // occurrences in view. Start times are pulled off the same slot grid the conflict aggregator
+  // computes (block start stepped by the service's effective duration) — an off-grid time trips
+  // slot_alignment and would render every occurrence in_conflict.
+  //
+  // Conflicts are intentional but not fabricated: every professional except demo_reset runs the
+  // ~80%-dense fill above, so many upcoming occurrences land on an existing scheduled turno — the
+  // recurring clash the calendar now rings on BOTH sides (real turno + virtual occurrence). Past
+  // occurrences stay clean (their same-slot turnos are already 'completed', not open). demo_reset is
+  // the one owner with no dense fill, so its two series render entirely conflict-free.
+  const resetSesionDur = SERVICE_DEFS.sesion.duration;
+  const resetTueBlock = proFullTimeSesion().tue[0];
+  const resetThuBlock = proFullTimeSesion().thu[0];
+  const resetTueSlot = slotStartTimes(resetTueBlock.start, resetTueBlock.end, resetSesionDur)[2];
+  const resetThuSlot = slotStartTimes(resetThuBlock.start, resetThuBlock.end, resetSesionDur)[5];
+  await upsertSeries(pool, {
+    clientUserId: uids['demo_client20'], professionalUserId: uids['demo_reset'],
+    serviceId: svcSesion, weekday: 'tue', startTime: resetTueSlot,
+    durationMinutes: resetSesionDur, priceArs: SERVICE_DEFS.sesion.price,
+    startDate: shift('2026-06-16'), endKind: 'open', createdByUserId: uids['demo_admin'],
+  });
+  await upsertSeries(pool, {
+    clientUserId: uids['demo_client21'], professionalUserId: uids['demo_reset'],
+    serviceId: svcSesion, weekday: 'thu', startTime: resetThuSlot,
+    durationMinutes: resetSesionDur, priceArs: SERVICE_DEFS.sesion.price,
+    startDate: shift('2026-06-18'), endKind: 'count', endCount: 6, createdByUserId: uids['demo_admin'],
+  });
+
+  // One weekly series per dense-filled professional (demo_pro twice). weekday must be a working day
+  // so the slot lands on-grid; blockIndex/slotIndex pick a real slot in that day's schedule.
+  // Default anchor sits a few weeks before SEED_START so most series show past + upcoming occurrences.
+  // demo_pro2 (Ned) and demo_pro5 (Edna) are reserved by e2e specs (calendar-event-content,
+  // recurrence) that author their own series on now-relative dates outside the dense window; their
+  // seeded series are therefore bounded to sit entirely inside the window (an in-window start + a
+  // count that ends before day ~45) and pinned to a slot clear of those specs' 09:00/10:00 fixtures,
+  // so seed data and spec fixtures can never coincide.
+  const seriesStartAnchor: Record<string, string> = {
+    mon: '2026-06-15', tue: '2026-06-16', wed: '2026-06-17', thu: '2026-06-18', fri: '2026-06-19',
+  };
+  const proSeriesPlan: {
+    pro: string; weekly: ProWeekly; weekday: string; blockIndex: number; slotIndex: number;
+    client: string; endKind: 'open' | 'count'; endCount?: number; startAnchor?: string;
+  }[] = [
+    { pro: 'demo_pro',  weekly: proMargeSchedule(),     weekday: 'tue', blockIndex: 0, slotIndex: 2, client: 'demo_client2',  endKind: 'open' },
+    { pro: 'demo_pro',  weekly: proMargeSchedule(),     weekday: 'thu', blockIndex: 1, slotIndex: 1, client: 'demo_client6',  endKind: 'count', endCount: 8 },
+    { pro: 'demo_pro2', weekly: proFullTimeSesion(),    weekday: 'wed', blockIndex: 0, slotIndex: 4, client: 'demo_client9',  endKind: 'count', endCount: 6, startAnchor: '2026-07-08' },
+    { pro: 'demo_pro3', weekly: proMorningNutricion(),  weekday: 'tue', blockIndex: 0, slotIndex: 3, client: 'demo_client10', endKind: 'open' },
+    { pro: 'demo_pro4', weekly: proAfternoonKineso(),   weekday: 'wed', blockIndex: 0, slotIndex: 2, client: 'demo_client11', endKind: 'count', endCount: 10 },
+    { pro: 'demo_pro5', weekly: proSplitSesionMedico(), weekday: 'thu', blockIndex: 0, slotIndex: 3, client: 'demo_client12', endKind: 'count', endCount: 6, startAnchor: '2026-07-09' },
+    { pro: 'demo_pro6', weekly: proMorningMedico(),     weekday: 'tue', blockIndex: 0, slotIndex: 3, client: 'demo_client13', endKind: 'open' },
+  ];
+  for (const plan of proSeriesPlan) {
+    const block = plan.weekly[plan.weekday][plan.blockIndex];
+    const primary = block.offers[0];
+    const dur = effDuration(primary);
+    const startTime = slotStartTimes(block.start, block.end, dur)[plan.slotIndex];
+    await upsertSeries(pool, {
+      clientUserId: uids[plan.client], professionalUserId: uids[plan.pro],
+      serviceId: svcId[primary.service], weekday: plan.weekday, startTime,
+      durationMinutes: dur, priceArs: effPrice(primary),
+      startDate: shift(plan.startAnchor ?? seriesStartAnchor[plan.weekday]),
+      endKind: plan.endKind, endCount: plan.endCount ?? null,
+      createdByUserId: uids['demo_admin'],
     });
   }
 

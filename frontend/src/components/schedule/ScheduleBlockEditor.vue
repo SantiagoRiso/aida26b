@@ -14,6 +14,7 @@ import { useTemplateBlockDrag } from '@/composables/useTemplateBlockDrag';
 import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type TemplateBlock, type WeekdayTimes } from '@/composables/scheduleTemplateGrid';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { OwnerKind } from '@shared/ssot/domain/conflict';
+import { isWeekday } from '@shared/ssot/domain/availability';
 
 const props = defineProps<{ owner: { kind: OwnerKind; id: number } }>();
 
@@ -32,11 +33,12 @@ const confirmDeleteOpen = ref(false);
 // one selection state, not two that can drift (e.g. a move/resize updating stale panel data).
 const selectedBlock = computed(() => blocks.value.find((b) => b.id === selectedBlockId.value) ?? null);
 
-function toTemplateBlock(r: TableRecordMap['schedule_blocks']): TemplateBlock {
+function toTemplateBlock(r: TableRecordMap['schedule_blocks']): TemplateBlock | null {
+  if (!isWeekday(r.weekday)) return null;
   return {
     id: String(r.id),
     professional_user_id: String(r.professional_user_id ?? ''),
-    weekday: r.weekday as TemplateBlock['weekday'],
+    weekday: r.weekday,
     // The API serialises TIME as 'HH:MM:SS'; TemplateBlock is 'HH:MM' — normalise at the boundary.
     start_time: r.start_time.slice(0, 5),
     end_time: r.end_time.slice(0, 5),
@@ -52,7 +54,10 @@ async function loadBlocks() {
   if (res.ok) {
     blocks.value = res.data
       .filter((r) => (kind === 'professional' ? r.resource_id == null : r.professional_user_id == null))
-      .map(toTemplateBlock);
+      .flatMap((row) => {
+        const block = toTemplateBlock(row);
+        return block ? [block] : [];
+      });
   }
 }
 watch(() => props.owner, loadBlocks, { deep: true });

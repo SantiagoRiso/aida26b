@@ -18,6 +18,8 @@ import { useStateLabel } from '@/composables/useStateLabel';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import { useAppointmentLabels } from '@/composables/useAppointmentLabels';
+import { toDisplayAppointment } from '@/composables/seriesOccurrence';
+import { appointmentFromExtendedProps } from '@/composables/calendarEventPayload';
 import { useScheduleExceptions } from '@/composables/useScheduleExceptions';
 import { listAppointments, rescheduleAppointment, approveAppointment } from '@/api/appointments';
 import { getAvailabilityRange } from '@/api/scheduling';
@@ -127,7 +129,10 @@ async function fetchAppointments() {
   if (request !== appointmentRequest) return;
   loading.value = false;
   if (result.ok) {
-    appointments.value = result.data as Appointment[];
+    // Virtual occurrences (is_virtual, id: null) are normalized to the same Appointment shape as
+    // real rows here — the rest of the pipeline (event mapping, drag, detail panel) never needs to
+    // know the difference.
+    appointments.value = result.data.map(toDisplayAppointment);
     await Promise.all([
       refreshSnapGrid(controller.signal),
       loadResourceAvailability(controller.signal),
@@ -161,6 +166,7 @@ function tooltipFor(appt: Appointment): string {
     `${t('calendar.priceLabel')}: ${formatARS(appt.price)}`,
     `${t('portal.state')}: ${stateLabel(appt.state)}`,
     ...(appt.override_conflict ? [`${t('calendar.fineMode')}: ${t('generic.yes')}`] : []),
+    ...(appt.is_virtual ? [t('calendar.recurringTooltip')] : []),
   ].join('\n');
 }
 
@@ -583,7 +589,7 @@ function handleEventClick(arg: EventClickArg) {
   if (suppressEventClick) { suppressEventClick = false; return; }
   // Sobreturno mode: a plain click places a new overlapping turno (grid click), not the detail panel.
   if (fineDrag.value) return;
-  const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
+  const appt = appointmentFromExtendedProps(arg.event.extendedProps);
   if (appt) {
     detailAppt.value = appt;
     detailOpen.value = true;
@@ -643,7 +649,7 @@ function requestMove(
 // Month-view native move only (timegrid move is the custom drag). A month drag changes the day and
 // keeps the time-of-day; land it on a real slot unless sobreturno mode is on.
 async function handleEventDrop(arg: EventDropArg) {
-  const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
+  const appt = appointmentFromExtendedProps(arg.event.extendedProps);
   if (!appt) { arg.revert(); return; }
 
   const date = arg.event.startStr.slice(0, 10);
@@ -663,7 +669,7 @@ async function handleEventDrop(arg: EventDropArg) {
 }
 
 async function handleEventResize(arg: EventResizeDoneArg) {
-  const appt = arg.event.extendedProps['appointment'] as Appointment | undefined;
+  const appt = appointmentFromExtendedProps(arg.event.extendedProps);
   if (!appt) { arg.revert(); return; }
 
   const newStart = arg.event.startStr;
@@ -851,6 +857,7 @@ function onFiltersUpdate(f: FilterState) {
       @move-cancel="onMoveCancel"
       @override-confirm="onOverrideConfirm"
       @override-cancel="onOverrideCancel"
+      @series-mutated="fetchAppointments"
     />
   </div>
 </template>

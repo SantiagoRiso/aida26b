@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { listAppointments, transitionAppointment } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { isOpenAppointmentState } from '@shared/ssot/domain';
 import { useToast } from '@/composables/useToast';
 
@@ -11,7 +12,9 @@ export function useClientAppointments(clientId: number) {
 
   async function loadAppointments() {
     const res = await listAppointments({ client_user_id: clientId, limit: 500 });
-    appointments.value = res.ok ? res.data : [];
+    // This list's cancel action reads appt.id directly (no materialize-on-action wiring here),
+    // so a virtual (un-materialized) occurrence is filtered out rather than shown as inert.
+    appointments.value = res.ok ? res.data.filter((a): a is Appointment => !isVirtualOccurrence(a)) : [];
   }
 
   // Pending = still actionable (requested or scheduled); these can be cancelled.

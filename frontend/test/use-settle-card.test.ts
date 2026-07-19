@@ -8,6 +8,7 @@ import { createEntry } from '@/api/ledger';
 import { useAuthStore } from '@/stores/auth';
 import { useSettleCard } from '@/composables/useSettleCard';
 import type { Role } from '@shared/types/roles';
+import type { VirtualOccurrence } from '@shared/ssot/query-types';
 
 vi.mock('@/api/appointments', () => ({
   listAppointments: vi.fn(),
@@ -40,6 +41,30 @@ function makeAppt(overrides: Partial<Appointment> = {}): Appointment {
     created_at: startsAt,
     updated_at: startsAt,
     conflict_ignored: false,
+    series_id: null,
+    occurrence_date: null,
+    ...overrides,
+  };
+}
+
+function makeVirtual(overrides: Partial<VirtualOccurrence> = {}): VirtualOccurrence {
+  const startsAt = new Date(Date.now() - 2 * 60_000).toISOString();
+  return {
+    id: null,
+    series_id: '9',
+    occurrence_date: startsAt.slice(0, 10),
+    client_user_id: '3',
+    professional_user_id: '7',
+    service_id: 's1',
+    resource_id: null,
+    starts_at: startsAt,
+    duration_minutes: 30,
+    price: '1500.00',
+    state: 'scheduled',
+    name: null,
+    description: null,
+    is_virtual: true,
+    in_conflict: false,
     ...overrides,
   };
 }
@@ -101,6 +126,18 @@ describe('useSettleCard — loading and amounts', () => {
     await flushPromises();
     expect(card.showsCard.value).toBe(false);
     expect(mockedList).not.toHaveBeenCalled();
+  });
+
+  // Settling calls transitionAppointment directly on appt.id — no materialize-on-action wiring
+  // here, so a virtual (un-materialized, even if otherwise "current") must never offer a card.
+  it('excludes a virtual occurrence from the settle candidates, even one that is otherwise current', async () => {
+    mockedList.mockResolvedValue({ ok: true, data: [makeAppt(), makeVirtual()] });
+
+    const { card } = mountCard();
+    await flushPromises();
+
+    expect(card.currentAppointments.value).toHaveLength(1);
+    expect(card.currentAppointments.value[0]!.id).toBe('a1');
   });
 });
 

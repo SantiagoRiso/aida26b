@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
+import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 
 export function useReceptionistDashboard() {
   const todayStart = new Date();
@@ -22,8 +23,10 @@ export function useReceptionistDashboard() {
       }),
       listAppointments({ state: 'requested', limit: 5 }),
     ]);
-    if (todayRes.ok) recToday.value = todayRes.data;
-    if (pendingRes.ok) recPending.value = pendingRes.data;
+    // Dashboard summary widgets, read-only — a virtual (un-materialized) occurrence is filtered
+    // out rather than shown as an inert card.
+    if (todayRes.ok) recToday.value = todayRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
+    if (pendingRes.ok) recPending.value = pendingRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
     loadingRec.value = false;
   }
 

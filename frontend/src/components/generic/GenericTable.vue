@@ -166,7 +166,8 @@ const slots = useSlots();
 const hasActionsColumn = computed(() => canUpdate() || canDelete() || !!slots['row-actions']);
 
 function formatCell(value: ColumnValue | undefined): string {
-  if (value === null || value === undefined || value === '') return props.emptyValue ?? '—';
+  if (value === null || value === undefined || value === '')
+    return props.emptyValue ?? i18n.global.t('generic.emptyValue');
   if (typeof value === 'boolean') return value ? i18n.global.t('generic.yes') : i18n.global.t('generic.no');
   return String(value);
 }
@@ -181,7 +182,7 @@ function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined
 function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): string {
   if (col.foreignKey) {
     const v = cellValue(row, key);
-    if (v == null || v === '') return props.emptyValue ?? '—';
+    if (v == null || v === '') return props.emptyValue ?? i18n.global.t('generic.emptyValue');
     return fkLabelFns.value[col.foreignKey.table]?.(String(v)) || `#${v}`;
   }
   return formatCell(cellValue(row, key));
