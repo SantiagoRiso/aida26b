@@ -65,8 +65,13 @@ async function createContactOnlyClient(
   const businessId = requireBusinessContext(req, res);
   if (businessId == null) return;
 
-  if (!displayName || !emailRaw || !EMAIL_RE.test(emailRaw)) {
-    return sendError(res, 400, 'invalid_request', 'Valid display name and email are required');
+  if (!displayName) {
+    return sendError(res, 400, 'invalid_request', 'A valid display name is required', { detail: { key: 'displayNameRequired' } });
+  }
+
+  // A walk-in may have no email at all; anything supplied still has to be a real address.
+  if (emailRaw !== null && !EMAIL_RE.test(emailRaw)) {
+    return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
   }
 
   try {
@@ -95,14 +100,16 @@ async function createCredentialedUser(
   const { username, emailRaw, password, role, displayName, dni } = input;
 
   if (!username || !password || !isRole(role)) {
-    return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required');
+    return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required', { detail: { key: 'usernamePasswordRoleRequired' } });
   }
 
   // A null business_id means "see/act across all businesses"; stamping it onto a new
   // user would mint a cross-tenant account. User creation requires a concrete business.
   const businessId = requireBusinessContext(req, res);
   if (businessId == null) return;
-  const email = emailRaw ?? `${username}@noemail.local`;
+  // Only clients may go without an email; staff accounts must always carry one, so a missing
+  // address falls back to a placeholder rather than tripping the users_client_or_email check.
+  const email = emailRaw ?? (role === 'Client' ? null : `${username}@noemail.local`);
   const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
   try {
@@ -146,7 +153,6 @@ export function mountUserAdminRoutes(
       const username =
         typeof req.body.username === 'string' ? req.body.username.trim() : '';
 
-      // email is NOT NULL in the schema; fall back to a placeholder when no address is provided.
       const emailRaw =
         typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim() : null;
 
@@ -169,7 +175,7 @@ export function mountUserAdminRoutes(
 
       if (!mayCreate) {
         await audit(req, 'permission_denied', 'denied', { path: req.path, method: req.method });
-        return sendError(res, 403, 'forbidden', 'Forbidden');
+        return sendError(res, 403, 'forbidden', 'Forbidden', { detail: { key: 'insufficientRole' } });
       }
 
       const input: CreateUserInput = { username, emailRaw, password, role, displayName, dni };
@@ -193,7 +199,7 @@ export function mountUserAdminRoutes(
       const sessionUser = authenticatedUser(req);
 
       if (!Number.isInteger(userId)) {
-        return sendError(res, 400, 'invalid_request', 'Valid user id is required');
+        return sendError(res, 400, 'invalid_request', 'Valid user id is required', { detail: { key: 'invalidId' } });
       }
 
       const businessId = requireBusinessContext(req, res);
@@ -201,7 +207,7 @@ export function mountUserAdminRoutes(
 
       // An admin deactivating themselves would lock the business out of its own admin surface.
       if (userId === sessionUser.id) {
-        return sendError(res, 400, 'invalid_request', 'You cannot deactivate your own account');
+        return sendError(res, 400, 'invalid_request', 'You cannot deactivate your own account', { detail: { key: 'cannotDeactivateSelf' } });
       }
 
       const deactivated = await deactivateUser(pool, {
@@ -211,7 +217,7 @@ export function mountUserAdminRoutes(
       });
 
       if (!deactivated) {
-        return sendError(res, 404, 'not_found', 'User not found');
+        return sendError(res, 404, 'not_found', 'User not found', { detail: { key: 'userNotFound' } });
       }
 
       await deleteUserSessions(pool, userId);
@@ -233,7 +239,7 @@ export function mountUserAdminRoutes(
       const sessionUser = authenticatedUser(req);
 
       if (!Number.isInteger(userId) || !password) {
-        return sendError(res, 400, 'invalid_request', 'Valid user id and password are required');
+        return sendError(res, 400, 'invalid_request', 'Valid user id and password are required', { detail: { key: 'userIdAndPasswordRequired' } });
       }
 
       const businessId = requireBusinessContext(req, res);
@@ -242,7 +248,7 @@ export function mountUserAdminRoutes(
       // A self-reset forces must_change_password on the admin and kills their sessions,
       // locking them out; admins change their own password via /auth/change-password.
       if (userId === sessionUser.id) {
-        return sendError(res, 400, 'invalid_request', 'You cannot reset your own password here; use change password instead');
+        return sendError(res, 400, 'invalid_request', 'You cannot reset your own password here; use change password instead', { detail: { key: 'cannotResetOwnPassword' } });
       }
 
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
@@ -257,7 +263,7 @@ export function mountUserAdminRoutes(
       });
 
       if (!reset) {
-        return sendError(res, 404, 'not_found', 'User not found');
+        return sendError(res, 404, 'not_found', 'User not found', { detail: { key: 'userNotFound' } });
       }
 
       await deleteUserSessions(pool, userId);
@@ -285,11 +291,11 @@ export function mountUserAdminRoutes(
 
       if (!mayManage) {
         await audit(req, 'permission_denied', 'denied', { path: req.path, method: req.method });
-        return sendError(res, 403, 'forbidden', 'Forbidden');
+        return sendError(res, 403, 'forbidden', 'Forbidden', { detail: { key: 'insufficientRole' } });
       }
 
       if (!Number.isInteger(userId) || !username || !password) {
-        return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required');
+        return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required', { detail: { key: 'userCredentialsRequired' } });
       }
 
       const businessId = requireBusinessContext(req, res);
@@ -307,7 +313,7 @@ export function mountUserAdminRoutes(
         });
 
         if (!enabled) {
-          return sendError(res, 404, 'not_found', 'Client not found');
+          return sendError(res, 404, 'not_found', 'Client not found', { detail: { key: 'clientNotFound' } });
         }
 
         await audit(req, 'login_enabled', 'success', { user_id: userId });

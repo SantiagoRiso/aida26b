@@ -637,7 +637,7 @@ describe('contact-only clients', () => {
     expect(String(row.rows[0].business_id)).toBe(adminBusinessId);
   });
 
-  test('requires display_name and a valid email', async () => {
+  test('requires display_name, and rejects a malformed email when one is supplied', async () => {
     const noDisplayName = await request('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
@@ -739,6 +739,96 @@ describe('contact-only clients', () => {
       body: { username: 'ghostuser1', password: 'ghostpass12' },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('optional client email', () => {
+  async function emailOf(userId: string | number) {
+    const row = await testPool.query<{ email: string | null; role: string }>(
+      `SELECT email, role FROM auth.users WHERE id = $1`,
+      [userId]
+    );
+    return row.rows[0];
+  }
+
+  test('creates a contact-only client with no email at all', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Sin Email' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await emailOf((res.body.data as { id: number }).id);
+    expect(row.email).toBeNull();
+    expect(row.role).toBe('Client');
+  });
+
+  test('creates a client with login credentials but no email', async () => {
+    const res = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'noemailclient1', password: 'clientpass1', role: 'Client' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await emailOf((res.body.data as { id: number }).id);
+    expect(row.email).toBeNull();
+  });
+
+  test('several clients without an email coexist — the email UNIQUE treats NULLs as distinct', async () => {
+    for (const displayName of ['Anon Uno', 'Anon Dos', 'Anon Tres']) {
+      const res = await request('/api/admin/users', {
+        method: 'POST',
+        cookie: adminCookie,
+        body: { role: 'Client', display_name: displayName },
+      });
+      expect(res.status, displayName).toBe(201);
+    }
+
+    const count = await testPool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM auth.users WHERE role = 'Client' AND email IS NULL`
+    );
+    expect(Number(count.rows[0].n)).toBeGreaterThanOrEqual(3);
+  });
+
+  test('a supplied email is still unique across users', async () => {
+    const first = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Email Owner', email: 'uniqueclient1@test.com' },
+    });
+    expect(first.status).toBe(201);
+
+    const duplicate = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Email Copycat', email: 'uniqueclient1@test.com' },
+    });
+    expect(duplicate.status).toBe(409);
+  });
+
+  test('staff roles still require an email — the CHECK constraint rejects a null one', async () => {
+    const { passwordHash, passwordSalt } = await hashPassword('staffpass1');
+    for (const role of ['Admin', 'Professional', 'Receptionist']) {
+      await expect(
+        testPool.query(
+          `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+           VALUES ($1, NULL, 'No Email Staff', $2, $3, $4, $5)`,
+          [`noemailstaff_${role}`, passwordHash, passwordSalt, role, adminBusinessId]
+        ),
+        role
+      ).rejects.toThrow(/users_client_or_email/);
+    }
+  });
+
+  test('a client row may carry a null email at the database level', async () => {
+    const inserted = await testPool.query<{ id: string }>(
+      `INSERT INTO auth.users (email, display_name, role, business_id)
+       VALUES (NULL, 'Direct Null Email', 'Client', $1) RETURNING id`,
+      [adminBusinessId]
+    );
+    expect(await emailOf(inserted.rows[0].id)).toEqual({ email: null, role: 'Client' });
   });
 });
 

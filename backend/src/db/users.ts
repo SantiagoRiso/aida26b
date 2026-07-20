@@ -68,7 +68,7 @@ export function insertUser(
   db: Queryable,
   u: {
     username: string;
-    email: string;
+    email: string | null;
     displayName: string;
     dni: string | null;
     passwordHash: string;
@@ -87,10 +87,11 @@ export function insertUser(
   );
 }
 
-// Contact-only client: no login credentials (username/password stay NULL). Bookable, cannot log in.
+// Contact-only client: no login credentials (username/password stay NULL) and no email required.
+// Bookable, cannot log in.
 export function insertContactOnlyClient(
   db: Queryable,
-  u: { email: string; displayName: string; dni: string | null; businessId: number },
+  u: { email: string | null; displayName: string; dni: string | null; businessId: number },
 ): Promise<{ id: string }> {
   return queryRequired<{ id: string }>(
     db,
