@@ -22,7 +22,7 @@ import {
 } from '../../../shared/src/ssot/domain';
 import { BUSINESS_TZ, DATE_OR_ISO_RE, DATE_RE, addDaysISO, toBusinessDate } from '../time';
 import { httpError } from '../errors';
-import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
+import { assertAppointmentActionAllowed, auditInTx, auditConflictOverrideInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
 import { resolveBookingWindow, isOutsideBookingWindow } from '../services/scheduling';
 import {
@@ -216,6 +216,7 @@ export function mountAppointmentRoutes(
           description,
         });
         await auditInTx(tx, user, 'appointment_scheduled', 'success', Number(appt.id));
+        if (forced) await auditConflictOverrideInTx(tx, user, Number(appt.id), 'schedule');
         return appt;
       },
     );
@@ -276,6 +277,7 @@ export function mountAppointmentRoutes(
         });
         if (!appt) throw httpError(404, 'not_found', 'Appointment not found');
         await auditInTx(tx, user, 'appointment_approved', 'success', id);
+        if (forced) await auditConflictOverrideInTx(tx, user, id, 'approve');
         return appt;
       },
     );
@@ -382,6 +384,7 @@ export function mountAppointmentRoutes(
         });
         if (!appt) throw httpError(404, 'not_found', 'Appointment not found');
         await auditInTx(tx, user, 'appointment_rescheduled', 'success', id);
+        if (forced) await auditConflictOverrideInTx(tx, user, id, 'reschedule');
         return appt;
       },
     );

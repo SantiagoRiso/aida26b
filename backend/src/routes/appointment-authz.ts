@@ -41,6 +41,23 @@ export async function auditInTx(
   });
 }
 
+// A forced save (sobreturno) is a fact of its own, separate from the booking it rode in on: the
+// same appointment can be scheduled, approved and rescheduled, and each of those may or may not
+// have bypassed a real conflict. Emitted alongside the lifecycle event so an auditor can filter
+// overrides without knowing which operation produced them.
+export const CONFLICT_OVERRIDE_EVENT = 'conflict_override';
+
+export async function auditConflictOverrideInTx(
+  client: TransactionClient,
+  user: AuthUser,
+  appointmentId: number,
+  operation: 'schedule' | 'approve' | 'reschedule',
+): Promise<void> {
+  await auditInTx(client, user, CONFLICT_OVERRIDE_EVENT, 'success', appointmentId, 'appointments', {
+    operation,
+  });
+}
+
 // `db` accepts any query executor so a caller can pass a transaction-bound client
 // when the authorization check must be atomic with the write.
 export async function assertAppointmentActionAllowed(

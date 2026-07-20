@@ -700,6 +700,108 @@ describe('POST /api/appointments/:id/reschedule', () => {
   });
 });
 
+// A sobreturno is auditable on its own, independently of the operation that produced it — an
+// auditor filtering by conflict_override must catch all three write paths, not just the seeded row.
+describe('conflict_override audit event', () => {
+  async function overrideEvents(appointmentId: number): Promise<{ operation?: string }[]> {
+    const r = await pool.query<{ details: { operation?: string } }>(
+      `SELECT details FROM audit_events
+        WHERE entity_type = 'appointments' AND entity_id = $1 AND event_type = 'conflict_override'`,
+      [appointmentId],
+    );
+    return r.rows.map((row) => row.details);
+  }
+
+  async function blockerAt(start: string): Promise<number> {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, '${mondayAt(start)}', 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId],
+    );
+    return Number(r.rows[0].id);
+  }
+
+  test('a forced schedule emits conflict_override tagged with the operation', async () => {
+    const blockerId = await blockerAt('09:30');
+
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '09:30',
+      override: true,
+      client_user_id: client2Id,
+    }));
+    expect(res.status).toBe(201);
+
+    expect(await overrideEvents(Number(res.body.data.id))).toEqual([{ operation: 'schedule' }]);
+
+    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[blockerId, Number(res.body.data.id)]]);
+  });
+
+  test('a redundant override on a clean slot emits nothing', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+      start: '10:30',
+      override: true,
+      client_user_id: client2Id,
+    }));
+    expect(res.status).toBe(201);
+    expect(res.body.data.override_conflict).toBe(false);
+
+    expect(await overrideEvents(Number(res.body.data.id))).toEqual([]);
+
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+  });
+
+  test('a forced reschedule emits conflict_override tagged with the operation', async () => {
+    const blockerId = await blockerAt('11:00');
+    const moving = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, '${mondayAt('09:00')}', 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [client2Id, proId, svcId],
+    );
+    const id = Number(moving.rows[0].id);
+
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+      date: MONDAY,
+      start: '11:00',
+      duration_minutes: 30,
+      override: true,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.override_conflict).toBe(true);
+
+    expect(await overrideEvents(id)).toEqual([{ operation: 'reschedule' }]);
+
+    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[blockerId, id]]);
+  });
+
+  test('a forced approve emits conflict_override tagged with the operation', async () => {
+    const blockerId = await blockerAt('11:30');
+    const requested = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, '${mondayAt('11:30')}', 30, 'requested', '1500.00', false)
+       RETURNING id`,
+      [client2Id, proId, svcId],
+    );
+    const id = Number(requested.rows[0].id);
+
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq('POST', `/api/appointments/${id}/approve`, { override: true });
+    expect(res.status).toBe(200);
+    expect(res.body.data.override_conflict).toBe(true);
+
+    expect(await overrideEvents(id)).toEqual([{ operation: 'approve' }]);
+
+    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[blockerId, id]]);
+  });
+});
+
 describe('PATCH /api/appointments/:id — terminal freeze', () => {
   test('name change on canceled appointment → 422', async () => {
     const r = await pool.query<{ id: string }>(

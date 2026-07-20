@@ -70,7 +70,7 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     await expect(overrideButton).not.toBeVisible({ timeout: 10_000 });
   });
 
-  test('Auditoría screen shows a conflict_override (sobreturno) audit event from seeded data', async ({ page }) => {
+  test('Auditoría screen shows the conflict_override event for the sobreturno just forced', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     // Wait for the mount-time audit load to resolve, else the table assertion races the fetch.
     await Promise.all([
@@ -78,8 +78,9 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
       page.getByRole('link', { name: es.nav.audit }).click(),
     ]);
 
-    // The audit_events table is seeded with at least one conflict_override entry, plus the
-    // one this spec's first test just created. The event-type filter is a free-text input.
+    // Every forced save emits conflict_override alongside its lifecycle event, so the newest row
+    // here is the sobreturno the previous test forced through the UI — not the seeded example.
+    // The list is ordered by created_at DESC and the event-type filter matches exactly.
     await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 
     await page.getByPlaceholder(es.audit.eventTypePlaceholder).fill('conflict_override');
@@ -88,5 +89,7 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
     await expect(rows.first()).toContainText('conflict_override');
+    // Two entries: the seeded example plus the one just forced. Proves the live path audits.
+    await expect(rows).toHaveCount(2);
   });
 });
