@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { apiErrorMessage } from '@/i18n/api-errors';
 import { createUser } from '@/api/admin-users';
@@ -30,14 +30,23 @@ const form = reactive({
   password: '',
 });
 
+// Email is how a login-enabled account is reached, so it is only optional for a client who
+// cannot log in (walk-ins, phone bookings).
+const emailRequired = computed(() => enableLogin.value);
+
 async function submit() {
+  const email = form.email.trim();
+  if (emailRequired.value && !email) {
+    error.value = t('apiError.emailFormat');
+    return;
+  }
   submitting.value = true;
   error.value = '';
   try {
     const result = await createUser({
       role: 'Client',
       display_name: form.display_name,
-      email: form.email,
+      email: email || undefined,
       dni: form.dni || undefined,
       ...(enableLogin.value ? { username: form.username, password: form.password } : {}),
     });
@@ -71,14 +80,14 @@ async function submit() {
 
     <div class="flex flex-col gap-1">
       <label for="create-client-email" class="text-sm font-semibold">
-        {{ label(clientColumns.email.label) }} <span class="text-destructive">*</span>
+        {{ label(clientColumns.email.label) }} <span v-if="emailRequired" class="text-destructive">*</span>
       </label>
       <input
         id="create-client-email"
         v-model="form.email"
         type="email"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-        required
+        :required="emailRequired"
       />
     </div>
 

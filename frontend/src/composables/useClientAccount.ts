@@ -43,15 +43,20 @@ const role = computed(() => auth.user?.role);
   const showEnableLogin = ref(false);
   const enableLoginSubmitting = ref(false);
   const enableLoginError = ref('');
-  const enableLoginForm = reactive({ username: '', password: '' });
+  const enableLoginForm = reactive({ username: '', password: '', email: '' });
+  // An account that can log in has to be reachable by email; a walk-in may have been recorded
+  // without one, so it is collected here instead.
+  const enableLoginNeedsEmail = computed(() => deps.client.value?.email == null);
 
   async function submitEnableLogin() {
     enableLoginSubmitting.value = true;
     enableLoginError.value = '';
     try {
+      const email = enableLoginForm.email.trim();
       const res = await enableClientLogin(clientId, {
         username: enableLoginForm.username,
         password: enableLoginForm.password,
+        ...(email ? { email } : {}),
       });
       if (res.ok) {
         showEnableLogin.value = false;
@@ -75,6 +80,7 @@ const role = computed(() => auth.user?.role);
     enableLoginSubmitting,
     enableLoginError,
     enableLoginForm,
+    enableLoginNeedsEmail,
     submitEnableLogin,
   };
 }

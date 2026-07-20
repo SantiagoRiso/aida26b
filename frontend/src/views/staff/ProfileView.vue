@@ -34,7 +34,7 @@ onMounted(async () => {
   if (res.ok) {
     const p = res.data.profile;
     Object.assign(form, {
-      display_name: p.display_name, bio: p.bio ?? '', email: p.email, phone: p.phone ?? '',
+      display_name: p.display_name, bio: p.bio ?? '', email: p.email ?? '', phone: p.phone ?? '',
     });
   }
   loading.value = false;
@@ -46,7 +46,7 @@ async function saveProfile() {
   const res = await updateMyProfile({
     display_name: form.display_name.trim(),
     bio: form.bio.trim() || null,
-    email: form.email.trim(),
+    email: form.email.trim() || null,
     phone: form.phone.trim() || null,
   });
   saving.value = false;

@@ -822,6 +822,55 @@ describe('optional client email', () => {
     }
   });
 
+  test('enabling login on an email-less client requires an email, and stores the one supplied', async () => {
+    const createRes = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Walkin Login' },
+    });
+    expect(createRes.status).toBe(201);
+    const clientId = (createRes.body.data as { id: number }).id;
+
+    const missingEmail = await request(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'walkinlogin1', password: 'walkinpass1' },
+    });
+    expect(missingEmail.status).toBe(400);
+
+    const before = await testPool.query<{ username: string | null }>(
+      `SELECT username FROM auth.users WHERE id = $1`,
+      [clientId]
+    );
+    expect(before.rows[0].username).toBeNull();
+
+    const enabled = await request(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'walkinlogin1', password: 'walkinpass1', email: 'walkinlogin1@test.com' },
+    });
+    expect(enabled.status).toBe(200);
+    expect((await emailOf(clientId)).email).toBe('walkinlogin1@test.com');
+  });
+
+  test('enabling login never replaces the email a client already has', async () => {
+    const createRes = await request('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Keeps Email', email: 'keepsemail1@test.com' },
+    });
+    expect(createRes.status).toBe(201);
+    const clientId = (createRes.body.data as { id: number }).id;
+
+    const enabled = await request(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'keepsemail1', password: 'keepspass1', email: 'someoneelse1@test.com' },
+    });
+    expect(enabled.status).toBe(200);
+    expect((await emailOf(clientId)).email).toBe('keepsemail1@test.com');
+  });
+
   test('a client row may carry a null email at the database level', async () => {
     const inserted = await testPool.query<{ id: string }>(
       `INSERT INTO auth.users (email, display_name, role, business_id)

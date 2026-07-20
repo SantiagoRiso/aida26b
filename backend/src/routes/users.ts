@@ -17,6 +17,7 @@ import {
   resetUserPassword,
   deleteUserSessions,
   insertContactOnlyClient,
+  findContactOnlyClient,
   enableClientLogin,
 } from '../db/users';
 import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
@@ -283,6 +284,8 @@ export function mountUserAdminRoutes(
     guardRoute(async (req, res) => {
       const userId = Number(req.params.id);
       const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+      const emailRaw =
+        typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim() : null;
       const password = readPassword(req.body.password);
       const sessionUser = authenticatedUser(req);
 
@@ -301,6 +304,20 @@ export function mountUserAdminRoutes(
       const businessId = requireBusinessContext(req, res);
       if (businessId == null) return;
 
+      const target = await findContactOnlyClient(pool, { userId, businessId });
+      if (!target) {
+        return sendError(res, 404, 'not_found', 'Client not found', { detail: { key: 'clientNotFound' } });
+      }
+
+      // A client who can log in is reachable by email; one who was recorded without an address
+      // has to supply it now.
+      if (emailRaw !== null && !EMAIL_RE.test(emailRaw)) {
+        return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+      }
+      if (target.email === null && emailRaw === null) {
+        return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+      }
+
       const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
       try {
@@ -308,6 +325,7 @@ export function mountUserAdminRoutes(
           userId,
           businessId,
           username,
+          email: emailRaw,
           passwordHash,
           passwordSalt,
         });

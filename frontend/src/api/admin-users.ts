@@ -47,10 +47,11 @@ export function resetPassword(
   }, { toastOnForbidden: true });
 }
 
-// Turns a contact-only client (no username) into one who can log in.
+// Turns a contact-only client (no username) into one who can log in. email is required only when
+// the client was recorded without one; an existing address is never replaced here.
 export function enableClientLogin(
   id: string | number,
-  body: { username: string; password: string },
+  body: { username: string; password: string; email?: string },
 ): Promise<ApiResult<EnabledLoginResult>> {
   return apiFetchDecoded(enabledLoginResult, adminUserPaths.enableLogin(id), {
     method: 'POST',

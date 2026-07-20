@@ -149,12 +149,24 @@ export function mountAuthRoutes(
   app.patch(AUTH_PATTERNS.meProfile, requireAuth, guardRoute(async (req, res) => {
     const user = authenticatedUser(req);
     const displayName = typeof req.body.display_name === 'string' ? req.body.display_name.trim() : '';
-    const email = typeof req.body.email === 'string' ? req.body.email.trim() : '';
+    const email = typeof req.body.email === 'string' && req.body.email.trim() !== '' ? req.body.email.trim() : null;
     const bio = typeof req.body.bio === 'string' && req.body.bio.trim() !== '' ? req.body.bio : null;
     const phone = typeof req.body.phone === 'string' && req.body.phone.trim() !== '' ? req.body.phone.trim() : null;
 
     if (!displayName) return sendError(res, 400, 'invalid_request', 'Display name is required', { detail: { key: 'displayNameRequired' } });
-    if (!EMAIL_RE.test(email)) return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+
+    if (email !== null && !EMAIL_RE.test(email)) {
+      return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+    }
+
+    const current = await getSelfProfile(pool, user.id);
+    if (!current) return sendError(res, 404, 'not_found', 'Profile not found', { detail: { key: 'profileNotFound' } });
+
+    // A client recorded without an email keeps saving their profile without one. Staff always need
+    // an address, and nobody may drop the one they already have: it is how the account is reached.
+    if (email === null && !(user.role === 'Client' && current.email === null)) {
+      return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+    }
 
     // Duplicate email -> DbError(23505) -> guardRoute maps to 409.
     const updated = await updateSelfProfile(pool, { userId: user.id, displayName, bio, email, phone });

@@ -52,7 +52,7 @@ export function getSelfProfile(db: Queryable, userId: number): Promise<SelfProfi
 // Self-service profile write: only the caller's own row, only these four fields.
 export function updateSelfProfile(
   db: Queryable,
-  opts: { userId: number; displayName: string; bio: string | null; email: string; phone: string | null },
+  opts: { userId: number; displayName: string; bio: string | null; email: string | null; phone: string | null },
 ): Promise<SelfProfileRow | null> {
   return queryOne<SelfProfileRow>(
     db,
@@ -102,19 +102,36 @@ export function insertContactOnlyClient(
   );
 }
 
+// A contact-only client (no login yet) in the caller's business, with the email the account
+// currently carries. Null when no such client exists.
+export function findContactOnlyClient(
+  db: Queryable,
+  opts: { userId: number; businessId: number },
+): Promise<{ email: string | null } | null> {
+  return queryOne<{ email: string | null }>(
+    db,
+    `SELECT email FROM auth.users
+      WHERE id = $1 AND business_id = $2 AND role = 'Client' AND is_active = true AND username IS NULL`,
+    [opts.userId, opts.businessId],
+  );
+}
+
 // Activate login on a contact-only client (username IS NULL guards against overwriting an
 // existing login). Forces a password change on first login. Duplicate username -> DbError 23505.
+// An account that already has an email keeps it: this is not an identity-change endpoint.
 export function enableClientLogin(
   db: Queryable,
-  opts: { userId: number; businessId: number; username: string; passwordHash: string; passwordSalt: string },
+  opts: { userId: number; businessId: number; username: string; email: string | null; passwordHash: string; passwordSalt: string },
 ): Promise<{ id: string; username: string } | null> {
   return queryOne<{ id: string; username: string }>(
     db,
     `UPDATE auth.users
-        SET username = $1, password_hash = $2, password_salt = $3, must_change_password = true, updated_at = now()
+        SET username = $1, password_hash = $2, password_salt = $3, must_change_password = true,
+            email = COALESCE(email, $6), updated_at = now()
       WHERE id = $4 AND business_id = $5 AND role = 'Client' AND is_active = true AND username IS NULL
+        AND COALESCE(email, $6) IS NOT NULL
       RETURNING id, username`,
-    [opts.username, opts.passwordHash, opts.passwordSalt, opts.userId, opts.businessId],
+    [opts.username, opts.passwordHash, opts.passwordSalt, opts.userId, opts.businessId, opts.email],
   );
 }
 

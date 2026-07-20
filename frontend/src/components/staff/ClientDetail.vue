@@ -59,7 +59,8 @@ const {
 
 const {
   canDeactivate, canEnableLogin, deactivateConfirmOpen, confirmDeactivate,
-  showEnableLogin, enableLoginSubmitting, enableLoginError, enableLoginForm, submitEnableLogin,
+  showEnableLogin, enableLoginSubmitting, enableLoginError, enableLoginForm,
+  enableLoginNeedsEmail, submitEnableLogin,
 } = useClientAccount(clientId, {
   client,
   reloadProfile: loadProfile,
@@ -310,6 +311,19 @@ onMounted(load);
             id="enable-login-username"
             v-model="enableLoginForm.username"
             type="text"
+            class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            required
+          />
+        </div>
+
+        <div v-if="enableLoginNeedsEmail" class="flex flex-col gap-1">
+          <label for="enable-login-email" class="text-sm font-semibold">
+            {{ label(clientColumns.email.label) }} <span class="text-destructive">*</span>
+          </label>
+          <input
+            id="enable-login-email"
+            v-model="enableLoginForm.email"
+            type="email"
             class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           />

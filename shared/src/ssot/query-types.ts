@@ -48,11 +48,12 @@ export type CalendarGrantCreatedRow = {
 export type UserProbeRow = { id: string; role: string; business_id: string | null };
 
 // The caller's own profile fields (self-service read/write), never another user's.
+// email is null only for a client recorded without one; staff accounts always carry an address.
 export interface SelfProfileRow {
   id: string;
   display_name: string;
   bio: string | null;
-  email: string;
+  email: string | null;
   phone: string | null;
 }
 

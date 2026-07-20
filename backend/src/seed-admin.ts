@@ -13,6 +13,12 @@ async function main() {
     throw new Error(`ADMIN_USERNAME and ADMIN_PASSWORD with at least ${MIN_PASSWORD_LENGTH} characters are required`);
   }
 
+  // Only Clients may go without an email; a null one here reaches the database as a constraint
+  // violation, so name the missing variable instead.
+  if (!email) {
+    throw new Error('ADMIN_EMAIL is required: only clients may be recorded without an email');
+  }
+
   // Owner role: the app role can't write config tables like businesses.
   const pool = createOwnerPool();
 

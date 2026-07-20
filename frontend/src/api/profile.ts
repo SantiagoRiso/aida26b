@@ -9,13 +9,13 @@ import { authPaths } from '@shared/ssot/api-paths';
 export type SelfProfile = SelfProfileRow;
 const selfProfile = object<SelfProfile>({
   id: stringValue, display_name: stringValue, bio: nullable(stringValue),
-  email: stringValue, phone: nullable(stringValue),
+  email: nullable(stringValue), phone: nullable(stringValue),
 });
 
 export interface UpdateProfilePayload {
   display_name: string;
   bio: string | null;
-  email: string;
+  email: string | null;
   phone: string | null;
 }
 

@@ -119,4 +119,60 @@ describe('me/profile HTTP', () => {
       { display_name: 'X', email: 'taken@x.com', phone: null });
     expect(res.status).toBe(409);
   });
+
+  async function makeClient(displayName: string, email: string | null) {
+    const row = await pool.query<{ id: string }>(
+      `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+       VALUES ($1, $2, $3, 'h', 's', 'Client', $4) RETURNING id`,
+      [displayName.replace(/\s/g, '_').toLowerCase(), email, displayName, bizId],
+    );
+    return Number(row.rows[0].id);
+  }
+
+  const asClient = (id: number): AuthUser => ({
+    id, username: 'client_prof', email: null, role: 'Client',
+    business_id: String(bizId), is_active: true, must_change_password: false,
+  });
+
+  test('a client recorded without an email saves their profile without one', async () => {
+    const clientId = await makeClient('Sin Email Cliente', null);
+    currentUser = asClient(clientId);
+
+    const res = await reqJson('PATCH', '/api/auth/me/profile',
+      { display_name: 'Sin Email Cliente', phone: '4444' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.profile.email).toBeNull();
+    expect(res.body.data.profile.phone).toBe('4444');
+  });
+
+  test('a client may add an email later', async () => {
+    const clientId = await makeClient('Agrega Email', null);
+    currentUser = asClient(clientId);
+
+    const res = await reqJson('PATCH', '/api/auth/me/profile',
+      { display_name: 'Agrega Email', email: 'agrega@x.com', phone: null });
+    expect(res.status).toBe(200);
+    expect(res.body.data.profile.email).toBe('agrega@x.com');
+  });
+
+  test('a client who has an email cannot drop it', async () => {
+    const clientId = await makeClient('Con Email', 'conemail@x.com');
+    currentUser = asClient(clientId);
+
+    const res = await reqJson('PATCH', '/api/auth/me/profile',
+      { display_name: 'Con Email', email: '', phone: null });
+    expect(res.status).toBe(400);
+    expect(res.body.error.detail.key).toBe('emailFormat');
+
+    const reread = await getSelfProfile(pool, clientId);
+    expect(reread!.email).toBe('conemail@x.com');
+  });
+
+  test('staff still cannot save a profile without an email', async () => {
+    currentUser = asPro(proId);
+    const res = await reqJson('PATCH', '/api/auth/me/profile',
+      { display_name: 'Pro Sin Email', email: '', phone: null });
+    expect(res.status).toBe(400);
+    expect(res.body.error.detail.key).toBe('emailFormat');
+  });
 });
