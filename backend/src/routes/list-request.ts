@@ -2,6 +2,7 @@ import type express from 'express';
 import {
   LIST_DEFAULT_LIMIT,
   LIST_MAX_LIMIT,
+  LIST_MAX_PAGE,
   isFilterParam,
   stripFilterPrefix,
 } from '../../../shared/src/ssot/list-protocol';
@@ -53,7 +54,7 @@ export function parseListRequest(query: express.Request['query']): ListRequestSp
 
   const page = Math.max(
     1,
-    Math.min(parseInt(String(firstOf(query.page) || '1'), 10) || 1, 1000),
+    Math.min(parseInt(String(firstOf(query.page) || '1'), 10) || 1, LIST_MAX_PAGE),
   );
 
   const requestedLimit = firstOf(query.limit);

@@ -10,6 +10,7 @@ export type ReservedListParam = (typeof RESERVED_LIST_PARAMS)[number];
 
 export const LIST_DEFAULT_LIMIT = 50;
 export const LIST_MAX_LIMIT = 500;
+export const LIST_MAX_PAGE = 1000;
 
 export function isReservedListParam(key: string): key is ReservedListParam {
   return (RESERVED_LIST_PARAMS as readonly string[]).includes(key);
@@ -25,6 +26,34 @@ export function filterParam(field: string): string {
 
 export function stripFilterPrefix(key: string): string {
   return key.slice(FILTER_PREFIX.length);
+}
+
+// Request-side counterpart of the parser: the single place that decides which keys a list
+// request carries and which values are omitted (page 1, blank filters). Every producer — the
+// API call and the shareable URL alike — goes through it, so the two can't drift apart.
+export interface ListRequestParams {
+  page?: number;
+  limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+  // Per-field filter values: `text` matches, `!text` excludes, `min,max` is a numeric range
+  // (either bound may be blank).
+  filters?: Record<string, string>;
+}
+
+export function listParamEntries(params: ListRequestParams): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+
+  if (params.page && params.page > 1) entries.push(['page', String(params.page)]);
+  if (params.limit) entries.push(['limit', String(params.limit)]);
+  if (params.sort) entries.push(['sort', params.sort]);
+  if (params.dir) entries.push(['dir', params.dir]);
+
+  for (const [field, value] of Object.entries(params.filters ?? {})) {
+    if (value !== '' && value !== undefined) entries.push([filterParam(field), value]);
+  }
+
+  return entries;
 }
 
 // The parsed form of a list request. A single filter value carries the `!` negation marker

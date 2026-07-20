@@ -8,6 +8,7 @@ import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import type { ForeignKeyValue } from '@/composables/useForeignKeyOptions';
+import { useListQuerySync } from '@/composables/useListQuerySync';
 import { structure } from '@shared/ssot/structure';
 import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import type { ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
@@ -76,8 +77,16 @@ function canDelete(): boolean {
   return roleAllowedFor(required, userRole.value);
 }
 
-const sortField = ref('');
-const sortDir = ref<'asc' | 'desc'>('asc');
+const columnKeysWhere = (pick: (col: ColumnDef) => boolean | undefined) =>
+  columns.value.filter(({ col }) => pick(col)).map(({ key }) => key);
+
+// List state lives in the URL, so a filtered view survives a reload and can be shared.
+const listQuery = useListQuerySync({
+  onChange: () => { void reload(); },
+  sortableFields: () => columnKeysWhere((col) => col.sortable),
+  filterableFields: () => columnKeysWhere((col) => col.filterable),
+});
+const { page, sort: sortField, dir: sortDir, filters, limit: requestedLimit } = listQuery;
 
 function toggleSort(field: string) {
   if (sortField.value === field) {
@@ -86,11 +95,9 @@ function toggleSort(field: string) {
     sortField.value = field;
     sortDir.value = 'asc';
   }
-  reload();
+  listQuery.commit();
 }
 
-const page = ref(1);
-const filters = ref<Record<string, string>>({});
 const rows = ref([]) as Ref<Wire<TableRecordMap[K]>[]>;
 const total = ref(0);
 // The server is the sole authority on page size; this only seeds the pre-first-response render.
@@ -106,6 +113,7 @@ async function reload() {
   try {
     const result = await listRows(props.tableKey, {
       page: page.value,
+      limit: requestedLimit.value,
       sort: sortField.value || undefined,
       dir: sortDir.value,
       filters: filters.value,
@@ -122,15 +130,16 @@ async function reload() {
   }
 }
 
+// Debounced: typing in a filter must not spam the network or the address bar.
 function onFiltersChange(f: Record<string, string>) {
   filters.value = f;
   page.value = 1;
-  reload();
+  listQuery.commitDebounced();
 }
 
 function onPageChange(p: number) {
   page.value = p;
-  reload();
+  listQuery.commit();
 }
 
 // FK columns render the referenced row's label, not its id. Lookups come from the shared
@@ -147,10 +156,9 @@ function bindFkResolvers() {
   fkLabelFns.value = fns;
 }
 
-watch(() => props.tableKey, () => {
-  page.value = 1;
-  sortField.value = '';
-  filters.value = {};
+// First run keeps whatever the URL restored; only a genuine table switch clears list state.
+watch(() => props.tableKey, (_next, previous) => {
+  if (previous !== undefined) listQuery.reset();
   rows.value = [];
   total.value = 0;
   reload();
@@ -215,7 +223,13 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
       </div>
     </div>
 
-    <GenericFilters v-if="!hideFilters" :table-key="tableKey" @change="onFiltersChange" />
+    <GenericFilters
+      v-if="!hideFilters"
+      :key="tableKey"
+      :table-key="tableKey"
+      :initial="filters"
+      @change="onFiltersChange"
+    />
 
     <div class="overflow-x-auto rounded-lg border border-border">
       <table class="w-full text-sm">

@@ -7,7 +7,7 @@ import type { ColumnDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import AppButton from '@/components/shared/AppButton.vue';
 
-const props = defineProps<{ tableKey: TableKey }>();
+const props = defineProps<{ tableKey: TableKey; initial?: Record<string, string> }>();
 const emit = defineEmits<{ change: [filters: Record<string, string>] }>();
 
 const { label } = useLabel();
@@ -29,7 +29,7 @@ const filterableColumns = computed(() => {
     .map(([key, col]) => ({ key, col }));
 });
 
-const filters = ref<FilterEntry[]>([]);
+const filters = ref<FilterEntry[]>(deserialize(props.initial));
 const selectedField = ref('');
 
 function addFilter() {
@@ -74,6 +74,24 @@ function serialize(): Record<string, string> {
     }
   }
   return out;
+}
+
+// Rebuilds the editable rows from an already-serialized filter set (a restored URL). Fields the
+// table doesn't declare filterable are dropped rather than shown as uneditable rows.
+function deserialize(source: Record<string, string> | undefined): FilterEntry[] {
+  const entries: FilterEntry[] = [];
+  for (const [field, raw] of Object.entries(source ?? {})) {
+    if (!colForField(field)?.filterable || raw === '') continue;
+    const negated = raw.startsWith('!');
+    const value = negated ? raw.slice(1) : raw;
+    if (isNumericField(field)) {
+      const [min = '', max = ''] = value.split(',');
+      entries.push({ field, negated, value: '', min, max });
+    } else {
+      entries.push({ field, negated, value, min: '', max: '' });
+    }
+  }
+  return entries;
 }
 
 function onValueChange() {

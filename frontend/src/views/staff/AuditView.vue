@@ -4,11 +4,13 @@ import { useI18n } from 'vue-i18n';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
 import { AUDIT_OUTCOMES } from '@shared/ssot/domain';
+import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import { structure } from '@shared/ssot/structure';
 import type { TableStructure } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useListQuerySync } from '@/composables/useListQuerySync';
 import { auditOutcomeBadgeClass } from '@/composables/badgeTone';
 import { useAuthStore } from '@/stores/auth';
 import Skeleton from '@/components/shared/Skeleton.vue';
@@ -28,16 +30,26 @@ const isAdmin = computed(() => auth.user?.role === 'Admin');
 const events = ref<AuditEvent[]>([]);
 const loading = ref(false);
 const loadFailed = ref(false);
-const page = ref(1);
-const limit = 50;
 const total = ref(0);
 
-const filterEntityType = ref('');
-const filterActorId = ref('');
-const filterEventType = ref('');
-const filterDateFrom = ref('');
-const filterDateTo = ref('');
-const filterOutcome = ref('');
+const BLANK_FILTERS = {
+  entity_type: '',
+  actor_user_id: '',
+  event_type: '',
+  date_from: '',
+  date_to: '',
+  outcome: '',
+};
+
+// The search is shareable: filters and page live in the URL under the same list-request
+// vocabulary every other list uses.
+const listQuery = useListQuerySync({
+  onChange: load,
+  filterableFields: () => Object.keys(BLANK_FILTERS),
+  defaultFilters: () => ({ ...BLANK_FILTERS }),
+});
+const { page, filters } = listQuery;
+const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
@@ -63,17 +75,19 @@ async function load() {
   if (!isAdmin.value) return;
   loading.value = true;
   loadFailed.value = false;
+  const active = filters.value;
+  const actorId = Number(active.actor_user_id);
   const result = await listAudit(
     {
-      entity_type: filterEntityType.value || undefined,
-      actor_user_id: filterActorId.value ? Number(filterActorId.value) : undefined,
-      event_type: filterEventType.value || undefined,
-      date_from: filterDateFrom.value || undefined,
-      date_to: filterDateTo.value || undefined,
-      outcome: filterOutcome.value || undefined,
+      entity_type: active.entity_type || undefined,
+      actor_user_id: Number.isFinite(actorId) && actorId > 0 ? actorId : undefined,
+      event_type: active.event_type || undefined,
+      date_from: active.date_from || undefined,
+      date_to: active.date_to || undefined,
+      outcome: active.outcome || undefined,
     },
     page.value,
-    limit,
+    limit.value,
   );
   if (result.ok) {
     events.value = result.data;
@@ -89,17 +103,17 @@ async function load() {
 
 function applyFilters() {
   page.value = 1;
-  load();
+  listQuery.commit();
 }
 
 function resetFilters() {
-  filterEntityType.value = '';
-  filterActorId.value = '';
-  filterEventType.value = '';
-  filterDateFrom.value = '';
-  filterDateTo.value = '';
-  filterOutcome.value = '';
+  filters.value = { ...BLANK_FILTERS };
   applyFilters();
+}
+
+function goToPage(p: number) {
+  page.value = p;
+  listQuery.commit();
 }
 
 if (isAdmin.value) {
@@ -123,7 +137,7 @@ if (isAdmin.value) {
     <template v-else>
       <form class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" @submit.prevent="applyFilters">
         <select
-          v-model="filterEntityType"
+          v-model="filters.entity_type"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           :aria-label="t('audit.entityTypeAria')"
         >
@@ -137,7 +151,7 @@ if (isAdmin.value) {
         </select>
 
         <input
-          v-model="filterActorId"
+          v-model="filters.actor_user_id"
           type="number"
           min="1"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
@@ -145,7 +159,7 @@ if (isAdmin.value) {
         />
 
         <input
-          v-model="filterEventType"
+          v-model="filters.event_type"
           type="text"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           :placeholder="t('audit.eventTypePlaceholder')"
@@ -155,18 +169,18 @@ if (isAdmin.value) {
           <label for="audit-date-from" class="text-xs font-semibold text-neutral shrink-0">
             {{ t('generic.from') }}
           </label>
-          <DateField id="audit-date-from" v-model="filterDateFrom" />
+          <DateField id="audit-date-from" v-model="filters.date_from" />
         </div>
 
         <div class="flex items-center gap-2">
           <label for="audit-date-to" class="text-xs font-semibold text-neutral shrink-0">
             {{ t('generic.to') }}
           </label>
-          <DateField id="audit-date-to" v-model="filterDateTo" />
+          <DateField id="audit-date-to" v-model="filters.date_to" />
         </div>
 
         <select
-          v-model="filterOutcome"
+          v-model="filters.outcome"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           :aria-label="t('audit.outcome')"
         >
@@ -269,7 +283,7 @@ if (isAdmin.value) {
         :limit="limit"
         :total="total"
         class="mt-4"
-        @change="(p) => { page = p; load(); }"
+        @change="goToPage"
       />
     </template>
   </div>

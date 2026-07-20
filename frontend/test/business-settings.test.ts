@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
+import { createRouter, createMemoryHistory } from 'vue-router';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import BusinessView from '@/views/staff/BusinessView.vue';
@@ -46,7 +47,12 @@ function mountAsAdmin() {
     id: 1, username: 'a', email: null, role: 'Admin', business_id: 5,
     is_active: true, must_change_password: false,
   };
-  return mount(BusinessView, { global: { plugins: [makeI18n()] } });
+  // The embedded table binds its list state to the URL, so a router has to be present.
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div/>' } }],
+  });
+  return mount(BusinessView, { global: { plugins: [makeI18n(), router] } });
 }
 
 describe('BusinessView settings — negative-value validation', () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
+import { createRouter, createMemoryHistory } from 'vue-router';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import CrudSection from '@/components/generic/CrudSection.vue';
@@ -20,6 +21,13 @@ function makeI18n() {
   return createI18n({ legacy: false, locale: 'es', messages: { es, en } });
 }
 
+function makeRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div/>' } }],
+  });
+}
+
 function mountSection() {
   return mount(CrudSection, {
     props: {
@@ -28,7 +36,8 @@ function mountSection() {
       deleteLabel: { es: 'Eliminar', en: 'Delete' },
       deleteBody: { es: '¿Confirmás?', en: 'Confirm?' },
     },
-    global: { plugins: [makeI18n()] },
+    // The table binds its list state to the URL, so a router has to be present.
+    global: { plugins: [makeI18n(), makeRouter()] },
   });
 }
 
