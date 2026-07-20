@@ -37,7 +37,17 @@ async function performRawApiFetch(
 
   // API responses carry live data and must never be served from the HTTP cache. A cached stale
   // response (e.g. an index.html served during a dev-proxy hiccup) otherwise poisons GETs.
-  const response = await fetch(`${API_PREFIX}${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
+  let response: Response;
+  try {
+    response = await fetch(`${API_PREFIX}${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
+  } catch (error) {
+    // An abort is the caller replacing its own request, not a failure — callers that pass a signal
+    // discard the rejection themselves, and turning it into a result would look like a real error.
+    if ((error instanceof DOMException || error instanceof Error) && error.name === 'AbortError') throw error;
+    // Offline, DNS failure, TLS refusal, server unreachable: no response ever existed, so there is
+    // no HTTP status to report. Callers read this like any other failure instead of a rejection.
+    return { ok: false, status: 0, code: 'network_error', message: 'Network request failed' };
+  }
 
   if (response.status === 401) {
     if (authMode === 'authenticated') {

@@ -311,6 +311,65 @@ describe('non-JSON (HTML) response guard', () => {
   });
 });
 
+describe('transport failure', () => {
+  it('resolves to a structured failure instead of rejecting', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { apiFetch } = await importFresh();
+
+    const result = await apiFetch('/appointments');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('network_error');
+      // No response ever arrived, so there is no HTTP status to report.
+      expect(result.status).toBe(0);
+    }
+  });
+
+  it('reads through the same translation ladder as an enveloped error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { apiFetch } = await importFresh();
+    const { apiErrorMessage } = await import('@/i18n/api-errors');
+    const { es } = await import('@/i18n/es');
+
+    const result = await apiFetch('/appointments');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(apiErrorMessage(result)).toBe(es.apiError.code.network_error);
+  });
+
+  it('stays silent — a failed background load must not toast', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { apiFetch, useUiStore } = await importFresh();
+    const ui = useUiStore();
+    const toastSpy = vi.spyOn(ui, 'toast');
+
+    await apiFetch('/appointments');
+
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not flag the session as expired', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const { apiFetch, useUiStore } = await importFresh();
+    const ui = useUiStore();
+
+    await apiFetch('/appointments', {}, { authMode: 'authenticated' });
+
+    expect(ui.sessionExpired).toBe(false);
+  });
+
+  // A caller that aborts its own request replaces it; callers discard that rejection themselves.
+  it('still rejects when the caller aborts', async () => {
+    const abort = new DOMException('The user aborted a request.', 'AbortError');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abort));
+    const { apiFetch } = await importFresh();
+    const controller = new AbortController();
+
+    await expect(apiFetch('/appointments', { signal: controller.signal })).rejects.toThrow(/aborted/);
+  });
+});
+
 describe('cache policy', () => {
   it('requests API data with cache: no-store', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
