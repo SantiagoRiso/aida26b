@@ -72,4 +72,67 @@ describe('Tailwind v4 semantic token → utility generation', () => {
     const css = readFileSync(cssPath, 'utf-8');
     expect(css).toMatch(/--color-accent/);
   });
+
+  it('text-inverted utility is present in emitted CSS', () => {
+    const cssPath = findBuiltCss();
+    if (!cssPath) {
+      console.warn('SKIP: no dist CSS to inspect.');
+      return;
+    }
+    const css = readFileSync(cssPath, 'utf-8');
+    expect(css).toMatch(/\.text-inverted/);
+  });
+});
+
+/**
+ * The dark theme is a pure token override: every semantic token the light @theme declares
+ * must be re-declared under [data-theme=dark], or whatever uses it renders invisible.
+ * Asserted against the source, which is where the omission would happen.
+ */
+describe('dark theme token coverage', () => {
+  const sourceCss = readFileSync(join(__dirname, '../src/styles/main.css'), 'utf-8');
+
+  function tokensIn(block: string): string[] {
+    return [...block.matchAll(/(--color-[a-z0-9-]+)\s*:/g)].map((m) => m[1]);
+  }
+
+  function blockAfter(selector: string): string {
+    const start = sourceCss.indexOf(selector);
+    expect(start).toBeGreaterThan(-1);
+    const open = sourceCss.indexOf('{', start);
+    return sourceCss.slice(open, sourceCss.indexOf('}', open));
+  }
+
+  const lightTokens = tokensIn(blockAfter('@theme'));
+  const darkTokens = tokensIn(blockAfter(":root[data-theme='dark']"));
+
+  it('the light @theme block declares the semantic tokens', () => {
+    expect(lightTokens).toContain('--color-surface');
+    expect(lightTokens).toContain('--color-inverted');
+  });
+
+  it.each(['--color-surface', '--color-card', '--color-border', '--color-accent', '--color-inverted'])(
+    '%s has a dark value',
+    (token) => {
+      expect(darkTokens).toContain(token);
+    },
+  );
+
+  it('every light token has a dark counterpart', () => {
+    const missing = lightTokens.filter((token) => !darkTokens.includes(token));
+    expect(missing).toEqual([]);
+  });
+
+  it('declares color-scheme on both themes so native controls follow', () => {
+    expect(blockAfter(":root[data-theme='light']")).toMatch(/color-scheme:\s*light/);
+    expect(blockAfter(":root[data-theme='dark']")).toMatch(/color-scheme:\s*dark/);
+  });
+
+  it('ships a dark datepicker theme mirroring the light one', () => {
+    const light = blockAfter('.dp--theme-light');
+    const dark = blockAfter('.dp--theme-dark');
+    const dpTokens = (block: string) => [...block.matchAll(/(--dp-[a-z-]+)\s*:/g)].map((m) => m[1]);
+    const missing = dpTokens(light).filter((token) => !dpTokens(dark).includes(token));
+    expect(missing).toEqual([]);
+  });
 });

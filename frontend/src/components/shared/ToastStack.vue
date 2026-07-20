@@ -43,9 +43,9 @@ onUnmounted(() => {
 });
 
 function kindClasses(kind: Toast['kind']): string {
-  if (kind === 'error') return 'bg-destructive text-white';
-  if (kind === 'success') return 'bg-success text-white';
-  return 'bg-info text-white';
+  if (kind === 'error') return 'bg-destructive text-inverted';
+  if (kind === 'success') return 'bg-success text-inverted';
+  return 'bg-info text-inverted';
 }
 </script>
 
@@ -70,7 +70,7 @@ function kindClasses(kind: Toast['kind']): string {
         <span>{{ t(`toast.${toast.messageKey}`, toast.messageKey) }}</span>
         <button
           type="button"
-          class="ml-4 flex-shrink-0 rounded opacity-70 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          class="ml-4 flex-shrink-0 rounded opacity-70 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inverted"
           :aria-label="t('toast.close')"
           @click="dismiss(toast.id)"
         >

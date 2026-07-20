@@ -48,6 +48,7 @@ const dpLocale = computed(() => (ui.language === 'en' ? enUS : es));
     :min-date="minDate"
     :max-date="maxDate"
     :locale="dpLocale"
+    :dark="ui.theme === 'dark'"
     :input-class-name="invalid ? 'dp-invalid' : ''"
     teleport="body"
     auto-apply

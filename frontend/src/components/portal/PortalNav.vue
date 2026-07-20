@@ -17,7 +17,7 @@ const navItems = [
       :key="item.name"
       :to="{ name: item.name }"
       class="rounded-md px-3 py-1.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-      active-class="bg-accent text-white"
+      active-class="bg-accent text-inverted"
       inactive-class="text-neutral hover:bg-surface"
     >
       {{ t(item.labelKey) }}

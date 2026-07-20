@@ -134,7 +134,7 @@ function slotDuration(slot: TimeInterval): number {
         type="button"
         class="rounded border px-3 py-1.5 text-sm font-semibold transition-colors min-h-[44px]"
         :class="modelValue === slot.start
-          ? 'bg-accent text-white border-accent'
+          ? 'bg-accent text-inverted border-accent'
           : 'bg-surface border-border text-current hover:bg-slate-100'"
         :aria-pressed="modelValue === slot.start"
         @click="select(slot)"

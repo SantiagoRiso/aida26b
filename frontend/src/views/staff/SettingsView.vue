@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import LanguageToggle from '@/components/settings/LanguageToggle.vue';
+import ThemeToggle from '@/components/settings/ThemeToggle.vue';
 
 const { t } = useI18n();
 </script>
@@ -28,6 +29,18 @@ const { t } = useI18n();
           </div>
           <!-- The only place the language changes. -->
           <LanguageToggle />
+        </div>
+
+        <div class="mt-5 flex items-center justify-between border-t border-border pt-5">
+          <div>
+            <div class="text-sm font-semibold text-heading">
+              {{ t('theme.appearance') }}
+            </div>
+            <div class="mt-1 text-sm text-neutral">
+              {{ t('theme.hint') }}
+            </div>
+          </div>
+          <ThemeToggle />
         </div>
       </div>
     </section>

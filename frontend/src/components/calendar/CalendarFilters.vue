@@ -80,7 +80,7 @@ function emitFilters() {
       type="button"
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === null
-        ? 'bg-accent text-white border-accent'
+        ? 'bg-accent text-inverted border-accent'
         : 'bg-surface border-border text-current hover:bg-slate-100'"
       @click="selectProfessional(null)"
     >
@@ -93,7 +93,7 @@ function emitFilters() {
       type="button"
       class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === prof.id
-        ? 'bg-accent text-white border-accent'
+        ? 'bg-accent text-inverted border-accent'
         : 'bg-surface border-border text-current hover:bg-slate-100'"
       @click="selectProfessional(prof.id)"
     >
@@ -113,7 +113,7 @@ function emitFilters() {
       type="button"
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedResource === null
-        ? 'bg-accent text-white border-accent'
+        ? 'bg-accent text-inverted border-accent'
         : 'bg-surface border-border text-current hover:bg-slate-100'"
       @click="selectResource(null)"
     >
@@ -126,7 +126,7 @@ function emitFilters() {
       type="button"
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedResource === res.id
-        ? 'bg-accent text-white border-accent'
+        ? 'bg-accent text-inverted border-accent'
         : 'bg-surface border-border text-current hover:bg-slate-100'"
       @click="selectResource(res.id)"
     >

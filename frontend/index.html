@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Agenda Profesional</title>
+    <script>
+      // Runs before first paint so a user who chose dark never sees a flash of the light palette:
+      // the app bundle only executes after the session request resolves. Mirrors
+      // readStoredTheme() in src/styles/theme.ts.
+      (function () {
+        var stored = localStorage.getItem('theme');
+        document.documentElement.dataset.theme = stored === 'dark' ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

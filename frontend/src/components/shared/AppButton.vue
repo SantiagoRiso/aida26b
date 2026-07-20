@@ -27,10 +27,10 @@ const classes = computed(() => {
       : 'min-h-[44px] px-4 py-2 text-sm';
   const base = `inline-flex items-center justify-center ${sizing} rounded-md font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap`;
   if (props.variant === 'primary') {
-    return `${base} bg-accent text-white hover:bg-accent-hover focus-visible:ring-accent`;
+    return `${base} bg-accent text-inverted hover:bg-accent-hover focus-visible:ring-accent`;
   }
   if (props.variant === 'destructive') {
-    return `${base} bg-destructive text-white hover:bg-destructive-hover focus-visible:ring-destructive`;
+    return `${base} bg-destructive text-inverted hover:bg-destructive-hover focus-visible:ring-destructive`;
   }
   return `${base} bg-card text-neutral border border-border hover:bg-surface focus-visible:ring-neutral`;
 });

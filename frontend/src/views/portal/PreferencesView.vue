@@ -3,6 +3,7 @@
 
 import { useI18n } from 'vue-i18n';
 import LanguageToggle from '@/components/settings/LanguageToggle.vue';
+import ThemeToggle from '@/components/settings/ThemeToggle.vue';
 
 const { t } = useI18n();
 </script>
@@ -18,6 +19,14 @@ const { t } = useI18n();
         {{ t('portal.languageBody') }}
       </p>
       <LanguageToggle />
+    </section>
+
+    <section class="rounded-lg border border-border bg-card p-6 space-y-4">
+      <h2 class="text-base font-semibold">{{ t('theme.appearance') }}</h2>
+      <p class="text-sm text-neutral">
+        {{ t('theme.hint') }}
+      </p>
+      <ThemeToggle />
     </section>
   </div>
 </template>
