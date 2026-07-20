@@ -56,7 +56,7 @@ export type {
   ConflictOwner,
   BookedAppointment,
 } from './conflict';
-export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES, LEDGER_WRITE_ROLES } from './finance';
+export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES, LEDGER_WRITE_ROLES, RECEPTIONIST_ENTRY_TYPES } from './finance';
 export type { LedgerEntryType } from './finance';
 export {
   FREQUENCY_VALUES,

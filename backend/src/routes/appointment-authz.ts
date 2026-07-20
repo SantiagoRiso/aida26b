@@ -1,8 +1,8 @@
 import type { Queryable, TransactionClient } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
-import type { AuditOutcome } from '../../../shared/src/ssot/domain';
-import { LEDGER_WRITE_ROLES } from '../../../shared/src/ssot/domain';
+import type { AuditOutcome, LedgerEntryType } from '../../../shared/src/ssot/domain';
+import { LEDGER_WRITE_ROLES, RECEPTIONIST_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
 import { hasCalendarGrant } from '../db/grants';
 import { insertAuditEvent } from '../db/audit';
 import { NO_BUSINESS_CODE, NO_BUSINESS_MESSAGE } from './business-context';
@@ -91,9 +91,9 @@ export async function assertLedgerWriteAllowed(
       : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only write ledger entries for own clients' };
   }
 
-  // Receptionist: appointment-linked charges and payments on a granted calendar — the front
-  // desk collects money for sessions. Adjustments and standalone entries stay admin-only.
-  if (entryType !== 'charge' && entryType !== 'payment') {
+  // Receptionist: appointment-linked entries on a granted calendar. Adjustments and standalone
+  // entries stay admin-only.
+  if (!RECEPTIONIST_ENTRY_TYPES.includes(entryType as LedgerEntryType)) {
     return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists may only create appointment-linked charges and payments' };
   }
   if (appointmentId == null) {

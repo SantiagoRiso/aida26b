@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
+import { LEDGER_ENTRY_TYPES, RECEPTIONIST_ENTRY_TYPES } from '@shared/ssot/domain/finance';
 import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
 import { listAppointments } from '@/api/appointments';
@@ -39,24 +39,31 @@ const fieldErrors = ref<Record<string, string>>({});
 const appointments = ref<Appointment[]>([]);
 const loadingAppointments = ref(false);
 
-// Only receptionists are restricted (appointment-linked charges). Admin and Professional — who
-// ranks above a receptionist — may post any entry type; the server scopes professionals to their
+// Only receptionists are restricted (appointment-linked entries). Admin and Professional — who
+// rank above a receptionist — may post any entry type; the server scopes professionals to their
 // own clients.
 const role = computed(() => auth.user?.role);
 const isReceptionist = computed(() => role.value === 'Receptionist');
 
 const availableTypes = computed(() => {
   if (isReceptionist.value) {
-    return LEDGER_ENTRY_TYPES.filter((t) => t.value === 'charge');
+    return LEDGER_ENTRY_TYPES.filter((t) => RECEPTIONIST_ENTRY_TYPES.includes(t.value));
   }
   return LEDGER_ENTRY_TYPES;
 });
 
-const showAppointmentPicker = computed(() => entryType.value === 'charge');
+// Everyone links a charge to its appointment; a receptionist must also link the payment they take.
+// For Admin and Professional a payment stays unallocated, which is what makes partial and multiple
+// payments work.
+const showAppointmentPicker = computed(
+  () => entryType.value === 'charge' || (isReceptionist.value && entryType.value === 'payment'),
+);
 
-// A receptionist's charge must be linked to an appointment (enforced server-side too).
-const appointmentRequired = computed(() => isReceptionist.value && entryType.value === 'charge');
+// Enforced server-side too.
+const appointmentRequired = computed(() => isReceptionist.value && showAppointmentPicker.value);
 
+// Only a charge defaults to the appointment's booked price. A payment may be partial, so leaving it
+// blank is the honest default.
 watch(appointmentId, (id) => {
   if (id && entryType.value === 'charge') {
     const appt = appointments.value.find((a) => a.id === id);
@@ -79,8 +86,8 @@ watch(showAppointmentPicker, async (show) => {
   }
 });
 
-watch(entryType, (newType) => {
-  if (newType !== 'charge') {
+watch(entryType, () => {
+  if (!showAppointmentPicker.value) {
     appointmentId.value = null;
   }
 });
@@ -92,7 +99,10 @@ async function submit() {
     fieldErrors.value.entry_type = t('ledger.typeRequired');
     return;
   }
-  if (!amountArs.value && !(showAppointmentPicker.value && appointmentId.value)) {
+  // The amount may be omitted only for a charge, which the server fills from the appointment's
+  // booked price. A payment always carries its own amount because it may be partial.
+  const inheritsAppointmentPrice = entryType.value === 'charge' && appointmentId.value != null;
+  if (!amountArs.value && !inheritsAppointmentPrice) {
     fieldErrors.value.amount_ars = t('ledger.amountRequired');
     return;
   }
