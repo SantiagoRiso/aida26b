@@ -4,17 +4,21 @@ import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
+import { useListQuerySync } from '@/composables/useListQuerySync';
 import { prefetchClientDetail } from '@/composables/clientDetailPrefetch';
 import { listRows } from '@/api/crud';
 import { listRelatedClientIds } from '@/api/appointments';
 import { structure } from '@shared/ssot/structure';
+import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import type { TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 import ClientDetail from '@/components/staff/ClientDetail.vue';
 import CreateClientForm from '@/components/staff/CreateClientForm.vue';
 import AppButton from '@/components/shared/AppButton.vue';
+import Pagination from '@/components/generic/Pagination.vue';
 
 const { t } = useI18n();
 const { success } = useToast();
@@ -23,42 +27,95 @@ const { label } = useLabel();
 
 const clientColumns = structure.tables.clients.columns;
 
+// Columns rendered as a table, in display order.
+const LIST_COLUMNS = ['display_name', 'dni', 'email', 'phone'] as const;
+// The two columns the search box pair queries. Both must stay declared filterable in the
+// descriptor for the server to honour them.
+const SEARCH_COLUMNS = ['display_name', 'dni'] as const;
+
+const DEFAULT_SORT = 'display_name';
+
 // The "prior relationship" scoping is only meaningful for staff whose client list is a subset
 // (Professional/Receptionist): an Admin sees every client, all of them relevant.
 const isAdmin = computed(() => auth.user?.role === 'Admin');
 
-const clients = ref<TableRecordMap['clients'][]>([]);
+const clients = ref<Wire<TableRecordMap['clients']>[]>([]);
 // Clients with a prior relationship = at least one appointment in the viewer-scoped list
 // (for a Professional that list is already limited to their own appointments).
 // Keyed by string id — the API serializes ids as strings.
 const relatedIds = ref<Set<string>>(new Set());
 const loading = ref(true);
+const total = ref(0);
+// The server owns the page size; this only seeds the render before the first response lands.
+const limit = ref(LIST_DEFAULT_LIMIT);
 
-const nameQuery = ref('');
 const includeUnrelated = ref(false);
 
-const filtered = computed(() => {
-  const q = nameQuery.value.trim().toLowerCase();
-  return clients.value.filter((c) => {
-    if (!isAdmin.value && !includeUnrelated.value && !relatedIds.value.has(String(c.id))) return false;
-    if (q) {
-      const matchesName = c.display_name.toLowerCase().includes(q);
-      const matchesDni = (c.dni ?? '').toLowerCase().includes(q);
-      if (!matchesName && !matchesDni) return false;
-    }
-    return true;
+// Filters, sort and page live in the URL under the shared list vocabulary, so a search can be
+// reloaded or shared. Search is server-side: the whole client list is never in memory.
+const listQuery = useListQuerySync({
+  onChange: () => { void loadClients(); },
+  sortableFields: () => LIST_COLUMNS.filter((key) => clientColumns[key].sortable),
+  filterableFields: () => [...SEARCH_COLUMNS],
+  defaultFilters: () => ({ display_name: '', dni: '' }),
+});
+const { page, sort, dir, filters } = listQuery;
+
+const activeSort = computed(() => sort.value || DEFAULT_SORT);
+
+function toggleSort(field: string) {
+  if (activeSort.value === field) {
+    dir.value = dir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sort.value = field;
+    dir.value = 'asc';
+  }
+  listQuery.commit();
+}
+
+function onSearchInput() {
+  page.value = 1;
+  listQuery.commitDebounced();
+}
+
+function goToPage(next: number) {
+  page.value = next;
+  listQuery.commit();
+}
+
+async function loadClients() {
+  loading.value = true;
+  const result = await listRows('clients', {
+    page: page.value,
+    limit: listQuery.limit.value,
+    sort: activeSort.value,
+    dir: dir.value,
+    filters: filters.value,
   });
+  if (result.ok) {
+    clients.value = result.data;
+    total.value = result.meta?.total ?? result.data.length;
+    limit.value = result.meta?.limit ?? LIST_DEFAULT_LIMIT;
+  }
+  loading.value = false;
+}
+
+// Relatedness is a property of the viewer, not of the page — fetched once, not per page.
+async function loadRelatedIds() {
+  if (isAdmin.value) return;
+  const result = await listRelatedClientIds();
+  if (result.ok) relatedIds.value = new Set(result.data.map((id) => String(id)));
+}
+
+// Unrelated clients stay hidden from non-Admin staff unless they ask for them. The server has
+// no membership filter, so this narrows the fetched page rather than the query.
+const visibleClients = computed(() => {
+  if (isAdmin.value || includeUnrelated.value) return clients.value;
+  return clients.value.filter((c) => relatedIds.value.has(String(c.id)));
 });
 
 async function load() {
-  loading.value = true;
-  const [clientsRes, relatedRes] = await Promise.all([
-    listRows('clients', { limit: 500, sort: 'display_name', dir: 'asc' }),
-    listRelatedClientIds(),
-  ]);
-  if (clientsRes.ok) clients.value = clientsRes.data;
-  if (relatedRes.ok) relatedIds.value = new Set(relatedRes.data.map((id) => String(id)));
-  loading.value = false;
+  await Promise.all([loadClients(), loadRelatedIds()]);
 }
 
 const selectedClientId = ref<number | null>(null);
@@ -96,10 +153,14 @@ onMounted(load);
 
     <div class="flex flex-wrap items-center gap-4">
       <input
-        v-model="nameQuery"
+        v-for="field in SEARCH_COLUMNS"
+        :key="field"
+        v-model="filters[field]"
         type="search"
-        :placeholder="t('clients.searchPlaceholder')"
-        class="w-64 rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+        :aria-label="label(clientColumns[field].label)"
+        :placeholder="label(clientColumns[field].label)"
+        class="w-48 rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+        @input="onSearchInput"
       />
       <label v-if="!isAdmin" class="flex items-center gap-2 text-sm text-neutral">
         <input type="checkbox" v-model="includeUnrelated" class="accent-accent" />
@@ -111,7 +172,7 @@ onMounted(load);
       <Skeleton variant="row" :rows="6" />
     </div>
 
-    <div v-else-if="filtered.length === 0">
+    <div v-else-if="visibleClients.length === 0">
       <EmptyState
         :heading="t('clients.emptyHeading')"
         :body="(includeUnrelated || isAdmin)
@@ -124,15 +185,23 @@ onMounted(load);
       <table class="w-full text-sm">
         <thead class="bg-surface text-left">
           <tr>
-            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.display_name.label) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.dni.label) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.email.label) }}</th>
-            <th class="px-4 py-3 font-semibold">{{ label(clientColumns.phone.label) }}</th>
+            <th
+              v-for="field in LIST_COLUMNS"
+              :key="field"
+              class="px-4 py-3 font-semibold"
+              :class="clientColumns[field].sortable ? 'cursor-pointer select-none hover:bg-border' : ''"
+              @click="clientColumns[field].sortable ? toggleSort(field) : undefined"
+            >
+              {{ label(clientColumns[field].label) }}
+              <span v-if="clientColumns[field].sortable && activeSort === field" class="ml-1 text-xs text-neutral">
+                {{ dir === 'asc' ? '↑' : '↓' }}
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="c in filtered"
+            v-for="c in visibleClients"
             :key="c.id"
             class="virtualized-row border-t border-border hover:bg-surface cursor-pointer"
             @pointerenter="prefetchClientDetail(Number(c.id))"
@@ -155,6 +224,14 @@ onMounted(load);
         </tbody>
       </table>
     </div>
+
+    <Pagination
+      v-if="!loading && (total > limit || page > 1)"
+      :page="page"
+      :limit="limit"
+      :total="total"
+      @change="goToPage"
+    />
 
     <DetailPanel
       :open="clientOpen"

@@ -33,17 +33,17 @@ async function loginAsDemoReset(page: Page) {
   return true;
 }
 
+// The seeded demo_reset password is a precondition of this suite, not a coin flip: the two
+// read-only specs below assert it rather than skipping, so a stale DB fails loudly.
+const STALE_SEED_HINT =
+  'demo_reset login failed — its password was already changed by a prior run. ' +
+  'Re-seed (`npm run seed:demo --prefix backend`) against a fresh test DB. ' +
+  'In CI this spec always starts fresh (ephemeral Postgres per job).';
+
 test.describe('Forced password change', () => {
   test('demo_reset logs in and is immediately routed to ChangePasswordView', async ({ page }) => {
     const ok = await loginAsDemoReset(page);
-    if (!ok) {
-      console.warn(
-        'demo_reset login failed — password was already changed by a prior test run. ' +
-        'Re-run `npm run seed:demo --prefix backend` and start a fresh test DB to reset. ' +
-        'In CI this spec always starts fresh (ephemeral Postgres per job).',
-      );
-      return;
-    }
+    expect(ok, STALE_SEED_HINT).toBe(true);
 
     await page.waitForURL(/\/change-password/, { timeout: 10_000 });
 
@@ -56,10 +56,7 @@ test.describe('Forced password change', () => {
 
   test('ChangePasswordView fills the entire screen — no sidebar nav visible when forced', async ({ page }) => {
     const ok = await loginAsDemoReset(page);
-    if (!ok) {
-      console.warn('demo_reset login failed — password already changed. Skipping guard test.');
-      return;
-    }
+    expect(ok, STALE_SEED_HINT).toBe(true);
 
     await page.waitForURL(/\/change-password/, { timeout: 10_000 });
 
@@ -77,10 +74,9 @@ test.describe('Forced password change', () => {
 
   test('demo_reset changes password and reaches staff dashboard', async ({ page }) => {
     const ok = await loginAsDemoReset(page);
-    if (!ok) {
-      console.warn('demo_reset login failed — password already changed. Skipping change-and-proceed test.');
-      return;
-    }
+    // This is the spec that consumes the seeded password, so a second run without a re-seed
+    // genuinely cannot exercise it — reported as a skip, never as a pass.
+    test.skip(!ok, STALE_SEED_HINT);
 
     await page.waitForURL(/\/change-password/, { timeout: 10_000 });
 

@@ -1,110 +1,77 @@
 import { test, expect } from '@playwright/test';
 import { login, DEMO_ACCOUNTS, es } from './helpers';
+// The search fields are labelled from the column descriptors, not from a UI string bundle.
+import { structure } from '../../shared/src/ssot/structure';
 
 /**
  * The seeded dataset has 30+ clients (demo_client1..33 plus the named `client`/`clientOverdue`
- * fixtures), but the server's default page size (LIST_DEFAULT_LIMIT, shared/src/ssot/list-protocol.ts)
- * is 50 — GenericTable.vue (frontend/src/components/generic/GenericTable.vue) never sends a `limit`
- * param, so the live clients table now always fits on a single page and Siguiente/Anterior never
- * render. The tests below tolerate that (they warn+skip rather than fail when no multi-page UI
- * exists) so they still hold if the dataset later grows past 50.
+ * fixtures), which is under the server's default page size (LIST_DEFAULT_LIMIT, 50, in
+ * shared/src/ssot/list-protocol.ts). The clients list binds its page/sort/filter state to the URL
+ * (frontend/src/composables/useListQuerySync.ts), so these specs open it with an explicit
+ * `?limit=10` — a real, user-reachable URL — to exercise the pagination UI against the seeded
+ * dataset instead of waiting for it to grow past 50.
  *
- * The generic CRUD GET routes DO honor an explicit `?limit=` (backend/src/routes/list-request.ts
- * parseListRequest reads query.limit, clamped to LIST_MAX_LIMIT) even though the UI never sends one.
- * The last test below drives that directly to prove the pagination math (page/limit/total → page
- * count) still works, since it's no longer observable through the rendered table.
+ * Admin is used deliberately: the clients list hides clients a Professional/Receptionist has no
+ * prior relationship with, which would make the visible row count depend on the seeded
+ * appointment history.
  */
+const CLIENTS_PAGED_URL = '/staff/clients?limit=10';
+
+async function openClientsPaged(page: import('@playwright/test').Page) {
+  await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+  await page.goto(CLIENTS_PAGED_URL);
+  await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('tbody tr').first()).toBeVisible();
+}
+
 test.describe('Pagination', () => {
   test('clients list shows pagination controls when total > limit', async ({ page }) => {
-    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: es.nav.clients }).click();
+    await openClientsPaged(page);
 
-    await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('tbody tr')).toHaveCount(10);
 
-    const nextBtn = page.getByRole('button', { name: es.generic.next });
     const prevBtn = page.getByRole('button', { name: es.generic.previous });
+    const nextBtn = page.getByRole('button', { name: es.generic.next });
 
-    const hasPagination = await nextBtn.isVisible().catch(() => false)
-      || await prevBtn.isVisible().catch(() => false)
-      || await page.getByText(/página|page/i).first().isVisible().catch(() => false);
-
-    if (!hasPagination) {
-      const rows = page.locator('tbody tr');
-      await expect(rows.first()).toBeVisible();
-      console.warn('Pagination controls not visible — may be fewer records than limit or pagination uses different elements.');
-      return;
-    }
-
-    if (await prevBtn.isVisible()) {
-      await expect(prevBtn).toBeDisabled();
-    }
-    if (await nextBtn.isVisible()) {
-      await expect(nextBtn).toBeEnabled();
-    }
+    await expect(page.getByText(es.generic.page, { exact: false })).toBeVisible();
+    await expect(prevBtn).toBeDisabled();
+    await expect(nextBtn).toBeEnabled();
   });
 
   test('clicking Siguiente navigates to page 2', async ({ page }) => {
-    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: es.nav.clients }).click();
-
-    await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
-
-    const nextBtn = page.getByRole('button', { name: es.generic.next });
-    const nextVisible = await nextBtn.isVisible().catch(() => false);
-
-    if (!nextVisible) {
-      console.warn('No "Siguiente" button visible; single-page dataset. Navigation test skipped.');
-      return;
-    }
+    await openClientsPaged(page);
 
     const firstRowPage1 = await page.locator('tbody tr').first().textContent();
 
-    await nextBtn.click();
-    await page.waitForTimeout(1000);
+    await page.getByRole('button', { name: es.generic.next }).click();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(page.getByRole('button', { name: es.generic.previous })).toBeEnabled();
 
-    const prevBtn = page.getByRole('button', { name: es.generic.previous });
-    if (await prevBtn.isVisible()) {
-      await expect(prevBtn).toBeEnabled();
-    }
-
-    const firstRowPage2 = await page.locator('tbody tr').first().textContent();
-    if (firstRowPage1 && firstRowPage2) {
-      expect(firstRowPage2).not.toEqual(firstRowPage1);
-    }
+    await expect
+      .poll(() => page.locator('tbody tr').first().textContent())
+      .not.toEqual(firstRowPage1);
   });
 
   test('clicking Anterior returns to page 1', async ({ page }) => {
-    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
-    await page.getByRole('link', { name: es.nav.clients }).click();
-
-    await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
-
-    const nextBtn = page.getByRole('button', { name: es.generic.next });
-    const nextVisible = await nextBtn.isVisible().catch(() => false);
-
-    if (!nextVisible) {
-      console.warn('No "Siguiente" button visible; single-page dataset. Prev-navigation test skipped.');
-      return;
-    }
+    await openClientsPaged(page);
 
     const firstRowPage1 = await page.locator('tbody tr').first().textContent();
 
-    await nextBtn.click();
-    await page.waitForTimeout(1000);
-
+    const nextBtn = page.getByRole('button', { name: es.generic.next });
     const prevBtn = page.getByRole('button', { name: es.generic.previous });
+
+    await nextBtn.click();
+    await expect(page).toHaveURL(/page=2/);
     await expect(prevBtn).toBeEnabled();
+
     await prevBtn.click();
-    await page.waitForTimeout(1000);
+    // Page 1 is the default, so it leaves no page key behind.
+    await expect(page).not.toHaveURL(/page=/);
+    await expect(prevBtn).toBeDisabled();
 
-    const firstRowAfterBack = await page.locator('tbody tr').first().textContent();
-    if (firstRowPage1 && firstRowAfterBack) {
-      expect(firstRowAfterBack).toEqual(firstRowPage1);
-    }
-
-    if (await prevBtn.isVisible()) {
-      await expect(prevBtn).toBeDisabled();
-    }
+    await expect
+      .poll(() => page.locator('tbody tr').first().textContent())
+      .toEqual(firstRowPage1);
   });
 
   test('backend meta envelope is correct for paginated response', async ({ page }) => {
@@ -115,15 +82,9 @@ test.describe('Pagination', () => {
       { timeout: 15_000 },
     );
     await page.getByRole('link', { name: es.nav.clients }).click();
-    const response = await responsePromise.catch(() => null);
+    const response = await responsePromise;
 
-    if (!response) {
-      console.warn('No /api/clients response captured; skipping meta envelope check.');
-      return;
-    }
-
-    const json = await response.json().catch(() => null);
-    if (!json) return;
+    const json = await response.json();
 
     expect(json.success).toBe(true);
     expect(Array.isArray(json.data)).toBe(true);
@@ -137,6 +98,21 @@ test.describe('Pagination', () => {
     expect(json.meta.total).toBeGreaterThanOrEqual(0);
   });
 
+  test('the list requests only one page, never the whole table', async ({ page }) => {
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+
+    const responsePromise = page.waitForResponse(
+      (r) => r.url().includes('/api/clients') && r.request().method() === 'GET',
+      { timeout: 15_000 },
+    );
+    await page.getByRole('link', { name: es.nav.clients }).click();
+    const response = await responsePromise;
+
+    const json = await response.json();
+    expect(json.meta.limit).toBeLessThanOrEqual(50);
+    expect(json.data.length).toBeLessThanOrEqual(json.meta.limit);
+  });
+
   test('seeded clients list has 30+ records, and a smaller limit yields multiple pages', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
 
@@ -144,9 +120,6 @@ test.describe('Pagination', () => {
     const defaultJson = await defaultRes.json();
     expect(defaultJson.meta.total).toBeGreaterThan(20);
 
-    // The default limit (50) now exceeds the seeded client count, so the live table is single-page
-    // (see file header). Request a smaller limit directly to prove the server's pagination
-    // arithmetic still produces multiple pages for a dataset that exceeds it.
     const smallLimitRes = await page.request.get('/api/clients?limit=10');
     const smallLimitJson = await smallLimitRes.json();
     expect(smallLimitJson.meta.limit).toBe(10);
@@ -154,5 +127,29 @@ test.describe('Pagination', () => {
 
     const totalPages = Math.ceil(smallLimitJson.meta.total / smallLimitJson.meta.limit);
     expect(totalPages).toBeGreaterThan(1);
+  });
+
+  test('the clients search narrows the list server-side', async ({ page }) => {
+    await openClientsPaged(page);
+
+    // Search for a name the seeded dataset is known to contain: the one on screen.
+    const firstName = (await page.locator('tbody tr td').first().innerText()).trim();
+    expect(firstName.length).toBeGreaterThan(0);
+
+    const responsePromise = page.waitForResponse(
+      (r) => r.url().includes('filter_display_name=') && r.request().method() === 'GET',
+      { timeout: 15_000 },
+    );
+    await page.getByLabel(structure.tables.clients.columns.display_name.label.es).fill(firstName);
+    const response = await responsePromise;
+    const json = await response.json();
+
+    // The narrowing happened on the server: the response itself carries only matches.
+    expect(json.meta.total).toBeGreaterThanOrEqual(1);
+    expect(json.data.length).toBeLessThanOrEqual(json.meta.limit);
+    for (const row of json.data) {
+      expect(String(row.display_name).toLowerCase()).toContain(firstName.toLowerCase());
+    }
+    await expect(page).toHaveURL(/filter_display_name=/);
   });
 });

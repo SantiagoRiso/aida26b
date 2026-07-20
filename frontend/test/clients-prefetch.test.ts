@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
+import { createRouter, createMemoryHistory } from 'vue-router';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
@@ -26,6 +27,17 @@ vi.mock('@/api/appointments', () => ({
 
 const makeI18n = () => createI18n({ legacy: false, locale: 'es', messages: { es, en } });
 
+// The list binds its state to the URL, so the view needs a router to mount.
+async function makeRouter() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div/>' } }],
+  });
+  await router.push('/');
+  await router.isReady();
+  return router;
+}
+
 // Admin sees every client, so the rows render without needing a prior-relationship fixture.
 async function mountAsAdmin() {
   setActivePinia(createPinia());
@@ -35,7 +47,7 @@ async function mountAsAdmin() {
     is_active: true, must_change_password: false,
   };
   const wrapper = mount(ClientsView, {
-    global: { plugins: [makeI18n()], stubs: { DetailPanel: true } },
+    global: { plugins: [makeI18n(), await makeRouter()], stubs: { DetailPanel: true } },
   });
   await flushPromises();
   return wrapper;
