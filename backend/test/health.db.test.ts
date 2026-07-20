@@ -15,12 +15,12 @@ beforeAll(async () => {
 
   const app = express();
   registerHealthRoute(app, pool);
-  server = app.listen(4139);
+  server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
-  base = 'http://localhost:4139';
+  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 
 afterAll(async () => {
@@ -43,11 +43,12 @@ describe('GET /health', () => {
         throw new Error('SELECT 1 unreachable');
       },
     });
-    const s = failing.listen(4141);
+    const s = failing.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => s.once('listening', () => resolve()));
+    const failingBase = `http://127.0.0.1:${(s.address() as { port: number }).port}`;
 
     try {
-      const res = await fetch('http://localhost:4141/health');
+      const res = await fetch(`${failingBase}/health`);
       const body = await res.json();
       expect(res.status).toBe(503);
       expect(body.success).toBe(false);

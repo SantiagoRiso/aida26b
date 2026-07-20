@@ -9,8 +9,9 @@ import { afterAll, afterEach, beforeAll, test, expect } from 'vitest';
 import type { AuthUser } from '../src/auth';
 import type { Server } from 'node:http';
 
-const TESTS_PORT = 4137;
-export const API_BASE = `http://localhost:${TESTS_PORT}/api`;
+// Set once the ephemeral listener is up (see beforeAll) — live ESM binding so
+// test_helpers.ts sees the real value by the time tests call it.
+export let API_BASE = '';
 
 let server: Server;
 let testsPool: Pool;
@@ -58,11 +59,12 @@ beforeAll(async () => {
   professionalUserId = professionalUser.rows[0].id;
 
   const app = createApp(testsPool, { defaultUser });
-  server = app.listen(TESTS_PORT);
+  server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
+  API_BASE = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
 });
 
 afterEach(async () => {

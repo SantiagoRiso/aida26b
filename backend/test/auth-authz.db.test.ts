@@ -176,8 +176,7 @@ describe('Professional self-scope on writes', () => {
   });
 });
 
-const TESTS_PORT = 4139;
-const API_BASE = `http://localhost:${TESTS_PORT}/api`;
+let API_BASE = '';
 
 let server: Server;
 let testsPool: Pool;
@@ -222,11 +221,12 @@ beforeAll(async () => {
   clientUserIdB = uB.rows[0].id;
 
   const app = createApp(testsPool, { defaultUser: superAdmin });
-  server = app.listen(TESTS_PORT);
+  server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
+  API_BASE = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
 });
 
 afterAll(async () => {
@@ -253,17 +253,17 @@ describe('422 rejection of server-derived fields', () => {
 });
 
 describe('generic routes fail closed without an authenticated user', () => {
-  const PORT = 4140;
-  const BASE = `http://localhost:${PORT}/api`;
+  let BASE = '';
   let closedServer: Server;
 
   beforeAll(async () => {
     const app = createApp(testsPool);
-    closedServer = app.listen(PORT);
+    closedServer = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve, reject) => {
       closedServer.once('listening', resolve);
       closedServer.once('error', reject);
     });
+    BASE = `http://127.0.0.1:${(closedServer.address() as { port: number }).port}/api`;
   });
 
   afterAll(() => {

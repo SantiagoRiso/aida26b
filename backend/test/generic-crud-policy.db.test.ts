@@ -19,8 +19,7 @@ const superAdmin: AuthUser = {
   must_change_password: false,
 };
 
-const TESTS_PORT = 4138;
-const API_BASE = `http://localhost:${TESTS_PORT}/api`;
+let API_BASE = '';
 
 let server: Server;
 let testsPool: Pool;
@@ -59,11 +58,12 @@ beforeAll(async () => {
   clientUserId = clientUser.rows[0].id;
 
   const app = createApp(testsPool, { defaultUser: superAdmin });
-  server = app.listen(TESTS_PORT);
+  server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
+  API_BASE = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
 });
 
 afterAll(async () => {
