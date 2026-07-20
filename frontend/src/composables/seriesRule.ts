@@ -4,7 +4,8 @@
 // calls (and the DB's appointment_series_pattern_shape / appointment_series_end_shape CHECKs).
 import { isWeekday, weekdayOf } from '@shared/ssot/domain/availability';
 import type { Frequency, EndKind } from '@shared/ssot/domain/recurrence';
-import { validateRecurrenceRule, type RecurrenceRuleFields } from '@shared/ssot/domain/recurrence';
+import { validateRecurrenceRuleIssues, type RecurrenceRuleFields } from '@shared/ssot/domain/recurrence';
+import { fieldErrorMessage } from '@/i18n/api-errors';
 import type { AppointmentSeries, ScheduleSeriesBody } from '@/api/appointments';
 
 export interface RecurrenceState {
@@ -60,7 +61,9 @@ export function recurrenceShape(recurrence: Pick<RecurrenceState, 'frequency'>):
 
 // Minimal client-side check (required fields per frequency/end_kind, interval >= 1); the server
 // re-validates authoritatively — this only avoids a round-trip for obviously incomplete input.
-export function validateRecurrenceFields(recurrence: RecurrenceState, t: (key: string) => string): Record<string, string> {
+// Resolves through fieldErrorMessage (same fieldError.<key> ladder a server-rejected save uses) so
+// a locally-caught issue reads exactly like the one the API would have returned.
+export function validateRecurrenceFields(recurrence: RecurrenceState): Record<string, string> {
   const numberOrNull = (value: string): number | null => value === '' ? null : Number(value);
   const shape = recurrenceShape(recurrence);
   const rule: RecurrenceRuleFields = {
@@ -75,10 +78,10 @@ export function validateRecurrenceFields(recurrence: RecurrenceState, t: (key: s
     end_count: recurrence.end_kind === 'count' ? numberOrNull(recurrence.end_count) : null,
     end_date: recurrence.end_kind === 'until' ? (recurrence.end_date || null) : null,
   };
-  const domainErrors = validateRecurrenceRule(rule);
-  delete domainErrors.start_time;
-  delete domainErrors.start_date;
-  return Object.fromEntries(Object.keys(domainErrors).map((field) => [field, t('generic.required')]));
+  const domainIssues = validateRecurrenceRuleIssues(rule);
+  delete domainIssues.start_time;
+  delete domainIssues.start_date;
+  return Object.fromEntries(Object.entries(domainIssues).map(([field, issue]) => [field, fieldErrorMessage(issue)]));
 }
 
 // Whole/this-and-future rule edit patch: unlike creation (where an omitted key simply means "not

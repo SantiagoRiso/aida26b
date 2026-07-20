@@ -29,7 +29,7 @@ const recurrence = reactive(recurrenceStateFromSeries(props.series));
 const fieldErrors = ref<Record<string, string>>({});
 
 function submit() {
-  const errors = validateRecurrenceFields(recurrence, t);
+  const errors = validateRecurrenceFields(recurrence);
   if (Object.keys(errors).length > 0) {
     fieldErrors.value = errors;
     return;

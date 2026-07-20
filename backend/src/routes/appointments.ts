@@ -800,7 +800,9 @@ export function mountAppointmentRoutes(
       end_date: body.end_date != null ? String(body.end_date) : null,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
+    if ('fields' in parsedRule) {
+      return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields, fieldDetails: parsedRule.fieldDetails });
+    }
     const rule = parsedRule.data;
 
     const series = await withTransaction(pool, async (tx) => {
@@ -961,7 +963,9 @@ export function mountAppointmentRoutes(
       end_date: body.end_date !== undefined ? (body.end_date != null ? String(body.end_date) : null) : series.end_date,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
+    if ('fields' in parsedRule) {
+      return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields, fieldDetails: parsedRule.fieldDetails });
+    }
     const rule = parsedRule.data;
 
     const patch: Partial<InsertSeriesInput> = {
@@ -1062,7 +1066,9 @@ export function mountAppointmentRoutes(
       end_date: patch.end_date !== undefined ? (patch.end_date != null ? String(patch.end_date) : null) : series.end_date,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
+    if ('fields' in parsedRule) {
+      return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields, fieldDetails: parsedRule.fieldDetails });
+    }
     const rule = parsedRule.data;
 
     const result = await withTransaction(pool, async (tx) => {

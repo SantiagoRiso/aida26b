@@ -226,7 +226,7 @@ function buildSeriesBody(): ScheduleSeriesBody {
 // Minimal client-side check (required fields per frequency/end_kind, interval >= 1); the server
 // re-validates authoritatively — this only avoids a round-trip for obviously incomplete input.
 function validateRecurrence(): boolean {
-  const errors = validateRecurrenceFields(recurrence, t);
+  const errors = validateRecurrenceFields(recurrence);
   if (Object.keys(errors).length > 0) {
     fieldErrors.value = errors;
     return false;

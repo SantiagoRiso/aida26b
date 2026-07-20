@@ -70,6 +70,7 @@ export {
   isFrequency,
   isEndKind,
   validateRecurrenceRule,
+  validateRecurrenceRuleIssues,
   parseRecurrenceRule,
 } from './recurrence';
 export type {

@@ -409,12 +409,11 @@ describe('seriesRule composable', () => {
   });
 
   it('validateRecurrenceFields requires weekday for weekly/monthly_dow and day_of_month for monthly_dom', () => {
-    const t = (k: string) => k;
     const weekly = recurrenceStateFromSeries({ ...seriesRow, weekday: null });
-    expect(validateRecurrenceFields(weekly, t).weekday).toBeTruthy();
+    expect(validateRecurrenceFields(weekly).weekday).toBeTruthy();
 
     const dom = recurrenceStateFromSeries({ ...seriesRow, frequency: 'monthly_dom', weekday: null, day_of_month: null });
     dom.day_of_month = '';
-    expect(validateRecurrenceFields(dom, t).day_of_month).toBeTruthy();
+    expect(validateRecurrenceFields(dom).day_of_month).toBeTruthy();
   });
 });

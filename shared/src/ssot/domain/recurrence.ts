@@ -1,4 +1,5 @@
 import type { LocalizedText, TableStructure } from '../../types/types';
+import type { ErrorDetail, ErrorParams } from '../envelope';
 import { pkColumn } from './business';
 import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE, AMOUNT_PATTERN_KEY } from './catalog';
 import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, HHMM_PATTERN_KEY, WEEKDAY_OPTIONS, isWeekday, type Weekday } from './availability';
@@ -70,55 +71,101 @@ function isIntegerInRange(value: number | null, min: number, max?: number): valu
   return value !== null && Number.isInteger(value) && value >= min && (max === undefined || value <= max);
 }
 
-export function validateRecurrenceRule(rule: RecurrenceRuleFields): Record<string, string> {
-  const fields: Record<string, string> = {};
-  if (!isFrequency(rule.frequency)) fields.frequency = `must be one of: ${FREQUENCY_VALUES.join(', ')}`;
-  if (!isIntegerInRange(rule.interval, RECURRENCE_LIMITS.intervalMin)) fields.interval = 'must be a positive integer';
-  if (!ISO_DATE_RE.test(rule.start_date)) fields.start_date = 'must be YYYY-MM-DD';
-  if (!HHMM_RE.test(rule.start_time)) fields.start_time = 'must be HH:MM';
+// Same two-projection shape shared/src/validation/validate.ts uses (English prose + stable key):
+// kept local rather than imported to avoid a cycle (validate.ts pulls in structure.ts, which pulls
+// in this file to build the appointment_series table descriptor).
+type Failure = { issue: ErrorDetail; message: string };
+
+function fail(key: string, message: string, params?: ErrorParams): Failure {
+  return { issue: params ? { key, params } : { key }, message };
+}
+
+function checkRecurrenceRule(rule: RecurrenceRuleFields): Record<string, Failure> {
+  const fields: Record<string, Failure> = {};
+  if (!isFrequency(rule.frequency)) {
+    fields.frequency = fail('recurrenceFrequencyInvalid', `must be one of: ${FREQUENCY_VALUES.join(', ')}`);
+  }
+  if (!isIntegerInRange(rule.interval, RECURRENCE_LIMITS.intervalMin)) {
+    fields.interval = fail('recurrenceIntervalInvalid', 'must be a positive integer', { min: RECURRENCE_LIMITS.intervalMin });
+  }
+  if (!ISO_DATE_RE.test(rule.start_date)) fields.start_date = fail('dateFormat', 'must be YYYY-MM-DD');
+  if (!HHMM_RE.test(rule.start_time)) fields.start_time = fail('timeOfDayFormat', 'must be HH:MM');
 
   const validWeekday = isWeekday(rule.weekday);
   if (rule.frequency === 'weekly') {
-    if (!validWeekday) fields.weekday = 'required for weekly frequency';
-    if (rule.week_of_month !== null) fields.week_of_month = 'must be omitted for weekly frequency';
-    if (rule.day_of_month !== null) fields.day_of_month = 'must be omitted for weekly frequency';
+    if (!validWeekday) fields.weekday = fail('recurrenceWeekdayRequired', 'required for weekly frequency');
+    if (rule.week_of_month !== null) fields.week_of_month = fail('recurrenceFieldNotApplicable', 'must be omitted for weekly frequency');
+    if (rule.day_of_month !== null) fields.day_of_month = fail('recurrenceFieldNotApplicable', 'must be omitted for weekly frequency');
   } else if (rule.frequency === 'monthly_dow') {
-    if (!validWeekday) fields.weekday = 'required for monthly_dow frequency';
+    if (!validWeekday) fields.weekday = fail('recurrenceWeekdayRequired', 'required for monthly_dow frequency');
     if (!isIntegerInRange(rule.week_of_month, RECURRENCE_LIMITS.weekOfMonthMin, RECURRENCE_LIMITS.weekOfMonthMax)) {
-      fields.week_of_month = 'must be an integer 1..5';
+      fields.week_of_month = fail('recurrenceWeekOfMonthRange', 'must be an integer 1..5', {
+        min: RECURRENCE_LIMITS.weekOfMonthMin,
+        max: RECURRENCE_LIMITS.weekOfMonthMax,
+      });
     }
-    if (rule.day_of_month !== null) fields.day_of_month = 'must be omitted for monthly_dow frequency';
+    if (rule.day_of_month !== null) fields.day_of_month = fail('recurrenceFieldNotApplicable', 'must be omitted for monthly_dow frequency');
   } else if (rule.frequency === 'monthly_dom') {
-    if (rule.weekday !== null) fields.weekday = 'must be omitted for monthly_dom frequency';
-    if (rule.week_of_month !== null) fields.week_of_month = 'must be omitted for monthly_dom frequency';
+    if (rule.weekday !== null) fields.weekday = fail('recurrenceFieldNotApplicable', 'must be omitted for monthly_dom frequency');
+    if (rule.week_of_month !== null) fields.week_of_month = fail('recurrenceFieldNotApplicable', 'must be omitted for monthly_dom frequency');
     if (!isIntegerInRange(rule.day_of_month, RECURRENCE_LIMITS.dayOfMonthMin, RECURRENCE_LIMITS.dayOfMonthMax)) {
-      fields.day_of_month = 'must be an integer 1..31';
+      fields.day_of_month = fail('recurrenceDayOfMonthRange', 'must be an integer 1..31', {
+        min: RECURRENCE_LIMITS.dayOfMonthMin,
+        max: RECURRENCE_LIMITS.dayOfMonthMax,
+      });
     }
   }
 
   if (!isEndKind(rule.end_kind)) {
-    fields.end_kind = `must be one of: ${END_KIND_VALUES.join(', ')}`;
+    fields.end_kind = fail('recurrenceEndKindInvalid', `must be one of: ${END_KIND_VALUES.join(', ')}`);
   } else if (rule.end_kind === 'count') {
-    if (!isIntegerInRange(rule.end_count, RECURRENCE_LIMITS.endCountMin)) fields.end_count = 'required, must be a positive integer';
-    if (rule.end_date !== null) fields.end_date = 'must be omitted for end_kind=count';
+    if (!isIntegerInRange(rule.end_count, RECURRENCE_LIMITS.endCountMin)) {
+      fields.end_count = fail('recurrenceEndCountRequired', 'required, must be a positive integer');
+    }
+    if (rule.end_date !== null) fields.end_date = fail('recurrenceEndFieldNotApplicable', 'must be omitted for end_kind=count');
   } else if (rule.end_kind === 'until') {
-    if (rule.end_date === null || !ISO_DATE_RE.test(rule.end_date)) fields.end_date = 'required, must be YYYY-MM-DD';
-    else if (rule.end_date < rule.start_date) fields.end_date = 'must be on/after start_date';
-    if (rule.end_count !== null) fields.end_count = 'must be omitted for end_kind=until';
+    if (rule.end_date === null) {
+      fields.end_date = fail('required', 'required, must be YYYY-MM-DD');
+    } else if (!ISO_DATE_RE.test(rule.end_date)) {
+      fields.end_date = fail('dateFormat', 'required, must be YYYY-MM-DD');
+    } else if (rule.end_date < rule.start_date) {
+      fields.end_date = fail('recurrenceEndDateBeforeStart', 'must be on/after start_date');
+    }
+    if (rule.end_count !== null) fields.end_count = fail('recurrenceEndFieldNotApplicable', 'must be omitted for end_kind=until');
   } else {
-    if (rule.end_count !== null) fields.end_count = 'must be omitted for end_kind=open';
-    if (rule.end_date !== null) fields.end_date = 'must be omitted for end_kind=open';
+    if (rule.end_count !== null) fields.end_count = fail('recurrenceEndFieldNotApplicable', 'must be omitted for end_kind=open');
+    if (rule.end_date !== null) fields.end_date = fail('recurrenceEndFieldNotApplicable', 'must be omitted for end_kind=open');
   }
   return fields;
 }
 
+// English prose only — kept for callers that just want a human-readable field->message map
+// (logs, non-UI consumers). UI consumers want validateRecurrenceRuleIssues instead.
+export function validateRecurrenceRule(rule: RecurrenceRuleFields): Record<string, string> {
+  return Object.fromEntries(Object.entries(checkRecurrenceRule(rule)).map(([field, f]) => [field, f.message]));
+}
+
+// Stable key + params per failed field, same shape shared/src/validation/validate.ts emits, so the
+// frontend's fieldError.<key> resolution works identically for a recurrence rule as for any other table.
+export function validateRecurrenceRuleIssues(rule: RecurrenceRuleFields): Record<string, ErrorDetail> {
+  return Object.fromEntries(Object.entries(checkRecurrenceRule(rule)).map(([field, f]) => [field, f.issue]));
+}
+
 export function parseRecurrenceRule(rule: RecurrenceRuleFields):
   | { data: ValidatedRecurrenceRuleFields }
-  | { fields: Record<string, string> } {
-  const fields = validateRecurrenceRule(rule);
-  if (Object.keys(fields).length > 0) return { fields };
+  | { fields: Record<string, string>; fieldDetails: Record<string, ErrorDetail> } {
+  const failures = checkRecurrenceRule(rule);
+  if (Object.keys(failures).length > 0) {
+    return {
+      fields: Object.fromEntries(Object.entries(failures).map(([field, f]) => [field, f.message])),
+      fieldDetails: Object.fromEntries(Object.entries(failures).map(([field, f]) => [field, f.issue])),
+    };
+  }
   if (!isFrequency(rule.frequency) || !isEndKind(rule.end_kind)) {
-    return { fields: { recurrence: 'invalid recurrence rule' } };
+    return {
+      fields: { recurrence: 'invalid recurrence rule' },
+      fieldDetails: { recurrence: { key: 'recurrenceInvalid' } },
+    };
   }
   return {
     data: {

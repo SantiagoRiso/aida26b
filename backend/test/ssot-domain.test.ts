@@ -25,8 +25,10 @@ import {
   LEDGER_ENTRY_TYPES,
   BUSINESS_TZ,
   ARGENTINA_OFFSET_MS,
+  parseRecurrenceRule,
+  validateRecurrenceRuleIssues,
 } from '../../shared/src/ssot/domain';
-import type { BookedAppointment, LedgerEntryType } from '../../shared/src/ssot/domain';
+import type { BookedAppointment, LedgerEntryType, RecurrenceRuleFields } from '../../shared/src/ssot/domain';
 import type {
   TableStructure,
   SchedulableCapability,
@@ -801,5 +803,108 @@ describe('booking-window columns', () => {
     expect(Object.keys((structure.tables.professional_services as TableStructure).columns)).toEqual(
       expect.arrayContaining(['min_booking_days', 'max_booking_days']),
     );
+  });
+});
+
+describe('recurrence rule validator: keys + params, not just English prose', () => {
+  const validRule: RecurrenceRuleFields = {
+    frequency: 'weekly',
+    interval: 1,
+    weekday: 'mon',
+    week_of_month: null,
+    day_of_month: null,
+    start_time: '10:00',
+    start_date: '2026-07-20',
+    end_kind: 'count',
+    end_count: 4,
+    end_date: null,
+  };
+
+  it('a fully valid rule parses to data with no failures', () => {
+    const result = parseRecurrenceRule(validRule);
+    expect('data' in result).toBe(true);
+  });
+
+  it('names an invalid frequency distinctly from the generic notInOptions shape', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, frequency: 'daily' }).frequency)
+      .toEqual({ key: 'recurrenceFrequencyInvalid' });
+  });
+
+  it('carries the interval floor as a param', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, interval: 0 }).interval)
+      .toEqual({ key: 'recurrenceIntervalInvalid', params: { min: 1 } });
+  });
+
+  it('requires weekday for weekly and monthly_dow, by the same key', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, weekday: null }).weekday)
+      .toEqual({ key: 'recurrenceWeekdayRequired' });
+    expect(validateRecurrenceRuleIssues({ ...validRule, frequency: 'monthly_dow', weekday: null, week_of_month: 2 }).weekday)
+      .toEqual({ key: 'recurrenceWeekdayRequired' });
+  });
+
+  it('flags a field that does not apply to the chosen frequency', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, week_of_month: 2 }).week_of_month)
+      .toEqual({ key: 'recurrenceFieldNotApplicable' });
+    expect(validateRecurrenceRuleIssues({ ...validRule, frequency: 'monthly_dom', day_of_month: 15, weekday: 'mon' }).weekday)
+      .toEqual({ key: 'recurrenceFieldNotApplicable' });
+  });
+
+  it('carries the 1..5 bound as params for an out-of-range week_of_month', () => {
+    expect(
+      validateRecurrenceRuleIssues({ ...validRule, frequency: 'monthly_dow', week_of_month: 9 }).week_of_month,
+    ).toEqual({ key: 'recurrenceWeekOfMonthRange', params: { min: 1, max: 5 } });
+  });
+
+  it('carries the 1..31 bound as params for an out-of-range day_of_month', () => {
+    expect(
+      validateRecurrenceRuleIssues({
+        ...validRule,
+        frequency: 'monthly_dom',
+        weekday: null,
+        day_of_month: 45,
+      }).day_of_month,
+    ).toEqual({ key: 'recurrenceDayOfMonthRange', params: { min: 1, max: 31 } });
+  });
+
+  it('names an invalid end_kind distinctly', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, end_kind: 'forever' }).end_kind)
+      .toEqual({ key: 'recurrenceEndKindInvalid' });
+  });
+
+  it('requires end_count for end_kind=count', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, end_count: null }).end_count)
+      .toEqual({ key: 'recurrenceEndCountRequired' });
+  });
+
+  it('flags an end_date sent alongside end_kind=count as not applicable', () => {
+    expect(validateRecurrenceRuleIssues({ ...validRule, end_date: '2026-08-01' }).end_date)
+      .toEqual({ key: 'recurrenceEndFieldNotApplicable' });
+  });
+
+  it('distinguishes a missing end_date (required) from a malformed one (dateFormat) for end_kind=until', () => {
+    const untilRule: RecurrenceRuleFields = { ...validRule, end_kind: 'until', end_count: null, end_date: '2026-08-01' };
+    expect(validateRecurrenceRuleIssues({ ...untilRule, end_date: null }).end_date).toEqual({ key: 'required' });
+    expect(validateRecurrenceRuleIssues({ ...untilRule, end_date: '08/01/2026' }).end_date).toEqual({ key: 'dateFormat' });
+  });
+
+  it('flags an end_date before start_date once the format is otherwise valid', () => {
+    const untilRule: RecurrenceRuleFields = { ...validRule, end_kind: 'until', end_count: null, end_date: '2026-01-01' };
+    expect(validateRecurrenceRuleIssues(untilRule).end_date).toEqual({ key: 'recurrenceEndDateBeforeStart' });
+  });
+
+  it('flags end_count sent alongside end_kind=open/until as not applicable', () => {
+    expect(
+      validateRecurrenceRuleIssues({ ...validRule, end_kind: 'open', end_count: null, end_date: null }).end_count,
+    ).toBeUndefined();
+    expect(
+      validateRecurrenceRuleIssues({ ...validRule, end_kind: 'open', end_count: 3 }).end_count,
+    ).toEqual({ key: 'recurrenceEndFieldNotApplicable' });
+  });
+
+  it('parseRecurrenceRule threads fieldDetails alongside fields on failure', () => {
+    const result = parseRecurrenceRule({ ...validRule, frequency: 'daily' });
+    if (!('fields' in result)) throw new Error('expected a validation failure');
+    expect(result.fields.frequency).toContain('must be one of');
+    expect(result.fieldDetails.frequency).toEqual({ key: 'recurrenceFrequencyInvalid' });
   });
 });
