@@ -5,8 +5,8 @@
  * is absent so it does not block local work before the first build.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 const distDir = join(__dirname, '../dist');
 const assetsDir = join(distDir, 'assets');
@@ -134,5 +134,122 @@ describe('dark theme token coverage', () => {
     const dpTokens = (block: string) => [...block.matchAll(/(--dp-[a-z-]+)\s*:/g)].map((m) => m[1]);
     const missing = dpTokens(light).filter((token) => !dpTokens(dark).includes(token));
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * The inverse guard: a colour utility written in a component with no token behind it.
+ * Tailwind emits nothing for those, so the element silently falls back to the inherited
+ * colour and looks plausible in review while being undesigned.
+ *
+ * Only the app's own semantic names are checked. Tailwind's stock palette steps
+ * (bg-red-50, text-amber-700) are var()-backed by the framework itself, and the size,
+ * side and style values that share these prefixes (text-sm, border-t, shadow-lg) are
+ * not colours at all. Both are recognised structurally and excluded; whatever survives
+ * can only be a semantic name, and must be declared.
+ */
+describe('semantic colour utilities have a token behind them', () => {
+  const srcDir = join(__dirname, '../src');
+
+  const COLOR_PREFIXES = [
+    'text', 'bg', 'border', 'ring', 'divide', 'outline', 'fill', 'stroke', 'shadow',
+    'from', 'via', 'to', 'decoration', 'placeholder', 'caret', 'accent',
+  ];
+
+  const STOCK_FAMILIES = [
+    'slate', 'gray', 'zinc', 'neutral', 'stone', 'red', 'orange', 'amber', 'yellow',
+    'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet',
+    'purple', 'fuchsia', 'pink', 'rose',
+  ];
+  const STOCK_STEP = new RegExp(`^(${STOCK_FAMILIES.join('|')})-\\d{2,3}$`);
+
+  const CSS_KEYWORD = /^(white|black|transparent|current|inherit|none|auto)$/;
+
+  // Side segments Tailwind allows between the prefix and the colour: border-t, border-t-transparent.
+  const SIDE = /^(t|r|b|l|x|y|s|e|inline|block)(-|$)/;
+
+  // A class name starts a word. Requiring that rules out hyphenated prose in comments and
+  // i18n keys, where "shrink-to-fit" or "back-to-back" would otherwise read as a gradient stop.
+  const CLASS_START = /[\w-]/;
+
+  // Non-colour values Tailwind ships under the same prefixes.
+  const NON_COLOR: Record<string, RegExp> = {
+    text: /^(xs|sm|base|lg|\d?xl|left|center|right|justify|start|end|wrap|nowrap|balance|pretty|ellipsis|clip)$/,
+    bg: /^(fixed|local|scroll|bottom|center|left|right|top|no-repeat|repeat|repeat-x|repeat-y|repeat-round|repeat-space|cover|contain|origin-.+|clip-.+|blend-.+|linear|radial|conic)$/,
+    border: /^(solid|dashed|dotted|double|hidden|collapse|separate|spacing)$/,
+    divide: /^(solid|dashed|dotted|double)$/,
+    outline: /^(solid|dashed|dotted|double|hidden|offset-\d+)$/,
+    ring: /^(inset|offset-\d+)$/,
+    shadow: /^(2xs|xs|sm|md|lg|xl|2xl|inner|initial)$/,
+    decoration: /^(solid|dashed|dotted|double|wavy|from-font)$/,
+    fill: /^$/, stroke: /^$/, from: /^$/, via: /^$/, to: /^$/,
+    placeholder: /^$/, caret: /^$/, accent: /^$/,
+  };
+
+  function sourceFiles(dir: string): string[] {
+    return readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) return sourceFiles(path);
+      return /\.(vue|ts)$/.test(entry) ? [path] : [];
+    });
+  }
+
+  interface Usage { utility: string; token: string; where: string }
+
+  function usagesIn(path: string): Usage[] {
+    // <style> blocks hold real CSS property names (border-radius, text-align) that would
+    // otherwise read as utilities.
+    const source = readFileSync(path, 'utf-8').replace(/<style[\s\S]*?<\/style>/g, '');
+    const pattern = new RegExp(`\\b(${COLOR_PREFIXES.join('|')})-([a-zA-Z][a-zA-Z0-9-]*)`, 'g');
+    const found: Usage[] = [];
+
+    for (const match of source.matchAll(pattern)) {
+      // A trailing `=` means this is an attribute name (`:text-input="…"`), not a class.
+      if (source[match.index! + match[0].length] === '=') continue;
+      if (match.index! > 0 && CLASS_START.test(source[match.index! - 1])) continue;
+
+      const prefix = match[1];
+      let value = match[2];
+      if (prefix === 'border' || prefix === 'divide') value = value.replace(SIDE, '');
+
+      if (value === '' || /^\d/.test(value)) continue;
+      if (STOCK_STEP.test(value)) continue;
+      if (CSS_KEYWORD.test(value)) continue;
+      if (NON_COLOR[prefix]?.test(value)) continue;
+
+      found.push({
+        utility: match[0],
+        token: `--color-${value}`,
+        where: relative(srcDir, path).replace(/\\/g, '/'),
+      });
+    }
+    return found;
+  }
+
+  const themeBlock = (() => {
+    const css = readFileSync(join(srcDir, 'styles/main.css'), 'utf-8');
+    const open = css.indexOf('{', css.indexOf('@theme'));
+    return css.slice(open, css.indexOf('}', open));
+  })();
+  const declared = new Set([...themeBlock.matchAll(/(--color-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+
+  const usages = sourceFiles(srcDir).flatMap(usagesIn);
+
+  it('finds the semantic utilities actually in use', () => {
+    // A scan that matched nothing would pass the assertion below for the wrong reason.
+    expect(usages.map((u) => u.utility)).toContain('text-heading');
+    expect(usages.length).toBeGreaterThan(20);
+  });
+
+  it('never mistakes a stock palette step for a semantic token', () => {
+    expect(usages.map((u) => u.utility)).not.toContain('text-amber-800');
+    expect(usages.map((u) => u.utility)).not.toContain('bg-amber-100');
+  });
+
+  it('every semantic colour utility resolves to a declared @theme token', () => {
+    const orphans = usages
+      .filter((u) => !declared.has(u.token))
+      .map((u) => `${u.utility} (${u.token} undeclared) in src/${u.where}`);
+    expect([...new Set(orphans)]).toEqual([]);
   });
 });

@@ -71,7 +71,7 @@ function handleCancel() {
         >
           <DialogPanel class="w-full max-w-md rounded-xl bg-card shadow-xl overflow-hidden">
             <div class="bg-warning/10 border-b border-warning/30 px-6 py-4">
-              <DialogTitle class="text-base font-semibold text-warning-700">
+              <DialogTitle class="text-base font-semibold text-amber-800">
                 {{ t('calendar.conflictTitle') }}
               </DialogTitle>
             </div>
@@ -92,7 +92,7 @@ function handleCancel() {
               <p v-if="!description.canOverride" class="text-sm text-neutral italic">
                 {{ t('conflicts.cannotOverride') }}
               </p>
-              <p v-else class="text-sm font-medium text-warning-700">
+              <p v-else class="text-sm font-medium text-amber-800">
                 {{ t('calendar.conflictOverrideSobreturno') }}
               </p>
             </div>
