@@ -8,6 +8,9 @@ export default defineConfig({
     include: ['test/**/*.db.test.ts'],
     pool: 'forks',
     fileParallelism: false,
+    // Drops the run's database (TEST_DB_NAME, default professional_agenda_test) once every file
+    // has finished, so a uniquely-named concurrent run doesn't leave an orphan behind.
+    globalSetup: ['./test/global-setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],

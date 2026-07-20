@@ -130,6 +130,11 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
 7. Ejecutar tests de integración con base de datos: `npm run test:db`
 8. Ejecutar tests E2E Playwright: `npm run test:e2e`
 
+> `npm run test:db` dropea y recrea una base de datos descartable (`professional_agenda_test`
+> por defecto) en cada corrida. Para correr la suite en paralelo con otra corrida contra el mismo
+> Postgres (otro agente, otro job de CI), seteá `TEST_DB_NAME` a un valor distinto en cada una —
+> ver `.env.example`.
+
 ## Demo accounts
 
 Para probar el sistema con un dataset realista de un consultorio de Buenos Aires
