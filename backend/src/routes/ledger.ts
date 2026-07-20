@@ -8,6 +8,7 @@ import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { LEDGER_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
 import { AMOUNT_PATTERN } from '../../../shared/src/ssot/domain/catalog';
+import type { ErrorDetail } from '../../../shared/src/ssot/envelope';
 import {
   assertLedgerWriteAllowed,
   assertLedgerReadAllowed,
@@ -44,24 +45,28 @@ export function mountLedgerRoutes(
     if (businessId == null) return;
 
     const fields: Record<string, string> = {};
+    const fieldDetails: Record<string, ErrorDetail> = {};
 
     const clientUserId = Number(req.body.client_user_id);
     if (!Number.isInteger(clientUserId) || clientUserId <= 0) {
       fields.client_user_id = 'required positive integer';
+      fieldDetails.client_user_id = { key: 'required' };
     }
 
     const entryType: string = req.body.entry_type ?? '';
     if (!VALID_ENTRY_TYPES.has(entryType)) {
       fields.entry_type = `must be one of: ${[...VALID_ENTRY_TYPES].join(', ')}`;
+      fieldDetails.entry_type = { key: 'notInOptions', params: { options: [...VALID_ENTRY_TYPES].join(', ') } };
     }
 
     const rawAmount: string | undefined = req.body.amount_ars;
     if (rawAmount !== undefined && rawAmount !== null && !AMOUNT_RE.test(String(rawAmount))) {
       fields.amount_ars = 'must be a non-negative amount (e.g. 1500 or 1500.00)';
+      fieldDetails.amount_ars = { key: 'amountFormat' };
     }
 
     if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid request', fields);
+      return sendError(res, 422, 'invalid_request', 'Invalid request', { fields, fieldDetails });
     }
 
     const appointmentId: number | null =
@@ -120,7 +125,8 @@ export function mountLedgerRoutes(
     }
     if (outcome.kind === 'amount_required') {
       return sendError(res, 422, 'invalid_request', 'amount_ars is required', {
-        amount_ars: 'required when no appointment_id is supplied or entry_type is not charge',
+        fields: { amount_ars: 'required when no appointment_id is supplied or entry_type is not charge' },
+        fieldDetails: { amount_ars: { key: 'amountRequiredWithoutAppointment' } },
       });
     }
     return sendData(res, outcome.row, 201);

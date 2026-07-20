@@ -15,16 +15,19 @@ import {
 } from '../db/scheduling';
 import { parseTimeOffRange } from '../services/scheduling';
 import { CLOSURE_PATTERNS } from '../../../shared/src/ssot/api-paths';
+import type { ErrorDetail } from '../../../shared/src/ssot/envelope';
 
 type ClosureInput = { exception_date: string; start_time: string | null; end_time: string | null; reason: string | null };
-type ClosureParse = { ok: true; data: ClosureInput } | { ok: false; status: number; code: string; message: string };
+type ClosureParse =
+  | { ok: true; data: ClosureInput }
+  | { ok: false; status: number; code: string; message: string; detail: ErrorDetail };
 
 // Shared create/update validation: the common time-off range rules plus an optional reason.
 // eslint-disable-next-line no-restricted-syntax -- Express request bodies are untrusted until this parser validates them.
 function parseClosureBody(body: Record<string, unknown>): ClosureParse {
   const parsed = parseTimeOffRange(
     { date: body.exception_date, start: body.start_time, end: body.end_time },
-    { status: 400, message: 'A valid exception_date (YYYY-MM-DD) is required' },
+    { status: 400, message: 'A valid exception_date (YYYY-MM-DD) is required', key: 'dateFormat' },
   );
   if (!parsed.ok) return parsed;
   const reason = body.reason == null || body.reason === '' ? null : String(body.reason);
@@ -46,14 +49,14 @@ export function mountBusinessClosureRoutes(
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
-      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
+      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
     // Closures are tenant-bound; a super-admin (null business) has no single business to close.
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
     const parsed = parseClosureBody(req.body ?? {});
-    if (!parsed.ok) return sendError(res, parsed.status, parsed.code, parsed.message);
+    if (!parsed.ok) return sendError(res, parsed.status, parsed.code, parsed.message, { detail: parsed.detail });
 
     const row = await insertBusinessClosure(pool, businessId, parsed.data);
     if (!row) return sendError(res, 500, 'internal_error', 'Internal server error');
@@ -72,23 +75,23 @@ export function mountBusinessClosureRoutes(
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
-      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
+      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 400, 'invalid_request', 'Valid closure id is required');
+      return sendError(res, 400, 'invalid_request', 'Valid closure id is required', { detail: { key: 'invalidId' } });
     }
 
     const existing = await findBusinessClosure(pool, id);
     if (!belongsToBusiness(existing, businessId)) {
-      return sendError(res, 404, 'not_found', 'Closure not found');
+      return sendError(res, 404, 'not_found', 'Closure not found', { detail: { key: 'closureNotFound' } });
     }
 
     const parsed = parseClosureBody(req.body ?? {});
-    if (!parsed.ok) return sendError(res, parsed.status, parsed.code, parsed.message);
+    if (!parsed.ok) return sendError(res, parsed.status, parsed.code, parsed.message, { detail: parsed.detail });
 
     const row = await updateBusinessClosure(pool, id, parsed.data);
     if (!row) return sendError(res, 500, 'internal_error', 'Internal server error');
@@ -107,7 +110,7 @@ export function mountBusinessClosureRoutes(
 
     // Staff-internal: which days the clinic is closed. Clients see it only through availability.
     if (user.role === 'Client') {
-      return sendError(res, 403, 'forbidden', 'Staff access required');
+      return sendError(res, 403, 'forbidden', 'Staff access required', { detail: { key: 'staffOnly' } });
     }
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
@@ -121,19 +124,19 @@ export function mountBusinessClosureRoutes(
 
     if (user.role !== 'Admin') {
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
-      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures');
+      return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 400, 'invalid_request', 'Valid closure id is required');
+      return sendError(res, 400, 'invalid_request', 'Valid closure id is required', { detail: { key: 'invalidId' } });
     }
 
     const row = await findBusinessClosure(pool, id);
     if (!belongsToBusiness(row, businessId)) {
-      return sendError(res, 404, 'not_found', 'Closure not found');
+      return sendError(res, 404, 'not_found', 'Closure not found', { detail: { key: 'closureNotFound' } });
     }
 
     await deleteBusinessClosure(pool, id);

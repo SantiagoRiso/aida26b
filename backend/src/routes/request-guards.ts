@@ -33,7 +33,10 @@ export function rejectServerDerivedFields(
     422,
     'server_derived_field',
     'These fields are set by the server and must not be supplied by the client',
-    Object.fromEntries(illegalFields.map((f) => [f, 'must not be supplied'])),
+    {
+      fields: Object.fromEntries(illegalFields.map((f) => [f, 'must not be supplied'])),
+      fieldDetails: Object.fromEntries(illegalFields.map((f) => [f, { key: 'serverDerived' }])),
+    },
   );
   return true;
 }

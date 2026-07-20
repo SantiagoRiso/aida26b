@@ -100,3 +100,57 @@ describe('BusinessClosuresSection all-day toggle', () => {
     expect(wrapper.text()).toContain('Completar desde y hasta');
   });
 });
+
+describe('BusinessClosuresSection server errors', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.mocked(createClosure).mockClear();
+    vi.mocked(listClosures).mockResolvedValue({ ok: true, data: [] });
+  });
+
+  async function failSaveWith(failure: Record<string, unknown>) {
+    vi.mocked(createClosure).mockResolvedValueOnce(failure as Awaited<ReturnType<typeof createClosure>>);
+    const wrapper = mountSection();
+    await flushPromises();
+    setAddDate(wrapper, '2026-07-20');
+    await wrapper.get('[data-testid="closure-add-submit"]').trigger('click');
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('shows the interface-language message, never the server prose', async () => {
+    const wrapper = await failSaveWith({
+      ok: false,
+      status: 403,
+      code: 'forbidden',
+      message: 'Only an Admin may manage business closures',
+      detail: { key: 'closuresAdminOnly' },
+    });
+
+    expect(wrapper.text()).toContain(es.apiError.closuresAdminOnly);
+    expect(wrapper.text()).not.toContain('Only an Admin');
+  });
+
+  it('falls back to the error code when the endpoint names no specific cause', async () => {
+    const wrapper = await failSaveWith({
+      ok: false,
+      status: 403,
+      code: 'forbidden',
+      message: 'Only an Admin may manage business closures',
+    });
+
+    expect(wrapper.text()).toContain(es.apiError.code.forbidden);
+  });
+
+  it('falls back to what the screen calls a failed save when the code is unknown', async () => {
+    const wrapper = await failSaveWith({
+      ok: false,
+      status: 500,
+      code: 'something_new',
+      message: 'Boom',
+    });
+
+    expect(wrapper.text()).toContain(es.closures.saveFailed);
+    expect(wrapper.text()).not.toContain('Boom');
+  });
+});

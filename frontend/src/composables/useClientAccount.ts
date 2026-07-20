@@ -1,6 +1,7 @@
 import { ref, reactive, computed } from 'vue';
 import type { Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { deleteRow } from '@/api/crud';
 import { enableClientLogin } from '@/api/admin-users';
 import { useAuthStore } from '@/stores/auth';
@@ -58,7 +59,7 @@ const role = computed(() => auth.user?.role);
         deps.onChanged();
         await deps.reloadProfile();
       } else {
-        enableLoginError.value = res.message ?? t('users.createError');
+        enableLoginError.value = apiErrorMessage(res, 'users.createError');
       }
     } finally {
       enableLoginSubmitting.value = false;

@@ -1,4 +1,4 @@
-import type { ApiEnvelope, ApiError, ApiErrorEnvelope, ListMeta } from '../../shared/src/ssot/envelope';
+import type { ApiEnvelope, ApiError, ApiErrorEnvelope, ErrorDetail, ListMeta } from '../../shared/src/ssot/envelope';
 
 export interface HttpResponse {
   status(code: number): HttpResponse;
@@ -15,15 +15,26 @@ export function sendData<T>(res: HttpResponse, data: T, status: number = 200) {
   res.status(status).json(payload);
 }
 
+// `detail`/`fieldDetails` are optional: an error without them still carries English prose, and
+// the client degrades to translating the code.
+export interface ErrorExtras {
+  fields?: Record<string, string>;
+  detail?: ErrorDetail;
+  fieldDetails?: Record<string, ErrorDetail>;
+}
+
 export function sendError(
   res: HttpResponse,
   status: number,
   code: string,
   message: string,
-  fields?: Record<string, string>,
+  extras: ErrorExtras = {},
 ) {
+  const { fields, detail, fieldDetails } = extras;
   const error: ApiError = { code, message };
+  if (detail) error.detail = detail;
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
+  if (fieldDetails && Object.keys(fieldDetails).length > 0) error.fieldDetails = fieldDetails;
   const payload: ApiErrorEnvelope = { success: false, error };
   res.status(status).json(payload);
 }

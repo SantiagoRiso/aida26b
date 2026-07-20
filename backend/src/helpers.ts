@@ -34,7 +34,7 @@ function guardRoute(
       // App errors that carry their own HTTP mapping
       const structured = httpForStructuredError(error);
       if (structured) {
-        if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);
+        if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, { fields: structured.fields });
         return;
       }
       logUnhandled(req, error);
@@ -59,7 +59,7 @@ function guardMiddleware(
       }
       const structured = httpForStructuredError(error);
       if (structured) {
-        if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);
+        if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, { fields: structured.fields });
         return;
       }
       logUnhandled(req, error);

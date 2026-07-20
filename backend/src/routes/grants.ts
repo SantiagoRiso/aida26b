@@ -28,7 +28,7 @@ export function mountGrantRoutes(
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
       await guards.audit(req, 'grant_denied', 'denied', { reason: 'role_forbidden' });
-      return sendError(res, 403, 'forbidden', 'Insufficient role');
+      return sendError(res, 403, 'forbidden', 'Insufficient role', { detail: { key: 'insufficientRole' } });
     }
 
     // Grants are tenant-bound; a super-admin (null business) has no business context.
@@ -39,25 +39,25 @@ export function mountGrantRoutes(
     const granteeUserId = req.body.grantee_user_id;
 
     if (!professionalUserId || !granteeUserId) {
-      return sendError(res, 400, 'invalid_request', 'professional_user_id and grantee_user_id are required');
+      return sendError(res, 400, 'invalid_request', 'professional_user_id and grantee_user_id are required', { detail: { key: 'grantMissingParticipants' } });
     }
 
     if (user.role === 'Professional' && Number(professionalUserId) !== user.id) {
       await guards.audit(req, 'grant_denied', 'denied', { reason: 'own_calendar_only' });
-      return sendError(res, 403, 'forbidden', 'Professional may only manage their own calendar grants');
+      return sendError(res, 403, 'forbidden', 'Professional may only manage their own calendar grants', { detail: { key: 'grantOwnCalendarOnly' } });
     }
 
     const pro = await findUser(pool, { id: professionalUserId, role: 'Professional', activeOnly: true });
     if (!belongsToBusiness(pro, businessId)) {
-      return sendError(res, 404, 'not_found', 'Professional not found in this business');
+      return sendError(res, 404, 'not_found', 'Professional not found in this business', { detail: { key: 'professionalNotFound' } });
     }
 
     const grantee = await findUser(pool, { id: granteeUserId, activeOnly: true });
     if (!belongsToBusiness(grantee, businessId)) {
-      return sendError(res, 422, 'invalid_request', 'Grantee not found in this business');
+      return sendError(res, 422, 'invalid_request', 'Grantee not found in this business', { detail: { key: 'granteeNotFound' } });
     }
     if (!(GRANTABLE_STAFF_ROLES as readonly string[]).includes(grantee.role)) {
-      return sendError(res, 422, 'invalid_request', 'Grantee must be staff (Receptionist or Professional)');
+      return sendError(res, 422, 'invalid_request', 'Grantee must be staff (Receptionist or Professional)', { detail: { key: 'granteeMustBeStaff' } });
     }
 
     // A duplicate grant surfaces as a DbError(23505) → 409 via guardRoute's SQLSTATE mapping.
@@ -80,7 +80,7 @@ export function mountGrantRoutes(
 
     if (user.role === 'Receptionist' || user.role === 'Client') {
       await guards.audit(req, 'grant_denied', 'denied', { reason: 'role_forbidden' });
-      return sendError(res, 403, 'forbidden', 'Insufficient role');
+      return sendError(res, 403, 'forbidden', 'Insufficient role', { detail: { key: 'insufficientRole' } });
     }
 
     // Grants are tenant-bound; a super-admin (null business) has no business context.
@@ -89,16 +89,16 @@ export function mountGrantRoutes(
 
     const grantId = Number(req.params.id);
     if (!Number.isInteger(grantId) || grantId <= 0) {
-      return sendError(res, 400, 'invalid_request', 'Valid grant id is required');
+      return sendError(res, 400, 'invalid_request', 'Valid grant id is required', { detail: { key: 'invalidId' } });
     }
 
     const grant = await findGrantWithBusiness(pool, grantId);
     if (!belongsToBusiness(grant, businessId)) {
-      return sendError(res, 404, 'not_found', 'Grant not found');
+      return sendError(res, 404, 'not_found', 'Grant not found', { detail: { key: 'grantNotFound' } });
     }
 
     if (user.role === 'Professional' && Number(grant.professional_user_id) !== user.id) {
-      return sendError(res, 403, 'forbidden', 'Professional may only revoke their own calendar grants');
+      return sendError(res, 403, 'forbidden', 'Professional may only revoke their own calendar grants', { detail: { key: 'grantOwnCalendarOnly' } });
     }
 
     await deleteCalendarGrant(pool, grantId);
@@ -119,7 +119,7 @@ export function mountGrantRoutes(
 
     // Only those who can create grants need this list: Admin (any) or a Professional (own calendar).
     if (user.role !== 'Admin' && user.role !== 'Professional') {
-      return sendError(res, 403, 'forbidden', 'Insufficient role');
+      return sendError(res, 403, 'forbidden', 'Insufficient role', { detail: { key: 'insufficientRole' } });
     }
     // Grants are tenant-bound; a super-admin (null business) has no business context.
     const businessId = requireBusinessContext(req, res);
@@ -135,7 +135,7 @@ export function mountGrantRoutes(
 
     // Staff-internal data: clients have no business seeing who can manage which calendar.
     if (user.role === 'Client') {
-      return sendError(res, 403, 'forbidden', 'Staff access required');
+      return sendError(res, 403, 'forbidden', 'Staff access required', { detail: { key: 'staffOnly' } });
     }
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;

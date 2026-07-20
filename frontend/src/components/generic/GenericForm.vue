@@ -3,7 +3,8 @@ import { ref, computed, reactive } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
-import { validateField, validateFullObject } from '@shared/validation/validate';
+import { validateFieldIssue, validateFullObject } from '@shared/validation/validate';
+import { fieldErrorMessage, fieldErrorMessages } from '@/i18n/api-errors';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
@@ -54,9 +55,9 @@ const fieldErrors = reactive<Record<string, string>>({});
 const submitting = ref(false);
 
 function onBlur(field: string) {
-  const err = validateField(props.tableKey, field, values[field]);
-  if (err) {
-    fieldErrors[field] = err;
+  const issue = validateFieldIssue(props.tableKey, field, values[field]);
+  if (issue) {
+    fieldErrors[field] = fieldErrorMessage(issue);
   } else {
     delete fieldErrors[field];
   }
@@ -79,8 +80,8 @@ function getFkOptions(field: string, col: ColumnDef) {
 async function onSubmit() {
   const check = validateFullObject(props.tableKey, values as Partial<TableRecordMap[K]>);
   if ('fields' in check) {
-    for (const [f, msg] of Object.entries(check.fields)) {
-      fieldErrors[f] = msg;
+    for (const [f, issue] of Object.entries(check.fieldDetails)) {
+      fieldErrors[f] = fieldErrorMessage(issue);
     }
     // Fall through and submit anyway — the backend is authoritative.
   }
@@ -103,8 +104,9 @@ async function onSubmit() {
       toast('success', 'genericSuccess');
       emit('saved', result.data);
     } else {
-      if (result.fields && Object.keys(result.fields).length > 0) {
-        for (const [f, msg] of Object.entries(result.fields)) {
+      const serverFieldErrors = fieldErrorMessages(result);
+      if (Object.keys(serverFieldErrors).length > 0) {
+        for (const [f, msg] of Object.entries(serverFieldErrors)) {
           fieldErrors[f] = msg;
         }
       } else {

@@ -22,11 +22,12 @@ import {
 import { getActiveSeriesForOwner, getActiveSeriesForResource, getMaterializedOverrides } from '../db/series';
 import { BUSINESS_TZ, DATE_RE, HHMM_RE, addMinutes, addDaysISO } from '../time';
 import { httpError } from '../errors';
+import type { ErrorDetail } from '../../../shared/src/ssot/envelope';
 import { belongsToBusiness } from '../routes/business-context';
 
 export type TimeOffRangeParse =
   | { ok: true; date: string; start: string | null; end: string | null }
-  | { ok: false; status: number; code: string; message: string };
+  | { ok: false; status: number; code: string; message: string; detail: ErrorDetail };
 
 // Shared validation for time-off inputs (business closures and conflict previews): a valid date,
 // both-or-neither endpoints (absent ⇒ a full-day block), HH:MM shape, end after start — the same
@@ -35,22 +36,34 @@ export type TimeOffRangeParse =
 export function parseTimeOffRange(
   // eslint-disable-next-line no-restricted-syntax -- Shared parser narrows fields from two untrusted Express request bodies.
   raw: { date: unknown; start: unknown; end: unknown },
-  dateError: { status: number; message: string },
+  dateError: { status: number; message: string; key: string },
 ): TimeOffRangeParse {
   if (typeof raw.date !== 'string' || !DATE_RE.test(raw.date)) {
-    return { ok: false, status: dateError.status, code: 'invalid_request', message: dateError.message };
+    return {
+      ok: false, status: dateError.status, code: 'invalid_request',
+      message: dateError.message, detail: { key: dateError.key },
+    };
   }
   const start = raw.start == null || raw.start === '' ? null : String(raw.start);
   const end = raw.end == null || raw.end === '' ? null : String(raw.end);
   if ((start == null) !== (end == null)) {
-    return { ok: false, status: 422, code: 'invalid_request', message: 'A time range needs both a start and an end' };
+    return {
+      ok: false, status: 422, code: 'invalid_request',
+      message: 'A time range needs both a start and an end', detail: { key: 'rangeNeedsBothEnds' },
+    };
   }
   if (start != null && end != null) {
     if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
-      return { ok: false, status: 422, code: 'invalid_request', message: 'Times must be HH:MM' };
+      return {
+        ok: false, status: 422, code: 'invalid_request',
+        message: 'Times must be HH:MM', detail: { key: 'timeOfDayFormat' },
+      };
     }
     if (end <= start) {
-      return { ok: false, status: 422, code: 'invalid_request', message: 'The end time must be after the start time' };
+      return {
+        ok: false, status: 422, code: 'invalid_request',
+        message: 'The end time must be after the start time', detail: { key: 'endAfterStart' },
+      };
     }
   }
   return { ok: true, date: raw.date, start, end };

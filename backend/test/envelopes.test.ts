@@ -62,7 +62,7 @@ describe('standard response envelopes', () => {
   it('error envelope carries a per-field map when provided', () => {
     const res = fakeRes();
     sendError(res, 400, 'validation_error', 'Validation failed', {
-      email: 'email must be a valid email address',
+      fields: { email: 'email must be a valid email address' },
     });
     expect(res.body).toEqual({
       success: false,
@@ -72,6 +72,31 @@ describe('standard response envelopes', () => {
         fields: { email: 'email must be a valid email address' },
       },
     });
+  });
+
+  it('carries translation keys alongside the English prose', () => {
+    const res = fakeRes();
+    sendError(res, 403, 'forbidden', 'Professional may only manage their own calendar grants', {
+      detail: { key: 'grantOwnCalendarOnly' },
+      fields: { email: 'email must be a valid email address' },
+      fieldDetails: { email: { key: 'emailFormat' } },
+    });
+    expect(res.body).toEqual({
+      success: false,
+      error: {
+        code: 'forbidden',
+        message: 'Professional may only manage their own calendar grants',
+        detail: { key: 'grantOwnCalendarOnly' },
+        fields: { email: 'email must be a valid email address' },
+        fieldDetails: { email: { key: 'emailFormat' } },
+      },
+    });
+  });
+
+  it('omits the translatable keys when the endpoint supplies none', () => {
+    const res = fakeRes();
+    sendError(res, 500, 'internal_error', 'Internal server error');
+    expect(res.body).toEqual({ success: false, error: { code: 'internal_error', message: 'Internal server error' } });
   });
 });
 
@@ -136,6 +161,8 @@ describe('validation adapter', () => {
     expect(body.error.code).toBe('validation_error');
     expect(body.error.fields).toBeTypeOf('object');
     expect(body.error.fields?.display_name).toMatch(/required/);
+    expect(body.error.fieldDetails?.display_name).toEqual({ key: 'required' });
+    expect(body.error.detail).toEqual({ key: 'validationFailed' });
   });
 
   it('does not respond when input is valid', () => {

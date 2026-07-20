@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
 import { getMyProfile, updateMyProfile } from '@/api/profile';
@@ -53,7 +54,7 @@ async function saveProfile() {
     await auth.fetchMe();
     success('saved');
   } else {
-    formError.value = res.message ?? t('profile.saveError');
+    formError.value = apiErrorMessage(res, 'profile.saveError');
   }
 }
 
@@ -66,7 +67,7 @@ async function changePassword() {
   const res = await auth.changePassword(pw.current, pw.next);
   pwSaving.value = false;
   if (res.ok) { pw.current = ''; pw.next = ''; success('saved'); }
-  else { pwError.value = res.message ?? t('profile.changePasswordError'); }
+  else { pwError.value = apiErrorMessage(res, 'profile.changePasswordError'); }
 }
 
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });

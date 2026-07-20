@@ -15,6 +15,7 @@ export const ARGENTINA_OFFSET_MS = -3 * 60 * 60 * 1000;
 // Shared by every 'HH:MM' 24h column (block/exception start and end times).
 export const HHMM_PATTERN = '^([01]\\d|2[0-3]):[0-5]\\d$';
 export const HHMM_PATTERN_MESSAGE = 'must be HH:MM';
+export const HHMM_PATTERN_KEY = 'timeOfDayFormat';
 
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];

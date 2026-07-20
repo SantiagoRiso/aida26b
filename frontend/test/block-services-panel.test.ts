@@ -357,7 +357,8 @@ describe('BlockServicesPanel', () => {
   it('renders a per-service field error from a failed save without a generic toast', async () => {
     vi.mocked(updateRow).mockResolvedValueOnce({
       ok: false, status: 422, code: 'validation_error', message: 'invalid',
-      fields: { duration_minutes: 'Debe ser un entero positivo.' },
+      fields: { duration_minutes: 'duration_minutes must be >= 1' },
+      fieldDetails: { duration_minutes: { key: 'minValue', params: { min: 1 } } },
     });
     const wrapper = await mountPanel();
 
@@ -367,9 +368,10 @@ describe('BlockServicesPanel', () => {
     await flushPromises();
 
     expect(ok).toBe(false);
-    expect(wrapper.text()).toContain('Debe ser un entero positivo.');
+    expect(wrapper.text()).toContain(es.fieldError.minValue.replace('{min}', '1'));
+    expect(wrapper.text()).not.toContain('duration_minutes');
     // A field-level error is surfaced inline, not as a generic toast (recordError only falls back
-    // to the toast when the server returns no `fields`).
+    // to the toast when the server returns no field errors).
     const ui = useUiStore();
     expect(ui.toasts).toHaveLength(0);
   });

@@ -171,15 +171,17 @@ describe('GenericForm — advisory validateField on blur', () => {
 });
 
 describe('GenericForm — backend field error mapping', () => {
-  it('maps backend {fields:{name: error}} to inline FieldError under name input', async () => {
+  const messageFor = (wrapper: ReturnType<typeof mount>, field: string) => {
+    const input = wrapper.find(`#${field}`);
+    const errors = wrapper.findAllComponents(FieldError);
+    return errors
+      .map((e) => (e.props as (name: string) => string | undefined)('message'))
+      .find((msg) => typeof msg === 'string' && msg.length > 0 && input.exists());
+  };
+
+  async function submitWith(failure: Record<string, unknown>) {
     const { createRow } = await import('@/api/crud');
-    (createRow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: false,
-      status: 422,
-      code: 'validation_error',
-      message: 'Validation failed',
-      fields: { name: 'name is required' },
-    });
+    (createRow as ReturnType<typeof vi.fn>).mockResolvedValueOnce(failure);
 
     const { pinia, router, i18n } = makePlugins();
     const wrapper = mount(GenericForm, {
@@ -187,16 +189,36 @@ describe('GenericForm — backend field error mapping', () => {
       global: { plugins: [pinia, router, i18n] },
     });
     await flushPromises();
-
     await wrapper.find('form').trigger('submit');
     await flushPromises();
+    return wrapper;
+  }
 
-    const errors = wrapper.findAllComponents(FieldError);
-    const nameErr = errors.find((e) => {
-      const msg = (e.props as (name: string) => string | undefined)('message');
-      return typeof msg === 'string' && msg.includes('name');
+  it('renders the field issue in the interface language, not the server prose', async () => {
+    const wrapper = await submitWith({
+      ok: false,
+      status: 422,
+      code: 'validation_error',
+      message: 'Validation failed',
+      fields: { name: 'name is required' },
+      fieldDetails: { name: { key: 'required' } },
     });
-    expect(nameErr).toBeDefined();
+
+    expect(messageFor(wrapper, 'name')).toBe(es.fieldError.required);
+    expect(wrapper.text()).not.toContain('name is required');
+  });
+
+  // An endpoint that reports a field without naming the rule still gets a readable message.
+  it('falls back to a generic field message when the server names no rule', async () => {
+    const wrapper = await submitWith({
+      ok: false,
+      status: 422,
+      code: 'validation_error',
+      message: 'Validation failed',
+      fields: { name: 'name is required' },
+    });
+
+    expect(messageFor(wrapper, 'name')).toBe(es.fieldError.fallback);
   });
 });
 

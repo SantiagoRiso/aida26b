@@ -69,7 +69,9 @@ async function performRawApiFetch(
       status: response.status,
       code: body.error.code,
       message: body.error.message,
+      detail: body.error.detail,
       fields: body.error.fields,
+      fieldDetails: body.error.fieldDetails,
     };
   }
   if ((options.method ?? 'GET').toUpperCase() !== 'GET') recordApiMutation();

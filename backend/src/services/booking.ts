@@ -6,6 +6,7 @@ import { findUser } from '../db/users';
 import { withTransaction, type Queryable, type TransactionClient, type TransactionPool } from '../db/core';
 import { recheckConflictsInTx, loadConflictInputs, toAggregatorOwner } from './scheduling';
 import { DATE_RE, HHMM_RE, addMinutes, crossesMidnight, buildStartsAt } from '../time';
+import type { ErrorDetail } from '../../../shared/src/ssot/envelope';
 
 // Booking input as the endpoints expect it; every field is still format-checked at runtime.
 export type BookingBody = {
@@ -66,22 +67,28 @@ export function validateBookingFields(parts: {
   date: string;
   start: string;
   durationMinutes: number;
-}): Record<string, string> {
+}): { fields: Record<string, string>; fieldDetails: Record<string, ErrorDetail> } {
   const fields: Record<string, string> = {};
+  const fieldDetails: Record<string, ErrorDetail> = {};
+  const reject = (field: string, message: string, key: string) => {
+    fields[field] = message;
+    fieldDetails[field] = { key };
+  };
+
   if (parts.professionalUserId !== undefined && (!Number.isInteger(parts.professionalUserId) || parts.professionalUserId <= 0))
-    fields.professional_user_id = 'required';
+    reject('professional_user_id', 'required', 'required');
   if (parts.serviceId !== undefined && (!Number.isInteger(parts.serviceId) || parts.serviceId <= 0))
-    fields.service_id = 'required';
+    reject('service_id', 'required', 'required');
   if (parts.resourceId !== undefined && (!Number.isInteger(parts.resourceId) || parts.resourceId <= 0))
-    fields.resource_id = 'must be a valid id';
-  if (!DATE_RE.test(parts.date)) fields.date = 'must be YYYY-MM-DD';
-  if (!HHMM_RE.test(parts.start)) fields.start = 'must be HH:MM';
+    reject('resource_id', 'must be a valid id', 'invalidId');
+  if (!DATE_RE.test(parts.date)) reject('date', 'must be YYYY-MM-DD', 'dateFormat');
+  if (!HHMM_RE.test(parts.start)) reject('start', 'must be HH:MM', 'timeOfDayFormat');
   if (!Number.isInteger(parts.durationMinutes) || parts.durationMinutes <= 0)
-    fields.duration_minutes = 'must be a positive integer';
+    reject('duration_minutes', 'must be a positive integer', 'positiveInteger');
   if (!fields.start && !fields.duration_minutes && crossesMidnight(parts.start, parts.durationMinutes)) {
-    fields.duration_minutes = 'start + duration must not cross midnight';
+    reject('duration_minutes', 'start + duration must not cross midnight', 'crossesMidnight');
   }
-  return fields;
+  return { fields, fieldDetails };
 }
 
 // Validates and resolves a booking request into the concrete values a write needs: format-checks
@@ -110,7 +117,7 @@ export async function resolveAndLoadService(
       effective_duration_minutes: number;
       serviceDefaultPriceArs: string;
     }
-  | { ok: false; status: number; code: string; message: string; fields?: Record<string, string> }
+  | { ok: false; status: number; code: string; message: string; fields?: Record<string, string>; fieldDetails?: Record<string, ErrorDetail> }
 > {
   const professionalUserId = Number(body.professional_user_id);
   const serviceId = Number(body.service_id);
@@ -126,9 +133,9 @@ export async function resolveAndLoadService(
   const name = typeof body.name === 'string' ? body.name : null;
   const description = typeof body.description === 'string' ? body.description : null;
 
-  const fields = validateBookingFields({ professionalUserId, serviceId, resourceId, date, start, durationMinutes });
+  const { fields, fieldDetails } = validateBookingFields({ professionalUserId, serviceId, resourceId, date, start, durationMinutes });
   if (Object.keys(fields).length > 0) {
-    return { ok: false, status: 422, code: 'invalid_request', message: invalidMessage, fields };
+    return { ok: false, status: 422, code: 'invalid_request', message: invalidMessage, fields, fieldDetails };
   }
 
   const serviceDefaults = await getServiceDefaults(pool, serviceId, businessId);

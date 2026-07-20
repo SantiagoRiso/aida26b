@@ -3,6 +3,7 @@ import { reactive, ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useToast } from '@/composables/useToast';
 import { listClosures, createClosure, updateClosure, deleteClosure, type BusinessClosure } from '@/api/closures';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { useTimeOffConflictGate } from '@/composables/useTimeOffConflictGate';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -80,7 +81,6 @@ function bodyOf(v: ClosureFields) {
   return { exception_date: v.date, start_time: start, end_time: end, reason: v.reason || null };
 }
 
-const saveFailed = () => t('closures.saveFailed');
 
 async function submitAdd() {
   const err = validate(form);
@@ -96,7 +96,7 @@ async function submitAdd() {
     form.date = ''; form.start = ''; form.end = ''; form.reason = ''; form.allDay = true;
     await load();
   } else {
-    formError.value = res.message ?? saveFailed();
+    formError.value = apiErrorMessage(res, 'closures.saveFailed');
   }
 }
 
@@ -115,7 +115,7 @@ async function submitEdit() {
     editingId.value = null;
     await load();
   } else {
-    editError.value = res.message ?? saveFailed();
+    editError.value = apiErrorMessage(res, 'closures.saveFailed');
   }
 }
 

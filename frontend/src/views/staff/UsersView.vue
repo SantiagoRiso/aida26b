@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { useLabel } from '@/composables/useLabel';
 import { createUser, deactivateUser, resetPassword } from '@/api/admin-users';
 import { useAuthStore } from '@/stores/auth';
@@ -66,7 +67,7 @@ async function submitCreate() {
       createPanelOpen.value = false;
       reloadKey.value++;
     } else {
-      createErrors['_'] = result.message ?? t('users.createError');
+      createErrors['_'] = apiErrorMessage(result, 'users.createError');
     }
   } finally {
     createSubmitting.value = false;
@@ -123,7 +124,7 @@ async function submitReset() {
     if (result.ok) {
       resetPanelOpen.value = false;
     } else {
-      resetError.value = result.message ?? t('users.resetError');
+      resetError.value = apiErrorMessage(result, 'users.resetError');
     }
   } finally {
     resetSubmitting.value = false;

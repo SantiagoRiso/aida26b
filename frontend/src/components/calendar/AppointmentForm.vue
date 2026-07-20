@@ -10,6 +10,7 @@ import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useBookingOptions } from '@/composables/useBookingOptions';
 import { useToast } from '@/composables/useToast';
+import { fieldErrorMessages } from '@/i18n/api-errors';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -254,7 +255,7 @@ async function save(override = false): Promise<void> {
     saving.value = false;
     if (!result.ok) {
       toast.error('scheduleFailed');
-      if (result.fields) fieldErrors.value = result.fields;
+      fieldErrors.value = fieldErrorMessages(result);
       return;
     }
     seriesResult.value = result.data;
@@ -285,10 +286,8 @@ async function save(override = false): Promise<void> {
 
   if (!result.ok) {
     toast.error(props.appointment ? 'rescheduleFailed' : 'scheduleFailed');
-    if (result.fields) {
-      fieldErrors.value = result.fields;
-      if (result.fields.start || result.fields.duration_minutes) sobreturno.value = true;
-    }
+    fieldErrors.value = fieldErrorMessages(result);
+    if (fieldErrors.value.start || fieldErrors.value.duration_minutes) sobreturno.value = true;
     return;
   }
 

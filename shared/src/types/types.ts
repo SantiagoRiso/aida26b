@@ -68,6 +68,9 @@ type ColumnValidator = {
   integer?: boolean;
   pattern?: string;
   patternMessage?: string;
+  // Names the constraint the pattern expresses (email, amount, time of day) so a violation can
+  // be reported as something other than "wrong format" in whatever language the reader uses.
+  patternKey?: string;
   normalize?: { pattern: string; replacement: string };
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { createUser } from '@/api/admin-users';
 import { structure } from '@shared/ssot/structure';
 import { useLabel } from '@/composables/useLabel';
@@ -43,7 +44,7 @@ async function submit() {
     if (result.ok) {
       emit('created');
     } else {
-      error.value = result.message ?? t('clients.createError');
+      error.value = apiErrorMessage(result, 'clients.createError');
     }
   } finally {
     submitting.value = false;

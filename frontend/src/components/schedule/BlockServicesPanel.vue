@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
+import { fieldErrorMessages } from '@/i18n/api-errors';
 import FieldError from '@/components/shared/FieldError.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
 import type { TableRecordMap } from '@shared/ssot/derived';
@@ -195,7 +196,7 @@ async function save(): Promise<boolean> {
     if (!row.origOffered && row.offered) {
       const res = await createRow('schedule_block_services', writeBody(row, duration, price));
       if (res.ok) syncSnapshot(row, res.data);
-      else { ok = false; recordError(row, res.fields); }
+      else { ok = false; recordError(row, fieldErrorMessages(res)); }
     } else if (row.origOffered && !row.offered && row.rowId) {
       const res = await deleteRow('schedule_block_services', row.rowId);
       if (res.ok) { row.rowId = null; row.origOffered = false; row.origDuration = null; row.origPrice = null; }
@@ -203,7 +204,7 @@ async function save(): Promise<boolean> {
     } else if (row.origOffered && row.offered && row.rowId && (duration !== row.origDuration || price !== row.origPrice)) {
       const res = await updateRow('schedule_block_services', row.rowId, writeBody(row, duration, price));
       if (res.ok) syncSnapshot(row, res.data);
-      else { ok = false; recordError(row, res.fields); }
+      else { ok = false; recordError(row, fieldErrorMessages(res)); }
     }
   }
   return ok;
@@ -218,8 +219,8 @@ function syncSnapshot(row: ServiceRow, data: TableRecordMap['schedule_block_serv
   row.priceArs = data.price_ars ?? row.defaultPrice;
 }
 
-function recordError(row: ServiceRow, fields?: Record<string, string>) {
-  if (fields && Object.keys(fields).length > 0) fieldErrors.value[row.serviceId] = fields;
+function recordError(row: ServiceRow, fields: Record<string, string>) {
+  if (Object.keys(fields).length > 0) fieldErrors.value[row.serviceId] = fields;
   else toast.error('scheduleBlockServiceSaveError');
 }
 

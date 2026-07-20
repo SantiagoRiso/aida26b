@@ -58,7 +58,7 @@ export async function postHandler(
     user,
   );
   if (!refCheck.ok) {
-    return sendError(res, refCheck.status, refCheck.code, refCheck.message, refCheck.fields);
+    return sendError(res, refCheck.status, refCheck.code, refCheck.message, { fields: refCheck.fields });
   }
 
   // Own+Admin+granted enforcement for schedule tables — the owner comes from the body on

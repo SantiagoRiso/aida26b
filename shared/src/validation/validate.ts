@@ -2,12 +2,25 @@ import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
 import type { ColumnDef, ColumnValue } from '../types/types';
 import type { TableKey, TableRecordMap } from '../ssot/derived';
+import type { ErrorDetail, ErrorParams } from '../ssot/envelope';
 
 export type FieldErrors = Record<string, string>;
 
+// A rule violation named by a stable key so each side can render it in its own language.
+// The English prose is produced next to the issue (never derived from it later) so the two
+// projections of one rule cannot drift.
+export type FieldIssue = ErrorDetail;
+export type FieldIssues = Record<string, FieldIssue>;
+
+type Failure = { issue: FieldIssue; message: string };
+
+function fail(key: string, message: string, params?: ErrorParams): Failure {
+  return { issue: params ? { key, params } : { key }, message };
+}
+
 export type ParseResult<T extends TableKey> =
   | { data: TableRecordMap[T] }
-  | { fields: FieldErrors };
+  | { fields: FieldErrors; fieldDetails: FieldIssues };
 
 const regexCache = new Map<string, RegExp>();
 function getRegex(source: string): RegExp {
@@ -19,25 +32,25 @@ function getRegex(source: string): RegExp {
 // Booking-window and cancellation-cutoff rules are per-tenant and runtime-computed
 // (see backend/src/services/scheduling.ts and shared/src/ssot/domain/appointment-lifecycle.ts) —
 // they can't be expressed as static descriptor bounds, so this only checks the value parses as a date.
-function checkDate(key: string, value: ColumnValue | undefined): string | undefined {
+function checkDate(key: string, value: ColumnValue | undefined): Failure | undefined {
   const parsed = new Date(value as string);
-  if (isNaN(parsed.getTime())) return `${key} must be a valid date`;
+  if (isNaN(parsed.getTime())) return fail('notDate', `${key} must be a valid date`);
   return undefined;
 }
 
-function checkValue(key: string, col: ColumnDef, value: ColumnValue | undefined): string | undefined {
+function checkValue(key: string, col: ColumnDef, value: ColumnValue | undefined): Failure | undefined {
   const v = col.validator ?? {};
 
   switch (col.type) {
     case 'string':
-      if (typeof value !== 'string') return `${key} must be a string`;
+      if (typeof value !== 'string') return fail('notString', `${key} must be a string`);
       break;
     case 'number':
-      if (typeof value !== 'number' || isNaN(value)) return `${key} must be a number`;
-      if (v.integer && !Number.isInteger(value)) return `${key} must be an integer`;
+      if (typeof value !== 'number' || isNaN(value)) return fail('notNumber', `${key} must be a number`);
+      if (v.integer && !Number.isInteger(value)) return fail('notInteger', `${key} must be an integer`);
       break;
     case 'boolean':
-      if (typeof value !== 'boolean') return `${key} must be a boolean`;
+      if (typeof value !== 'boolean') return fail('notBoolean', `${key} must be a boolean`);
       break;
   }
 
@@ -47,20 +60,34 @@ function checkValue(key: string, col: ColumnDef, value: ColumnValue | undefined)
   }
 
   if (col.options && !col.options.some((o) => o.value === value)) {
-    return `${key} must be one of: ${col.options.map((o) => o.value).join(', ')}`;
+    const options = col.options.map((o) => o.value).join(', ');
+    return fail('notInOptions', `${key} must be one of: ${options}`, { options });
   }
 
   if (v.pattern && (typeof value !== 'string' || !getRegex(v.pattern).test(value))) {
-    return v.patternMessage ? `${key} ${v.patternMessage}` : `${key} has an invalid format`;
+    // The descriptor names the constraint (email, amount, HH:MM); an unnamed pattern can only
+    // say the format is wrong.
+    return fail(
+      v.patternKey ?? 'invalidFormat',
+      v.patternMessage ? `${key} ${v.patternMessage}` : `${key} has an invalid format`,
+    );
   }
 
   if (typeof value === 'string') {
-    if (typeof v.minLength === 'number' && value.length < v.minLength) return `${key} must be at least ${v.minLength} characters`;
-    if (typeof v.maxLength === 'number' && value.length > v.maxLength) return `${key} must be at most ${v.maxLength} characters`;
+    if (typeof v.minLength === 'number' && value.length < v.minLength) {
+      return fail('minLength', `${key} must be at least ${v.minLength} characters`, { min: v.minLength });
+    }
+    if (typeof v.maxLength === 'number' && value.length > v.maxLength) {
+      return fail('maxLength', `${key} must be at most ${v.maxLength} characters`, { max: v.maxLength });
+    }
   }
   if (typeof value === 'number') {
-    if (typeof v.minValue === 'number' && value < v.minValue) return `${key} must be >= ${v.minValue}`;
-    if (typeof v.maxValue === 'number' && value > v.maxValue) return `${key} must be <= ${v.maxValue}`;
+    if (typeof v.minValue === 'number' && value < v.minValue) {
+      return fail('minValue', `${key} must be >= ${v.minValue}`, { min: v.minValue });
+    }
+    if (typeof v.maxValue === 'number' && value > v.maxValue) {
+      return fail('maxValue', `${key} must be <= ${v.maxValue}`, { max: v.maxValue });
+    }
   }
 
   return undefined;
@@ -95,11 +122,22 @@ function isEmpty(col: ColumnDef, value: ColumnValue | undefined): boolean {
   return value === null || value === undefined || (col.type === 'string' && value === '');
 }
 
-export function validateField(table: TableKey, column: string, value: ColumnValue | undefined): string | undefined {
+function checkField(table: TableKey, column: string, value: ColumnValue | undefined): Failure | undefined {
   const col = (structure.tables[table].columns as Record<string, ColumnDef>)[column];
-  if (!col) return `${column} is not a valid field`;
-  if (isEmpty(col, value)) return col.validator?.required ? `${column} is required` : undefined;
+  if (!col) return fail('notAField', `${column} is not a valid field`);
+  if (isEmpty(col, value)) {
+    return col.validator?.required ? fail('required', `${column} is required`) : undefined;
+  }
   return checkValue(column, col, value);
+}
+
+// Two projections of the same check: prose for logs and API consumers, key for a localized UI.
+export function validateField(table: TableKey, column: string, value: ColumnValue | undefined): string | undefined {
+  return checkField(table, column, value)?.message;
+}
+
+export function validateFieldIssue(table: TableKey, column: string, value: ColumnValue | undefined): FieldIssue | undefined {
+  return checkField(table, column, value)?.issue;
 }
 
 // `data` must hold exactly `fields` - nothing missing, nothing extra - with every value valid.
@@ -110,26 +148,32 @@ function validate<T extends TableKey>(table: T, data: Partial<TableRecordMap[T]>
   const obj = (data != null && typeof data === 'object' && !Array.isArray(data) ? data : {}) as Record<string, ColumnValue | undefined>;
   const allowed = new Set(fields);
   const fieldErrors: FieldErrors = {};
+  const fieldDetails: FieldIssues = {};
   const out: Record<string, ColumnValue> = {};
 
+  const reject = (key: string, failure: Failure) => {
+    fieldErrors[key] = failure.message;
+    fieldDetails[key] = failure.issue;
+  };
+
   for (const key of Object.keys(obj)) {
-    if (!allowed.has(key)) fieldErrors[key] = `${key} is not an allowed field`;
+    if (!allowed.has(key)) reject(key, fail('unknownField', `${key} is not an allowed field`));
   }
 
   for (const key of fields) {
     const col = columns[key];
-    if (!col) { fieldErrors[key] = `${key} is not a valid field`; continue; }
-    if (!(key in obj)) { fieldErrors[key] = `${key} is required`; continue; }
+    if (!col) { reject(key, fail('notAField', `${key} is not a valid field`)); continue; }
+    if (!(key in obj)) { reject(key, fail('required', `${key} is required`)); continue; }
 
     const raw = obj[key];
-    const error = validateField(table, key, raw);
-    if (error) { fieldErrors[key] = error; continue; }
+    const failure = checkField(table, key, raw);
+    if (failure) { reject(key, failure); continue; }
     // checkValue already enforced the column's primitive type; safe to narrow.
     out[key] = isEmpty(col, raw) ? null : (normalizeValue(col, raw) as ColumnValue);
   }
 
   return Object.keys(fieldErrors).length > 0
-    ? { fields: fieldErrors }
+    ? { fields: fieldErrors, fieldDetails }
     : { data: out as TableRecordMap[T] };
 }
 

@@ -131,6 +131,62 @@ describe('enveloped error', () => {
       expect(result.fields).toEqual({ name: 'Required' });
     }
   });
+
+  it('carries the translation keys through to the caller', async () => {
+    mockFetch(403, {
+      success: false,
+      error: {
+        code: 'forbidden',
+        message: 'Professional may only manage their own calendar grants',
+        detail: { key: 'grantOwnCalendarOnly' },
+        fields: { name: 'name must be at most 80 characters' },
+        fieldDetails: { name: { key: 'maxLength', params: { max: 80 } } },
+      },
+    });
+    const { apiFetch } = await importFresh();
+    const result = await apiFetch('/grants', { method: 'POST' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail).toEqual({ key: 'grantOwnCalendarOnly' });
+      expect(result.fieldDetails).toEqual({ name: { key: 'maxLength', params: { max: 80 } } });
+    }
+  });
+
+  // A malformed key must not cost us the error itself; code and prose still arrive.
+  it('drops unusable translation keys instead of rejecting the envelope', async () => {
+    mockFetch(400, {
+      success: false,
+      error: {
+        code: 'invalid_request',
+        message: 'Invalid field',
+        detail: { params: { max: 80 } },
+        fieldDetails: { name: 'required' },
+      },
+    });
+    const { apiFetch } = await importFresh();
+    const result = await apiFetch('/appointments', { method: 'POST' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid_request');
+      expect(result.detail).toBeUndefined();
+      expect(result.fieldDetails).toBeUndefined();
+    }
+  });
+
+  it('keeps only the interpolation values it can render', async () => {
+    mockFetch(400, {
+      success: false,
+      error: {
+        code: 'invalid_request',
+        message: 'Invalid field',
+        detail: { key: 'maxLength', params: { max: 80, nested: { bad: true } } },
+      },
+    });
+    const { apiFetch } = await importFresh();
+    const result = await apiFetch('/appointments', { method: 'POST' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.detail).toEqual({ key: 'maxLength', params: { max: 80 } });
+  });
 });
 
 describe('auth route success', () => {

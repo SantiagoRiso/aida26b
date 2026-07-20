@@ -80,7 +80,7 @@ export function mountBusinessSettingsRoutes(
       cutoffHours < 0
     ) {
       return sendError(res, 422, 'invalid_request', 'cancellation_cutoff_hours must be a non-negative integer', {
-        cancellation_cutoff_hours: 'required non-negative integer',
+        fields: { cancellation_cutoff_hours: 'required non-negative integer' },
       });
     }
 
@@ -96,13 +96,13 @@ export function mountBusinessSettingsRoutes(
     const minParsed = asOptInt(req.body.min_booking_days, false);
     if (!minParsed.ok || minParsed.value === null) {
       return sendError(res, 422, 'invalid_request', 'min_booking_days must be a non-negative integer', {
-        min_booking_days: 'non-negative integer',
+        fields: { min_booking_days: 'non-negative integer' },
       });
     }
     const maxParsed = asOptInt(req.body.max_booking_days, true);
     if (!maxParsed.ok) {
       return sendError(res, 422, 'invalid_request', 'max_booking_days must be a non-negative integer or null', {
-        max_booking_days: 'non-negative integer or null',
+        fields: { max_booking_days: 'non-negative integer or null' },
       });
     }
 
@@ -114,7 +114,7 @@ export function mountBusinessSettingsRoutes(
     const maxDays = maxParsed.value === undefined ? current.max_booking_days : maxParsed.value;
     if (maxDays !== null && maxDays < minDays) {
       return sendError(res, 422, 'invalid_request', 'max_booking_days must be greater than or equal to min_booking_days', {
-        max_booking_days: 'must be ≥ min_booking_days',
+        fields: { max_booking_days: 'must be ≥ min_booking_days' },
       });
     }
 

@@ -1,7 +1,7 @@
 import type { TableStructure } from '../../types/types';
 import type { Role } from '../../types/roles';
 import { pkColumn } from './business';
-import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
+import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE, AMOUNT_PATTERN_KEY } from './catalog';
 
 // Each entry's sign drives the balance: debits increase the client's debt, credits reduce it.
 // Balance = Σ(debits) − Σ(credits) — the one place the debit/credit split is declared.
@@ -68,6 +68,7 @@ export const financeTables = {
           required: true,
           pattern: AMOUNT_PATTERN,
           patternMessage: AMOUNT_PATTERN_MESSAGE,
+          patternKey: AMOUNT_PATTERN_KEY,
         },
         filterable: false,
         sortable: true,

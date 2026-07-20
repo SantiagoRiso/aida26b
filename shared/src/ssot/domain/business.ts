@@ -61,7 +61,7 @@ export const businessTables = {
       currency_code: {
         type: 'string',
         label: { es: 'Moneda', en: 'Currency' },
-        validator: { required: true, pattern: '^ARS$', patternMessage: 'must be ARS' },
+        validator: { required: true, pattern: '^ARS$', patternMessage: 'must be ARS', patternKey: 'currencyArsFormat' },
         filterable: false,
         sortable: false,
       },

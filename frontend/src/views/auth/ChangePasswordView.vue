@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { useAuthStore } from '@/stores/auth';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -38,8 +39,7 @@ async function submit() {
   try {
     const result = await auth.changePassword(currentPassword.value, newPassword.value);
     if (!result.ok) {
-      // Never expose raw error codes to the user.
-      serverError.value = result.message ?? t('toast.genericError');
+      serverError.value = apiErrorMessage(result, 'toast.genericError');
       return;
     }
     if (auth.user?.role === 'Client') {

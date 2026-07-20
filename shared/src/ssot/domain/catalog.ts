@@ -6,6 +6,7 @@ import { softDelete } from './people';
 // ledger) so the "up to 2 decimals, non-negative" rule can't drift between them.
 export const AMOUNT_PATTERN = '^\\d+(\\.\\d{1,2})?$';
 export const AMOUNT_PATTERN_MESSAGE = 'must be a non-negative amount';
+export const AMOUNT_PATTERN_KEY = 'amountFormat';
 
 const priceColumn = {
   type: 'string',
@@ -14,6 +15,7 @@ const priceColumn = {
     required: true,
     pattern: AMOUNT_PATTERN,
     patternMessage: AMOUNT_PATTERN_MESSAGE,
+    patternKey: AMOUNT_PATTERN_KEY,
   },
   filterable: false,
   sortable: true,

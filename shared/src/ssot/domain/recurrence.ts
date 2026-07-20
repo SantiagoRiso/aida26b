@@ -1,7 +1,7 @@
 import type { LocalizedText, TableStructure } from '../../types/types';
 import { pkColumn } from './business';
-import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
-import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, WEEKDAY_OPTIONS, isWeekday, type Weekday } from './availability';
+import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE, AMOUNT_PATTERN_KEY } from './catalog';
+import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, HHMM_PATTERN_KEY, WEEKDAY_OPTIONS, isWeekday, type Weekday } from './availability';
 
 export const FREQUENCY_VALUES = ['weekly', 'monthly_dow', 'monthly_dom'] as const;
 export const END_KIND_VALUES = ['count', 'until', 'open'] as const;
@@ -252,7 +252,7 @@ export const recurrenceTables = {
       start_time: {
         type: 'string',
         label: { es: 'Hora inicio', en: 'Start Time' },
-        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
+        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE, patternKey: HHMM_PATTERN_KEY },
         filterable: false,
         sortable: true,
       },
@@ -273,6 +273,7 @@ export const recurrenceTables = {
           required: true,
           pattern: AMOUNT_PATTERN,
           patternMessage: AMOUNT_PATTERN_MESSAGE,
+          patternKey: AMOUNT_PATTERN_KEY,
         },
         filterable: false,
         sortable: true,

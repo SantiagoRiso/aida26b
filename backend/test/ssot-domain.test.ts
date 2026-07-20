@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { structure } from '../../shared/src/ssot/structure';
-import { validateFullObject } from '../../shared/src/validation/validate';
+import { validateFullObject, validateFieldIssue } from '../../shared/src/validation/validate';
 import {
   getSchedulable,
   isBusinessScoped,
@@ -31,6 +31,7 @@ import type {
   TableStructure,
   SchedulableCapability,
   ColumnDef,
+  ColumnValue,
   LocalizedText,
   TableKey,
 } from '../../shared/src/types/types';
@@ -394,6 +395,42 @@ describe('field-level validation', () => {
     if ('fields' in result) {
       expect(result.fields.email).toMatch(/email/i);
     }
+  });
+});
+
+describe('validation issues name the rule that failed', () => {
+  const issuesFor = (table: TableKey, body: Record<string, ColumnValue>) => {
+    const result = validateFullObject(table, body);
+    if (!('fields' in result)) throw new Error('expected a validation failure');
+    return result;
+  };
+
+  it('names the rule and keeps the English prose for the same failure', () => {
+    const result = issuesFor('clients', {});
+    expect(result.fieldDetails.display_name).toEqual({ key: 'required' });
+    expect(result.fields.display_name).toBe('display_name is required');
+  });
+
+  it('names the constraint a pattern expresses rather than "invalid format"', () => {
+    expect(validateFieldIssue('clients', 'email', 'not-an-email')).toEqual({ key: 'emailFormat' });
+    expect(validateFieldIssue('services', 'default_price_ars', '12.345')).toEqual({ key: 'amountFormat' });
+    expect(validateFieldIssue('schedule_blocks', 'start_time', '9am')).toEqual({ key: 'timeOfDayFormat' });
+  });
+
+  it('carries the bound as a parameter so the limit survives translation', () => {
+    expect(validateFieldIssue('users', 'username', 'x'.repeat(81)))
+      .toEqual({ key: 'maxLength', params: { max: 80 } });
+    expect(validateFieldIssue('services', 'default_duration_minutes', 0))
+      .toEqual({ key: 'minValue', params: { min: 1 } });
+  });
+
+  it('flags a field the table does not accept', () => {
+    const result = issuesFor('clients', { display_name: 'Ana', nope: 'x' } as Record<string, ColumnValue>);
+    expect(result.fieldDetails.nope).toEqual({ key: 'unknownField' });
+  });
+
+  it('reports a valid value as no issue at all', () => {
+    expect(validateFieldIssue('clients', 'email', 'ana@example.com')).toBeUndefined();
   });
 });
 

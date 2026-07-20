@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useToast } from '@/composables/useToast';
 import { listGrants, listGrantableStaff, createGrant, revokeGrant } from '@/api/grants';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import type { CalendarGrant, GrantableStaff } from '@/api/grants';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -72,7 +73,7 @@ async function grant() {
     success('saved');
     await loadGrants();
   } else {
-    grantError.value = res.message;
+    grantError.value = apiErrorMessage(res);
   }
 }
 

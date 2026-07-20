@@ -19,6 +19,7 @@ export const receptionistGrantScope: GrantScopeDescriptor = {
 // Same shape everywhere a user-facing email column appears (users.email, clients.email).
 export const EMAIL_PATTERN = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
 export const EMAIL_PATTERN_MESSAGE = 'must be a valid email address';
+export const EMAIL_PATTERN_KEY = 'emailFormat';
 
 // Role choices for the users.role column and any UI role picker. The set comes from the single
 // ROLES source; Record<Role,…> forces a label for every role, so adding one is an edit in
@@ -81,6 +82,7 @@ export const peopleTables = {
           required: true,
           pattern: EMAIL_PATTERN,
           patternMessage: EMAIL_PATTERN_MESSAGE,
+          patternKey: EMAIL_PATTERN_KEY,
         },
         filterable: true,
         sortable: true,
@@ -174,6 +176,7 @@ export const peopleTables = {
           nullable: true,
           pattern: EMAIL_PATTERN,
           patternMessage: EMAIL_PATTERN_MESSAGE,
+          patternKey: EMAIL_PATTERN_KEY,
         },
         filterable: true,
         sortable: true,

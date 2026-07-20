@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { LEDGER_ENTRY_TYPES, RECEPTIONIST_ENTRY_TYPES } from '@shared/ssot/domain/finance';
 import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
+import { fieldErrorMessages } from '@/i18n/api-errors';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
@@ -124,8 +125,9 @@ async function submit() {
   loading.value = false;
 
   if (!result.ok) {
-    if (result.fields) {
-      fieldErrors.value = result.fields;
+    const serverFieldErrors = fieldErrorMessages(result);
+    if (Object.keys(serverFieldErrors).length > 0) {
+      fieldErrors.value = serverFieldErrors;
     } else {
       ui.toast('error', 'genericError');
     }

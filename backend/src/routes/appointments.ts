@@ -94,7 +94,7 @@ export function mountAppointmentRoutes(
 
     const resolved = await resolveAndLoadService(pool, businessId, body, false);
     if (!resolved.ok) {
-      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+      return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
     }
 
     const {
@@ -172,7 +172,7 @@ export function mountAppointmentRoutes(
 
     const resolved = await resolveAndLoadService(pool, businessId, body, true);
     if (!resolved.ok) {
-      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+      return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
     }
 
     const {
@@ -359,7 +359,7 @@ export function mountAppointmentRoutes(
       'Invalid reschedule input',
     );
     if (!resolved.ok) {
-      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+      return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
     }
     const { effective_price, effective_duration_minutes, startsAt } = resolved;
 
@@ -778,13 +778,13 @@ export function mountAppointmentRoutes(
       'Invalid series input',
     );
     if (!resolved.ok) {
-      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+      return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
     }
 
     // client_user_id is NOT NULL on appointment_series — checked here, mirroring how /schedule
     // checks it just before the write.
     if (!isPositiveInteger(resolved.clientUserId)) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series input', { client_user_id: 'required' });
+      return sendError(res, 422, 'invalid_request', 'Invalid series input', { fields: { client_user_id: 'required' } });
     }
 
     const rawRule: RecurrenceRuleFields = {
@@ -800,7 +800,7 @@ export function mountAppointmentRoutes(
       end_date: body.end_date != null ? String(body.end_date) : null,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', parsedRule.fields);
+    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
     const rule = parsedRule.data;
 
     const series = await withTransaction(pool, async (tx) => {
@@ -878,11 +878,11 @@ export function mountAppointmentRoutes(
 
     const occurrenceDate = typeof req.body?.occurrence_date === 'string' ? req.body.occurrence_date : '';
     if (!DATE_RE.test(occurrenceDate)) {
-      return sendError(res, 422, 'invalid_request', 'occurrence_date must be YYYY-MM-DD', { occurrence_date: 'required' });
+      return sendError(res, 422, 'invalid_request', 'occurrence_date must be YYYY-MM-DD', { fields: { occurrence_date: 'required' } });
     }
     if (!canMaterializeOccurrence(series, occurrenceDate)) {
       return sendError(res, 422, 'invalid_request', 'occurrence_date is not part of this series', {
-        occurrence_date: 'not_in_series',
+        fields: { occurrence_date: 'not_in_series' },
       });
     }
 
@@ -961,7 +961,7 @@ export function mountAppointmentRoutes(
       end_date: body.end_date !== undefined ? (body.end_date != null ? String(body.end_date) : null) : series.end_date,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', parsedRule.fields);
+    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
     const rule = parsedRule.data;
 
     const patch: Partial<InsertSeriesInput> = {
@@ -995,10 +995,10 @@ export function mountAppointmentRoutes(
         'Invalid series input',
       );
       if (!resolved.ok) {
-        return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+        return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
       }
       if (!isPositiveInteger(resolved.clientUserId)) {
-        return sendError(res, 422, 'invalid_request', 'Invalid series input', { client_user_id: 'required' });
+        return sendError(res, 422, 'invalid_request', 'Invalid series input', { fields: { client_user_id: 'required' } });
       }
       patch.service_id = String(resolved.serviceId);
       patch.resource_id = resolved.resourceId != null ? String(resolved.resourceId) : null;
@@ -1041,7 +1041,7 @@ export function mountAppointmentRoutes(
     const body = req.body ?? {};
     const fromDate = typeof body.from_date === 'string' ? body.from_date : '';
     if (!DATE_RE.test(fromDate)) {
-      return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { from_date: 'required' });
+      return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { fields: { from_date: 'required' } });
     }
 
     const patch = body.patch ?? {};
@@ -1062,7 +1062,7 @@ export function mountAppointmentRoutes(
       end_date: patch.end_date !== undefined ? (patch.end_date != null ? String(patch.end_date) : null) : series.end_date,
     };
     const parsedRule = parseRecurrenceRule(rawRule);
-    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', parsedRule.fields);
+    if ('fields' in parsedRule) return sendError(res, 422, 'invalid_request', 'Invalid recurrence rule', { fields: parsedRule.fields });
     const rule = parsedRule.data;
 
     const result = await withTransaction(pool, async (tx) => {
@@ -1125,7 +1125,7 @@ export function mountAppointmentRoutes(
     let fromDate = series.start_date;
     if (body.from_date !== undefined) {
       if (typeof body.from_date !== 'string' || !DATE_RE.test(body.from_date)) {
-        return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { from_date: 'invalid' });
+        return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { fields: { from_date: 'invalid' } });
       }
       fromDate = body.from_date;
     }

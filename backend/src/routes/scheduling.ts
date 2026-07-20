@@ -46,7 +46,7 @@ export function mountSchedulingRoutes(
     const callerIsStaff = user.role !== 'Client';
     const resolved = await resolveAndLoadService(pool, businessId, body, callerIsStaff, 'Invalid conflict-check input');
     if (!resolved.ok) {
-      return sendError(res, resolved.status, resolved.code, resolved.message, resolved.fields);
+      return sendError(res, resolved.status, resolved.code, resolved.message, { fields: resolved.fields, fieldDetails: resolved.fieldDetails });
     }
 
     const dryRun = await runConflictDryRun(pool, businessId, {
@@ -97,11 +97,11 @@ export function mountSchedulingRoutes(
       fields.date = 'must be YYYY-MM-DD';
     }
     if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid availability query', fields);
+      return sendError(res, 422, 'invalid_request', 'Invalid availability query', { fields });
     }
     if (!owner) {
       return sendError(res, 422, 'invalid_request', 'Invalid availability query', {
-        owner: 'must be prof:<id> or res:<id>',
+        fields: { owner: 'must be prof:<id> or res:<id>' },
       });
     }
 
@@ -179,7 +179,7 @@ export function mountSchedulingRoutes(
     if (!Number.isInteger(professionalId) || professionalId <= 0) fields.professional = 'required';
     if (!Number.isInteger(serviceId) || serviceId <= 0) fields.service = 'required';
     if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid booking-window query', fields);
+      return sendError(res, 422, 'invalid_request', 'Invalid booking-window query', { fields });
     }
 
     const bounds = await resolveBookingWindow(pool, businessId, professionalId, serviceId);
@@ -200,10 +200,10 @@ export function mountSchedulingRoutes(
     const body = req.body ?? {};
     const parsed = parseTimeOffRange(
       { date: body.date, start: body.start, end: body.end },
-      { status: 422, message: 'date must be YYYY-MM-DD' },
+      { status: 422, message: 'date must be YYYY-MM-DD', key: 'dateFormat' },
     );
     if (!parsed.ok) {
-      return sendError(res, parsed.status, parsed.code, parsed.message);
+      return sendError(res, parsed.status, parsed.code, parsed.message, { detail: parsed.detail });
     }
     const { date, start, end } = parsed;
 

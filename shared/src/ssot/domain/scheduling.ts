@@ -1,8 +1,8 @@
 import type { BusinessJoinDescriptor, TableStructure } from '../../types/types';
 import { pkColumn, businessForeignKey } from './business';
 import { receptionistGrantScope } from './people';
-import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE } from './catalog';
-import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, WEEKDAY_OPTIONS } from './availability';
+import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE, AMOUNT_PATTERN_KEY } from './catalog';
+import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, HHMM_PATTERN_KEY, WEEKDAY_OPTIONS } from './availability';
 import { APPOINTMENT_STATES } from './appointment-lifecycle';
 
 // Business is derived via whichever owner is set (professional XOR resource).
@@ -51,14 +51,14 @@ export const schedulingTables = {
       start_time: {
         type: 'string',
         label: { es: 'Hora inicio', en: 'Start Time' },
-        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
+        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE, patternKey: HHMM_PATTERN_KEY },
         filterable: false,
         sortable: true,
       },
       end_time: {
         type: 'string',
         label: { es: 'Hora fin', en: 'End Time' },
-        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
+        validator: { required: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE, patternKey: HHMM_PATTERN_KEY },
         filterable: false,
         sortable: false,
       },
@@ -125,7 +125,7 @@ export const schedulingTables = {
       price_ars: {
         type: 'string',
         label: { es: 'Precio (ARS)', en: 'Price (ARS)' },
-        validator: { nullable: true, pattern: AMOUNT_PATTERN, patternMessage: AMOUNT_PATTERN_MESSAGE },
+        validator: { nullable: true, pattern: AMOUNT_PATTERN, patternMessage: AMOUNT_PATTERN_MESSAGE, patternKey: AMOUNT_PATTERN_KEY },
         filterable: false,
         sortable: true,
       },
@@ -201,14 +201,14 @@ export const schedulingTables = {
       start_time: {
         type: 'string',
         label: { es: 'Hora inicio', en: 'Start Time' },
-        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
+        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE, patternKey: HHMM_PATTERN_KEY },
         filterable: false,
         sortable: false,
       },
       end_time: {
         type: 'string',
         label: { es: 'Hora fin', en: 'End Time' },
-        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE },
+        validator: { nullable: true, pattern: HHMM_PATTERN, patternMessage: HHMM_PATTERN_MESSAGE, patternKey: HHMM_PATTERN_KEY },
         filterable: false,
         sortable: false,
       },
@@ -339,6 +339,7 @@ export const schedulingTables = {
           required: true,
           pattern: AMOUNT_PATTERN,
           patternMessage: AMOUNT_PATTERN_MESSAGE,
+          patternKey: AMOUNT_PATTERN_KEY,
         },
         filterable: false,
         sortable: true,

@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
+import { fieldErrorMessages } from '@/i18n/api-errors';
 import { useTimeOffConflictGate } from '@/composables/useTimeOffConflictGate';
 import { buildExceptionBody, classifyException, type ExceptionKind, type ExceptionRow } from '@/composables/scheduleExceptions';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -108,9 +109,7 @@ async function submit() {
 
   if (!result.ok) {
     toast.error('exceptionSaveError');
-    if (result.fields) {
-      fieldErrors.value = { ...fieldErrors.value, ...result.fields };
-    }
+    fieldErrors.value = { ...fieldErrors.value, ...fieldErrorMessages(result) };
     return;
   }
 
