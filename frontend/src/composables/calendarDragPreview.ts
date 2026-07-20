@@ -4,7 +4,8 @@ export const DRAG_LAYOUT_PREVIEW_ID = '__drag-layout-preview';
 
 export interface DragPreviewCalendarApi {
   getEventById: (id: string) => { setDates: (start: string, end: string) => void; remove: () => void } | null;
-  addEvent: (event: EventInput) => EventApi;
+  // FullCalendar returns null when the event is rejected (e.g. outside the view's date range).
+  addEvent: (event: EventInput) => EventApi | null;
 }
 
 export function upsertDragLayoutPreview(api: DragPreviewCalendarApi | undefined, start: string, end: string): void {

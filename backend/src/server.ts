@@ -5,6 +5,7 @@ import fs from 'fs';
 
 import { pool } from './db';
 import { createApp } from './app';
+import { logger } from './logger';
 import { createAuthGuards } from './session';
 import { createAuditWriter } from './audit';
 import { mountAuthRoutes } from './routes/auth';
@@ -102,7 +103,36 @@ const app = createApp(pool, {
 
 export { app, pool };
 
+// Shared shape for both process-fatal handlers below; exported so the logging format is
+// unit-testable without registering real process listeners or invoking process.exit.
+// eslint-disable-next-line no-restricted-syntax -- boundary: Node hands both handlers an unverified thrown/rejected value
+export function logFatal(kind: string, error: unknown): void {
+  logger.error({
+    kind,
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? (error.stack ?? '') : '',
+  });
+}
+
 if (require.main === module) {
+  // Node's own guidance: an uncaughtException leaves allocated resources (open handles, locks,
+  // partially-run transactions) in an unknown state. Logging and continuing would serve
+  // subsequent requests on top of that corruption, so we log then exit and let the process
+  // manager (container orchestrator, systemd, etc.) restart a clean process.
+  process.on('uncaughtException', (error) => {
+    logFatal('uncaughtException', error);
+    process.exit(1);
+  });
+
+  // Registering this handler overrides Node's default (terminate) behavior for unhandled
+  // rejections, so we must replicate it explicitly: an unhandled rejection means a promise
+  // escaped guardRoute/guardMiddleware's crash net entirely, which is the same "unknown state"
+  // situation as an uncaughtException — treat it the same way rather than swallow it.
+  process.on('unhandledRejection', (reason) => {
+    logFatal('unhandledRejection', reason);
+    process.exit(1);
+  });
+
   app.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });

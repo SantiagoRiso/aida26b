@@ -7,9 +7,12 @@ import { i18n } from '@/i18n';
 import { roleAllowedFor } from '@/router/access';
 import { listRows } from '@/api/crud';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
+import type { ForeignKeyValue } from '@/composables/useForeignKeyOptions';
 import { structure } from '@shared/ssot/structure';
+import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import type { ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -23,8 +26,10 @@ const props = defineProps<{
   emptyValue?: string;
 }>();
 
+// Rows are emitted exactly as the API sent them: uncoerced wire values (NUMERIC/BIGINT arrive
+// as strings), so consumers see the true shape rather than the coerced record type.
 const emit = defineEmits<{
-  edit: [row: TableRecordMap[K]];
+  edit: [row: Wire<TableRecordMap[K]>];
   create: [];
 }>();
 
@@ -86,9 +91,12 @@ function toggleSort(field: string) {
 
 const page = ref(1);
 const filters = ref<Record<string, string>>({});
-const rows = ref([]) as Ref<TableRecordMap[K][]>;
+const rows = ref([]) as Ref<Wire<TableRecordMap[K]>[]>;
 const total = ref(0);
-const limit = 20;
+// The server is the sole authority on page size; this only seeds the pre-first-response render.
+// Once a response lands, limit tracks meta.limit so the widget can never disagree with what
+// the server actually paginated by (see Pagination's totalPages math).
+const limit = ref(LIST_DEFAULT_LIMIT);
 const loading = ref(false);
 const loadError = ref(false);
 
@@ -105,6 +113,7 @@ async function reload() {
     if (result.ok) {
       rows.value = result.data;
       total.value = result.meta?.total ?? rows.value.length;
+      limit.value = result.meta?.limit ?? LIST_DEFAULT_LIMIT;
     } else {
       loadError.value = true;
     }
@@ -127,11 +136,11 @@ function onPageChange(p: number) {
 // FK columns render the referenced row's label, not its id. Lookups come from the shared
 // useForeignKeyOptions cache (one fetch per referenced table app-wide); the resolvers read
 // reactive options, so labels fill in whether rows or options arrive first.
-const fkLabelFns = ref<Record<string, (id: string | number | null | undefined) => string | null>>({});
+const fkLabelFns = ref<Record<string, (id: ForeignKeyValue) => string | null>>({});
 
 function bindFkResolvers() {
   const cols = tableSpec.value.columns as Record<string, ColumnDef>;
-  const fns: Record<string, (id: string | number | null | undefined) => string | null> = {};
+  const fns: Record<string, (id: ForeignKeyValue) => string | null> = {};
   for (const col of Object.values(cols)) {
     if (col.foreignKey) fns[col.foreignKey.table] = useForeignKeyOptions(col.foreignKey).labelFor;
   }
@@ -173,13 +182,13 @@ function formatCell(value: ColumnValue | undefined): string {
 }
 
 // Column keys come from the SSOT columns map at runtime, so cells are read by name.
-function cellValue(row: TableRecordMap[K], key: string): ColumnValue | undefined {
+function cellValue(row: Wire<TableRecordMap[K]>, key: string): ColumnValue | undefined {
   return (row as Partial<Record<string, ColumnValue>>)[key];
 }
 
 // FK cells show the referenced row's label; a read-restricted or missing target falls
 // back to the raw id rather than hiding the value entirely.
-function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): string {
+function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef): string {
   if (col.foreignKey) {
     const v = cellValue(row, key);
     if (v == null || v === '') return props.emptyValue ?? i18n.global.t('generic.emptyValue');
@@ -210,7 +219,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
 
     <div class="overflow-x-auto rounded-lg border border-border">
       <table class="w-full text-sm">
-        <thead class="bg-surface text-left">
+        <thead class="sticky top-0 z-10 bg-surface text-left">
           <tr>
             <th
               v-for="{ key, col } in visibleColumns"
@@ -255,7 +264,12 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
               :class="canUpdate() ? 'cursor-pointer' : ''"
               @click="canUpdate() ? emit('edit', row) : undefined"
             >
-              <td v-for="{ key, col } in visibleColumns" :key="key" class="px-4 py-3">
+              <td
+                v-for="{ key, col } in visibleColumns"
+                :key="key"
+                class="max-w-xs truncate px-4 py-3"
+                :title="cellDisplay(row, key, col)"
+              >
                 {{ cellDisplay(row, key, col) }}
               </td>
               <td v-if="hasActionsColumn" class="px-4 py-3 text-right whitespace-nowrap">
@@ -276,7 +290,7 @@ function cellDisplay(row: TableRecordMap[K], key: string, col: ColumnDef): strin
     </div>
 
     <Pagination
-      v-if="!loading && rows.length > 0"
+      v-if="!loading && (rows.length > 0 || page > 1)"
       :page="page"
       :limit="limit"
       :total="total"

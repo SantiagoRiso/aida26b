@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import type { Queryable } from './db/core';
 import dotenv from 'dotenv';
+import { logger } from './logger';
 
 dotenv.config();
 
@@ -14,6 +15,13 @@ export const pool = new Pool({
   ...connection,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
+});
+
+// An idle client can error independently of any in-flight query (e.g. the backend closing the
+// connection). Without a handler here, pg's EventEmitter has no listener and Node treats that as
+// an uncaught error — this keeps it a visible log line instead of a crash or a silent drop.
+pool.on('error', (error) => {
+  logger.error({ msg: 'idle database client error', error: error.message });
 });
 
 function requireEnv(name: string): string {

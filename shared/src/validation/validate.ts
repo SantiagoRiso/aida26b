@@ -1,7 +1,6 @@
 import { structure } from '../ssot/structure';
 import { getPkFields } from '../utils/utils';
-import { ARGENTINA_OFFSET_MS } from '../ssot/domain/availability';
-import type { ColumnDef, ColumnValidator, ColumnValue } from '../types/types';
+import type { ColumnDef, ColumnValue } from '../types/types';
 import type { TableKey, TableRecordMap } from '../ssot/derived';
 
 export type FieldErrors = Record<string, string>;
@@ -10,8 +9,6 @@ export type ParseResult<T extends TableKey> =
   | { data: TableRecordMap[T] }
   | { fields: FieldErrors };
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 const regexCache = new Map<string, RegExp>();
 function getRegex(source: string): RegExp {
   let re = regexCache.get(source);
@@ -19,38 +16,12 @@ function getRegex(source: string): RegExp {
   return re;
 }
 
-function offsetText(days: number): string {
-  if (days === 0) return 'today';
-  return days > 0 ? `${days} day(s) in the future` : `${-days} day(s) in the past`;
-}
-
-function literalDay(d: Date): number {
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-function argentinaDay(ms: number): number {
-  const local = new Date(ms + ARGENTINA_OFFSET_MS);
-  return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
-}
-
-function checkDate(key: string, v: ColumnValidator, value: ColumnValue | undefined): string | undefined {
+// Booking-window and cancellation-cutoff rules are per-tenant and runtime-computed
+// (see backend/src/services/scheduling.ts and shared/src/ssot/domain/appointment-lifecycle.ts) —
+// they can't be expressed as static descriptor bounds, so this only checks the value parses as a date.
+function checkDate(key: string, value: ColumnValue | undefined): string | undefined {
   const parsed = new Date(value as string);
   if (isNaN(parsed.getTime())) return `${key} must be a valid date`;
-
-  const day = literalDay(parsed);
-
-  if (v.minDate && day < literalDay(new Date(v.minDate))) {
-    return `${key} must be on or after ${v.minDate}`;
-  }
-
-  const diffDays = Math.round((day - argentinaDay(Date.now())) / MS_PER_DAY);
-  if (typeof v.maxDayOffset === 'number' && diffDays > v.maxDayOffset) {
-    return v.maxDayOffset === 0 ? `${key} must not be in the future` : `${key} must be on or before ${offsetText(v.maxDayOffset)}`;
-  }
-  if (typeof v.minDayOffset === 'number' && diffDays < v.minDayOffset) {
-    return v.minDayOffset === 0 ? `${key} must not be in the past` : `${key} must be on or after ${offsetText(v.minDayOffset)}`;
-  }
-
   return undefined;
 }
 
@@ -71,7 +42,7 @@ function checkValue(key: string, col: ColumnDef, value: ColumnValue | undefined)
   }
 
   if (col.type === 'date' || col.input === 'date') {
-    const dateError = checkDate(key, v, value);
+    const dateError = checkDate(key, value);
     if (dateError) return dateError;
   }
 

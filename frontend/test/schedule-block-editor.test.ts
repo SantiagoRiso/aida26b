@@ -166,7 +166,6 @@ describe('ScheduleBlockEditor', () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    // Clicking a block selects it and opens the editor modal.
     editorVm(wrapper).calendarOptions.eventClick({ event: { id: '1' } });
     await flushPromises();
     expect(editorVm(wrapper).editorOpen).toBe(true);
@@ -228,6 +227,45 @@ describe('ScheduleBlockEditor', () => {
     expect(updateRow).not.toHaveBeenCalled();
     const ui = useUiStore();
     expect(ui.toasts.at(-1)).toMatchObject({ kind: 'error', messageKey: 'scheduleBlockOverlap' });
+  });
+
+  // A written row whose weekday the editor can't place would otherwise leave an unrenderable hole
+  // in the local list, so the editor resyncs from the server instead.
+  it('resyncs instead of holding an unplaceable row returned by a create', async () => {
+    vi.mocked(createRow).mockResolvedValueOnce({
+      ok: true,
+      data: { id: '99', professional_user_id: '1', resource_id: null, weekday: 'funday', start_time: '13:00', end_time: '14:00' },
+    });
+    const wrapper = mountEditor();
+    await flushPromises();
+    expect(listRows).toHaveBeenCalledTimes(1);
+
+    await editorVm(wrapper).calendarOptions.select(fakeSelectArg('2024-01-01T13:00:00', '2024-01-01T14:00:00'));
+    await flushPromises();
+
+    expect(createRow).toHaveBeenCalled();
+    expect(listRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('resyncs instead of holding an unplaceable row returned by a move', async () => {
+    vi.mocked(updateRow).mockResolvedValueOnce({
+      ok: true,
+      data: { id: '1', professional_user_id: '1', resource_id: null, weekday: 'funday', start_time: '10:00', end_time: '13:00' },
+    });
+    const wrapper = mountEditor();
+    await flushPromises();
+    expect(listRows).toHaveBeenCalledTimes(1);
+    const revert = vi.fn();
+
+    await editorVm(wrapper).calendarOptions.eventDrop({
+      event: { id: '1', startStr: '2024-01-01T10:00:00', endStr: '2024-01-01T13:00:00' },
+      revert,
+    });
+    await flushPromises();
+
+    expect(updateRow).toHaveBeenCalled();
+    expect(revert).not.toHaveBeenCalled();
+    expect(listRows).toHaveBeenCalledTimes(2);
   });
 
   it('creates a resource-owned block with the resource FK set and professional FK null', async () => {

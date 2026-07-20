@@ -45,7 +45,7 @@ jobs:
       # timezone so times render as they do in production, not the runner's UTC.
       TZ: America/Argentina/Buenos_Aires
       PORT: 3000
-      # Tells playwright.config.ts to skip the webServer block (CI manages the stack).
+      # Tells playwright.config.mts to skip the webServer block (CI manages the stack).
       CI: "true"
       E2E_BASE_URL: "http://localhost:3000"
 
@@ -62,54 +62,50 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      # Install dependencies for both workspaces.
       - name: Install backend dependencies
         run: npm ci --prefix backend
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
-      # Run database migrations on the CI Postgres service.
       - name: Run migrations
         run: npm run migrate --prefix backend
 
-      # Seed demo accounts and dataset used by the E2E journeys.
       - name: Seed demo data
         run: npm run seed:demo --prefix backend
 
-      # Install Playwright browsers (Chromium only for speed; all journeys use the default browser).
+      # Chromium only for speed; all journeys use the default browser.
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
         working-directory: frontend
 
-      # Build the Vue frontend (produces frontend/dist/ served by Express).
+      # vite build does not type-check, so the compiler only ever runs here.
+      - name: Type-check
+        run: npm run typecheck
+
       - name: Build frontend
         run: npm run build --prefix frontend
 
-      # Build the backend. tsconfig rootDir spans the repo (backend imports shared/), so tsc mirrors
-      # the tree under dist/ — the entry lands at backend/dist/backend/src/server.js.
+      # tsconfig rootDir spans the repo (backend imports shared/), so tsc mirrors the tree under
+      # dist/ — the entry lands at backend/dist/backend/src/server.js.
       - name: Build backend
         run: npm run build --prefix backend
 
-      # Backend unit tests (no DB required — mocked or in-process).
       - name: Backend unit tests
         run: npm run test --prefix backend
 
-      # Backend DB integration tests — includes migration-seed-fresh.test.ts (SC5 item 7).
+      # Includes migration-seed-fresh.test.ts, which exercises migrations against a fresh schema.
       - name: Backend DB tests
         run: npm run test:db --prefix backend
 
-      # Frontend unit tests (vitest, jsdom, no browser).
       - name: Frontend unit tests
         run: npm run test --prefix frontend
 
-      # Start Express (serves built frontend + API) in the background for E2E.
       - name: Start backend server
         run: node backend/dist/backend/src/server.js &
         env:
           PORT: 3000
 
-      # Wait for the server to be ready before running E2E.
       - name: Wait for server
         run: |
           echo "Waiting for server at http://localhost:3000/health..."
@@ -123,14 +119,13 @@ jobs:
           echo "Server did not become ready in 30s."
           exit 1
 
-      # Full E2E suite — all 8 spec files, workers:1 (serial, shared seeded DB).
+      # Full E2E suite — 38 spec files / 130 tests, workers:1 (serial, shared seeded DB).
       - name: Frontend E2E tests
         run: npm run test:e2e --prefix frontend
         env:
           E2E_BASE_URL: "http://localhost:3000"
           CI: "true"
 
-      # Upload Playwright traces on failure for debugging.
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

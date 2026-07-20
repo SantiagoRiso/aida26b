@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 
 // LOG_LEVEL is read per call so it stays configurable; 'silent' suppresses everything (used by tests).
 
@@ -48,10 +48,20 @@ export const logger = {
   error: (fields: LogFields) => emit('error', fields),
 };
 
+type RequestWithId = Request & { reqId?: string };
+
+// Lets error sites (guardRoute/guardMiddleware, the audit writer) join their log line back to
+// the requestLogger line for the same request. Undefined when requestLogger never ran (e.g. a
+// handler invoked directly in a unit test).
+export function getRequestId(req: Request): string | undefined {
+  return (req as RequestWithId).reqId;
+}
+
 // Never logs the request body.
 export function requestLogger(): RequestHandler {
   return (req, res, next) => {
     const reqId = randomUUID();
+    (req as RequestWithId).reqId = reqId;
     const start = process.hrtime.bigint();
 
     res.on('finish', () => {

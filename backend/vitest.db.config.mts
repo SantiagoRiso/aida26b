@@ -3,8 +3,34 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['test/migrate.test.ts', 'test/scheduler-schema.test.ts', 'test/api_tests.ts', 'test/generic-crud-policy.test.ts', 'test/health.test.ts', 'test/dev-seed.test.ts', 'test/auth-authz.test.ts', 'test/user-management.test.ts', 'test/calendar-grants.test.ts', 'test/business-closures.test.ts', 'test/time-off-conflicts.test.ts', 'test/conflict-check.test.ts', 'test/booking-window.test.ts', 'test/conflict-recheck.test.ts', 'test/schedule-blocks.test.ts', 'test/own-schedule-authz.test.ts', 'test/professional-service-window-authz.test.ts', 'test/app-grants-drift.test.ts', 'test/grant-scope-read.test.ts', 'test/appointments-lifecycle.test.ts', 'test/ledger.test.ts', 'test/audit.test.ts', 'test/migration-seed-fresh.test.ts', 'test/demo-seed.test.ts', 'test/self-profile.test.ts', 'test/series-db.test.ts', 'test/series-conflict.test.ts', 'test/series-materialize.test.ts', 'test/series-routes.test.ts', 'test/series-listing.test.ts'],
+    // A test file that needs real Postgres is named *.db.test.ts (see vitest.config.mts) — an
+    // explicit, self-evident split instead of two hand-maintained include lists that can drift.
+    include: ['test/**/*.db.test.ts'],
     pool: 'forks',
     fileParallelism: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json-summary'],
+      reportsDirectory: './coverage-db',
+      include: ['src/**/*.ts', '../shared/src/**/*.ts'],
+      exclude: ['src/server.ts', 'src/migrate.ts', 'src/seed-*.ts'],
+      // This suite exercises routes/db/services through real HTTP + Postgres; the pure suite's
+      // own coverage.config covers what runs without a DB.
+      //
+      // A full 31-file --coverage run's report never finishes writing in this sandbox (the test
+      // run itself completes and prints its summary, but the v8 report/merge step hangs with no
+      // error — reproducible with fileParallelism:false).
+      // Measured instead on a clean 15/31-file majority subset (2026-07-20, all passing):
+      // statements 79.25%, branches 67.8%, functions 87.53%, lines 82.76%. Coverage is monotonic
+      // in the number of exercised files, so the full suite's true numbers can only be >= these —
+      // thresholds set just under them are a safe floor, not a guess. Re-measure with
+      // `npm run test:db:coverage` somewhere the full run's report completes and tighten further.
+      thresholds: {
+        lines: 80,
+        statements: 78,
+        functions: 85,
+        branches: 65,
+      },
+    },
   },
 });

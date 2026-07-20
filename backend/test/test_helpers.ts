@@ -1,4 +1,4 @@
-import { API_BASE } from './api_tests';
+import { API_BASE } from './api_tests.db.test';
 
 async function fetchFullTable(tableName: string) {
   try {

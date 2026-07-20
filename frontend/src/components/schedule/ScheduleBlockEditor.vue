@@ -63,6 +63,20 @@ async function loadBlocks() {
 watch(() => props.owner, loadBlocks, { deep: true });
 onMounted(loadBlocks);
 
+// A row we just wrote should always map back; one that doesn't carries a weekday this editor can't
+// place, so resync from the server rather than leaving an unrenderable hole in the local list.
+async function absorbWrittenBlock(
+  row: TableRecordMap['schedule_blocks'],
+  place: (block: TemplateBlock) => TemplateBlock[],
+): Promise<void> {
+  const block = toTemplateBlock(row);
+  if (block == null) {
+    await loadBlocks();
+    return;
+  }
+  blocks.value = place(block);
+}
+
 // A block belongs to exactly one owner — the non-owning FK is explicitly nulled.
 function writeBody(times: WeekdayTimes): Partial<TableRecordMap['schedule_blocks']> {
   const { kind, id } = props.owner;
@@ -87,7 +101,7 @@ async function onSelect(arg: DateSelectArg) {
 
   const res = await createRow('schedule_blocks', writeBody(decision.body));
   if (res.ok) {
-    blocks.value = [...blocks.value, toTemplateBlock(res.data)];
+    await absorbWrittenBlock(res.data, (block) => [...blocks.value, block]);
   } else {
     toast.error('scheduleBlockSaveError');
   }
@@ -119,8 +133,8 @@ async function saveTimes(times: { startTime: string; endTime: string }): Promise
   }
   const res = await updateRow('schedule_blocks', block.id, writeBody(decision.body));
   if (res.ok) {
-    const updated = toTemplateBlock(res.data);
-    blocks.value = blocks.value.map((b) => (b.id === block.id ? updated : b));
+    await absorbWrittenBlock(res.data, (updated) =>
+      blocks.value.map((b) => (b.id === block.id ? updated : b)));
     return true;
   }
   toast.error('scheduleBlockSaveError');
@@ -143,8 +157,8 @@ async function applyMove(id: string, startStr: string, endStr: string, revert: (
 
   const res = await updateRow('schedule_blocks', id, writeBody(decision.body));
   if (res.ok) {
-    const updated = toTemplateBlock(res.data);
-    blocks.value = blocks.value.map((b) => (b.id === id ? updated : b));
+    await absorbWrittenBlock(res.data, (updated) =>
+      blocks.value.map((b) => (b.id === id ? updated : b)));
   } else {
     toast.error('scheduleBlockSaveError');
     revert();

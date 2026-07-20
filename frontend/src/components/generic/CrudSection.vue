@@ -10,6 +10,7 @@ import { roleAllowedFor } from '@/router/access';
 import { structure } from '@shared/ssot/structure';
 import type { TableStructure, LocalizedText, ColumnValue } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -30,7 +31,7 @@ const { toast } = useToast();
 const auth = useAuthStore();
 
 const panelOpen = ref(false);
-const editingRow = ref<TableRecordMap[K] | null>(null);
+const editingRow = ref<Wire<TableRecordMap[K]> | null>(null);
 const mode = ref<'create' | 'edit'>('create');
 const confirmOpen = ref(false);
 const pendingDeleteId = ref<string | null>(null);
@@ -41,13 +42,13 @@ function canDelete(): boolean {
   return auth.user ? roleAllowedFor(required, auth.user.role) : false;
 }
 
-function rowId(row: TableRecordMap[K]): string {
+function rowId(row: Wire<TableRecordMap[K]>): string {
   const pk = (structure.tables[props.tableKey] as TableStructure).pk;
   const pkKey = Array.isArray(pk) ? pk[0] : pk;
-  return String((row as Record<string, ColumnValue>)[pkKey]);
+  return String((row as Partial<Record<string, ColumnValue>>)[pkKey]);
 }
 
-function onEdit(row: TableRecordMap[K]) {
+function onEdit(row: Wire<TableRecordMap[K]>) {
   editingRow.value = row;
   mode.value = 'edit';
   panelOpen.value = true;
@@ -73,7 +74,7 @@ function onDeleteClick() {
   if (editingRow.value) requestDelete(editingRow.value);
 }
 
-function requestDelete(row: TableRecordMap[K]) {
+function requestDelete(row: Wire<TableRecordMap[K]>) {
   pendingDeleteId.value = rowId(row);
   confirmOpen.value = true;
 }

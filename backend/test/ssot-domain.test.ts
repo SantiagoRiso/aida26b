@@ -442,7 +442,6 @@ describe('resolveBooking — effective price + duration', () => {
 
 describe('evaluateConflicts — structured conflict verdict', () => {
   const MONDAY = '2026-06-29';
-  // Grid: 12 back-to-back 15-min slots 09:00-12:00.
   const grid = computeServiceSlots({
     blocks: [{ start: '09:00', end: '12:00', slot_minutes: 15 }],
   });
@@ -737,7 +736,6 @@ describe('owner-scheduled tables are derived from schedulable capabilities', () 
 });
 
 describe('BUSINESS_TZ ↔ ARGENTINA_OFFSET_MS drift guard', () => {
-  // The real UTC offset the IANA database assigns BUSINESS_TZ at a given instant.
   function ianaOffsetMs(at: Date): number {
     const name = new Intl.DateTimeFormat('en-US', { timeZone: BUSINESS_TZ, timeZoneName: 'longOffset' })
       .formatToParts(at)
@@ -750,8 +748,8 @@ describe('BUSINESS_TZ ↔ ARGENTINA_OFFSET_MS drift guard', () => {
   }
 
   it('the fixed offset matches the IANA zone in both halves of the current year (no DST)', () => {
-    // Argentina abolished DST in 2009; validate.ts's date math relies on the offset being
-    // constant. Probing summer and winter of the running year catches a tzdata change in CI.
+    // Argentina abolished DST in 2009; time.ts's businessDateTimeToISO relies on the offset
+    // being constant. Probing summer and winter of the running year catches a tzdata change in CI.
     const year = new Date().getUTCFullYear();
     expect(ianaOffsetMs(new Date(Date.UTC(year, 0, 15)))).toBe(ARGENTINA_OFFSET_MS);
     expect(ianaOffsetMs(new Date(Date.UTC(year, 6, 15)))).toBe(ARGENTINA_OFFSET_MS);

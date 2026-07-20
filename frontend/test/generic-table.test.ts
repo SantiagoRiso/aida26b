@@ -8,32 +8,15 @@ import { en } from '@/i18n/en';
 import { useAuthStore } from '@/stores/auth';
 
 import { structure } from '@shared/ssot/structure';
+import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import type { ColumnDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import type { Role } from '@shared/types/roles';
 import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
 import Skeleton from '@/components/shared/Skeleton.vue';
-
-// Mirrors crud.ts buildQuery so the query-string contract is asserted without apiFetch.
-function buildQuery(params: {
-  page?: number;
-  sort?: string;
-  dir?: 'asc' | 'desc';
-  filters?: Record<string, string>;
-}): string {
-  const parts: string[] = [];
-  if (params.page && params.page > 1) parts.push(`page=${params.page}`);
-  if (params.sort) parts.push(`sort=${encodeURIComponent(params.sort)}`);
-  if (params.dir) parts.push(`dir=${params.dir}`);
-  if (params.filters) {
-    for (const [field, value] of Object.entries(params.filters)) {
-      if (value !== '' && value !== undefined) {
-        parts.push(`filter_${encodeURIComponent(field)}=${encodeURIComponent(value)}`);
-      }
-    }
-  }
-  return parts.length ? `?${parts.join('&')}` : '';
-}
+// The real query-string builder, not a reimplementation — a change to crud.ts's contract
+// (e.g. a new reserved param) must fail this suite, not silently drift from it.
+import { buildQuery } from '@/api/crud';
 
 describe('listRows query serialization', () => {
   it('serializes page + sort + dir', () => {
@@ -101,19 +84,25 @@ describe('SSOT metadata for clients', () => {
   });
 });
 
-vi.mock('@/api/crud', () => ({
-  listRows: vi.fn().mockResolvedValue({
-    ok: true,
-    data: [
-      { id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' },
-    ],
-    meta: { page: 1, limit: 20, total: 1 },
-  }),
-  getRow: vi.fn(),
-  createRow: vi.fn(),
-  updateRow: vi.fn(),
-  deleteRow: vi.fn(),
-}));
+// Mock only the network-calling exports; keep buildQuery as the real implementation so the
+// serialization tests above exercise the actual query-string contract, not a copy of it.
+vi.mock('@/api/crud', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/crud')>();
+  return {
+    ...actual,
+    listRows: vi.fn().mockResolvedValue({
+      ok: true,
+      data: [
+        { id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' },
+      ],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
+    }),
+    getRow: vi.fn(),
+    createRow: vi.fn(),
+    updateRow: vi.fn(),
+    deleteRow: vi.fn(),
+  };
+});
 
 function makePlugins(role: Role = 'Admin') {
   const pinia = createPinia();
@@ -199,7 +188,7 @@ describe('GenericTable for clients — no create button', () => {
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       data: [],
-      meta: { page: 1, limit: 20, total: 0 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 0 },
     });
 
     const { pinia, router, i18n } = makePlugins('Admin');
@@ -219,7 +208,7 @@ describe('GenericTable for clients — no create button', () => {
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       data: [],
-      meta: { page: 1, limit: 20, total: 0 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 0 },
     });
 
     const { pinia, router, i18n } = makePlugins('Admin');
@@ -241,7 +230,7 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
-      meta: { page: 1, limit: 20, total: 1 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
 
     const { pinia, router, i18n } = makePlugins();
@@ -259,7 +248,6 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
     expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'asc' }));
     expect(nameHeader!.text()).toContain('↑');
 
-    // Same header again — direction flips rather than resetting.
     await nameHeader!.trigger('click');
     await flushPromises();
     expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'desc' }));
@@ -307,7 +295,7 @@ describe('GenericTable — loading skeleton', () => {
     resolveFetch({
       ok: true,
       data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
-      meta: { page: 1, limit: 20, total: 1 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
     await flushPromises();
 
@@ -355,7 +343,7 @@ describe('GenericTable — FK cell shows the referenced label, or #id when unres
             { id: '1', professional_user_id: '7', service_id: '9', min_booking_days: null, max_booking_days: null },
             { id: '2', professional_user_id: '999', service_id: '9', min_booking_days: null, max_booking_days: null },
           ],
-          meta: { page: 1, limit: 20, total: 2 },
+          meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 2 },
         };
       }
       if (table === 'professionals') {
@@ -386,7 +374,7 @@ describe('GenericTable — role-gated Edit action', () => {
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       data: [{ id: '1', display_name: 'Dra. Ana', bio: null }],
-      meta: { page: 1, limit: 20, total: 1 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
 
     const { pinia, router, i18n } = makePlugins('Receptionist');
@@ -405,10 +393,9 @@ describe('GenericTable — role-gated Edit action', () => {
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       data: [{ id: '1', display_name: 'Dra. Ana', bio: null }],
-      meta: { page: 1, limit: 20, total: 1 },
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
 
-    // professionals.roleRequired.update = ['Admin', 'Receptionist', 'Professional'] — Client is excluded.
     expect(structure.tables.professionals.roleRequired?.update).not.toContain('Client');
 
     const { pinia, router, i18n } = makePlugins('Client');
@@ -436,5 +423,107 @@ describe('GenericTable — create button requires the descriptor role, not just 
     await flushPromises();
 
     expect(wrapper.text()).not.toContain(structure.tables.services.addButtonLabel!.es);
+  });
+});
+
+// Regression coverage for the pagination-mismatch defect: GenericTable used to hardcode its own
+// `limit` (20) for Pagination's totalPages math while never sending a `limit` param, so the server's
+// real page size (LIST_DEFAULT_LIMIT, currently 50) silently won page 2+ — a total that wasn't a
+// multiple of the LOCAL 20 produced a phantom enabled "Siguiente" the server could never fill.
+describe('GenericTable — pagination limit is derived from meta, not a hardcoded local value', () => {
+  function serviceRow(id: number) {
+    return { id: String(id), name: `Servicio ${id}`, description: null, default_duration_minutes: 30, default_price_ars: '500.00' };
+  }
+
+  it('a total that is not a multiple of the old hardcoded local limit (20) shows no phantom Next once the real server limit (50) fits it on one page', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [serviceRow(1)],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 33 },
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    // Bug reproduction: with limit hardcoded to 20, totalPages = ceil(33/20) = 2 and Next would be
+    // enabled here, even though the server (limit 50) already returned everything there is.
+    const nextBtn = wrapper.findAll('button').find((b) => b.text() === es.generic.next);
+    expect(nextBtn).toBeTruthy();
+    expect(nextBtn!.attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain(`${es.generic.page} 1 ${es.generic.of} 1`);
+  });
+
+  it('total not a multiple of the page size — navigating to the last page renders the partial page, not an empty one', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: Array.from({ length: 20 }, (_, i) => serviceRow(i + 1)),
+        meta: { page: 1, limit: 20, total: 33 },
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: Array.from({ length: 13 }, (_, i) => serviceRow(i + 21)),
+        meta: { page: 2, limit: 20, total: 33 },
+      }));
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.findAll('tr.virtualized-row').length).toBe(20);
+    const nextBtn = wrapper.findAll('button').find((b) => b.text() === es.generic.next);
+    expect(nextBtn!.attributes('disabled')).toBeUndefined();
+
+    await nextBtn!.trigger('click');
+    await flushPromises();
+
+    // The partial last page (13 rows, not 20 and not 0) renders — the server was never asked for
+    // more than it has, because the widget's limit came from meta, matching the server's own math.
+    expect(wrapper.findAll('tr.virtualized-row').length).toBe(13);
+    const prevBtn = wrapper.findAll('button').find((b) => b.text() === es.generic.previous);
+    const nextBtnAfter = wrapper.findAll('button').find((b) => b.text() === es.generic.next);
+    expect(prevBtn!.attributes('disabled')).toBeUndefined();
+    expect(nextBtnAfter!.attributes('disabled')).toBeDefined();
+  });
+
+  it('an empty page beyond the last one still renders Pagination, so Previous stays reachable', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        data: [serviceRow(1)],
+        meta: { page: 1, limit: 20, total: 33 },
+      }))
+      .mockImplementationOnce(async () => ({
+        // Simulates a page fetched past the data (e.g. total shrank between requests) — the old
+        // `v-if="rows.length > 0"` guard hid the whole Pagination control here, stranding the user.
+        ok: true,
+        data: [],
+        meta: { page: 2, limit: 20, total: 33 },
+      }));
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    const nextBtn = wrapper.findAll('button').find((b) => b.text() === es.generic.next);
+    await nextBtn!.trigger('click');
+    await flushPromises();
+
+    const prevBtn = wrapper.findAll('button').find((b) => b.text() === es.generic.previous);
+    expect(prevBtn).toBeTruthy();
+    expect(prevBtn!.attributes('disabled')).toBeUndefined();
   });
 });

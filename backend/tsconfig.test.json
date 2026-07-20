@@ -1,0 +1,10 @@
+// Type-check only: the build config deliberately excludes test/ so compiled tests never
+// reach dist/. This superset config exists so the tests are still type-checked.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

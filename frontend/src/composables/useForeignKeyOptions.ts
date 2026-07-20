@@ -10,6 +10,10 @@ export interface SelectOption {
   label: string;
 }
 
+// A foreign-key cell value: the referenced row's pk as the wire carries it, or absent when the
+// column is null / the row has not loaded.
+export type ForeignKeyValue = string | number | null | undefined;
+
 // Server list cap — one page covers every FK target table today.
 export const FK_OPTIONS_LIMIT = 500;
 
@@ -38,7 +42,7 @@ function makeLabelFor(options: Ref<SelectOption[]>) {
   });
   // Resolve an id to its display label — the id→name lookup every consumer needs, so no screen
   // has to rebuild it. Returns null for a missing/unknown id so callers can pick their own fallback.
-  return (id) => {
+  return (id: ForeignKeyValue) => {
     if (id == null) return null;
     return optionMap.value.get(String(id)) ?? null;
   };
@@ -91,6 +95,7 @@ export function useForeignKeyOptions(
 
   // Dependent options are filtered by the parent's value — per-instance, never cached.
   // Refetched only when the parent value changes, preventing refetch storms in a form.
+  const filterField = dependency.foreignField;
   const options = ref<SelectOption[]>([]);
   const loading = ref(false);
 
@@ -102,7 +107,7 @@ export function useForeignKeyOptions(
     loading.value = true;
     try {
       const result = await listRows(table, {
-        filters: { [dependency.foreignField]: parentValue },
+        filters: { [filterField]: parentValue },
         limit: FK_OPTIONS_LIMIT,
       });
       options.value = result.ok ? toOptions(result.data, fk) : [];

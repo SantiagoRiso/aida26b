@@ -4,6 +4,7 @@ import { optionalAuthenticatedUser } from './session';
 import { getUserBusinessId } from './db/users';
 import { insertAuditEvent } from './db/audit';
 import type { ColumnValue } from '../../shared/src/types/types';
+import { getRequestId, logger } from './logger';
 
 export type AuditWriter = (
   req: Request,
@@ -49,7 +50,14 @@ export function createAuditWriter(pool: Pool): AuditWriter {
         detailsJson: JSON.stringify(details),
       });
     } catch (error) {
-      console.error('Error writing audit event:', error);
+      // Best-effort by design (see function comment) — log so a broken audit trail is
+      // still visible in the structured stream, joined to the request that triggered it.
+      logger.error({
+        reqId: getRequestId(req) ?? 'unknown',
+        eventType,
+        outcome,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 }

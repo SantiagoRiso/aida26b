@@ -9,6 +9,7 @@ import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
 import type { ColumnDef, ColumnValue } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import DateField from '@/components/shared/DateField.vue';
@@ -16,11 +17,13 @@ import DateField from '@/components/shared/DateField.vue';
 const props = defineProps<{
   tableKey: K;
   mode: 'create' | 'edit';
-  initial?: Partial<TableRecordMap[K]>;
+  initial?: Partial<Wire<TableRecordMap[K]>>;
 }>();
 
+// The saved row is the server's response verbatim — uncoerced wire values, not the coerced
+// record type.
 const emit = defineEmits<{
-  saved: [row: TableRecordMap[K]];
+  saved: [row: Wire<TableRecordMap[K]>];
   cancel: [];
 }>();
 

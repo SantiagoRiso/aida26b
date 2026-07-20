@@ -135,8 +135,8 @@ onMounted(load);
             v-for="c in filtered"
             :key="c.id"
             class="virtualized-row border-t border-border hover:bg-surface cursor-pointer"
-            @pointerenter="prefetchClient(Number(c.id))"
-            @focusin="prefetchClient(Number(c.id))"
+            @pointerenter="prefetchClientDetail(Number(c.id))"
+            @focusin="prefetchClientDetail(Number(c.id))"
             @click="openClient(Number(c.id))"
           >
             <td class="px-4 py-3 font-medium">

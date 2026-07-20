@@ -2,6 +2,20 @@ import type { Request as ExpressRequest, Response as ExpressResponse, NextFuncti
 import { sendError } from './status_messages';
 import { httpForDbError } from './db/errors';
 import { httpForStructuredError } from './errors';
+import { getRequestId, logger } from './logger';
+
+// reqId (set by requestLogger upstream) joins this line back to the request's access-log entry;
+// falls back to 'unknown' only when a handler is invoked outside that middleware (e.g. a test).
+// eslint-disable-next-line no-restricted-syntax -- catch-boundary: the thrown value's shape is unverified until narrowed below
+function logUnhandled(req: ExpressRequest, error: unknown): void {
+  logger.error({
+    reqId: getRequestId(req) ?? 'unknown',
+    method: req.method,
+    path: req.path,
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error && error.stack ? error.stack : '',
+  });
+}
 
 // Express 4 does not catch rejected async handlers — one uncaught rejection kills the whole
 // process. These wrappers are the crash net; structured error handling stays in the handlers.
@@ -23,7 +37,7 @@ function guardRoute(
         if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);
         return;
       }
-      console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
+      logUnhandled(req, error);
       if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
     }
   };
@@ -48,7 +62,7 @@ function guardMiddleware(
         if (!res.headersSent) sendError(res, structured.status, structured.code, structured.message, structured.fields);
         return;
       }
-      console.error(`Unhandled error in ${req.method} ${req.path}:`, error);
+      logUnhandled(req, error);
       if (!res.headersSent) sendError(res, 500, 'internal_error', 'Internal server error');
     }
   };

@@ -6,14 +6,22 @@ import { OPEN_APPOINTMENT_STATES } from './appointment-lifecycle';
 export type OwnerKind = 'professional' | 'resource';
 
 // Language-neutral conflict classes. The frontend localizes from `type` + `entity`; the API
-// never builds a display string.
-export type ConflictType =
-  | 'professional_overlap'
-  | 'resource_overlap'
-  | 'professional_availability'
-  | 'resource_availability'
-  | 'requested_block'
-  | 'slot_alignment';
+// never builds a display string. ConflictType and the decoder/label-map both derive from this
+// array, so a new conflict type is a compile error everywhere it isn't handled yet.
+export const CONFLICT_TYPE_VALUES = [
+  'professional_overlap',
+  'resource_overlap',
+  'professional_availability',
+  'resource_availability',
+  'requested_block',
+  'slot_alignment',
+] as const;
+
+export type ConflictType = (typeof CONFLICT_TYPE_VALUES)[number];
+
+export function isConflictType(value: string): value is ConflictType {
+  return CONFLICT_TYPE_VALUES.some((type) => type === value);
+}
 
 export type Conflict = {
   type: ConflictType;

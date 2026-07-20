@@ -21,7 +21,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid';
 import { isoDate, addDaysISO, intervalMinutes, localDateTime } from '@/composables/bookingForm';
 import { useBookingWindow } from '@/composables/useBookingWindow';
 import type { TimeInterval } from '@shared/ssot/domain/availability';
-import { weekdayOf } from '@shared/ssot/domain/availability';
+import { isWeekday, weekdayOf } from '@shared/ssot/domain/availability';
 import { structure } from '@shared/ssot/structure';
 import { useLabel } from '@/composables/useLabel';
 import RecurrenceRuleFields from './RecurrenceRuleFields.vue';
@@ -33,7 +33,6 @@ import {
 } from '@/composables/seriesRule';
 
 const props = defineProps<{
-  // Presence switches the form to edit/reschedule mode.
   appointment?: Appointment;
   prefillDate?: string;
   prefillStart?: string;
@@ -182,7 +181,6 @@ function buildBody(override: boolean): ScheduleBody {
   };
 }
 
-// Create-mode only ("Repetir"): builds a recurring series instead of a single appointment.
 // Reuses the same client/professional/service/resource/date/start/duration the single-create
 // path already collects — only the recurrence shape (frequency/interval/end) is new state.
 const recurrenceEnabled = ref(false);
@@ -212,7 +210,7 @@ function buildSeriesBody(): ScheduleSeriesBody {
     resource_id: form.resource_id ? Number(form.resource_id) : undefined,
     frequency: recurrence.frequency,
     interval: Number(recurrence.interval),
-    weekday: showsWeekday.value ? recurrence.weekday : undefined,
+    weekday: showsWeekday.value && isWeekday(recurrence.weekday) ? recurrence.weekday : undefined,
     week_of_month: showsWeekOfMonth.value ? Number(recurrence.week_of_month) : undefined,
     day_of_month: showsDayOfMonth.value ? Number(recurrence.day_of_month) : undefined,
     start_time: form.start,

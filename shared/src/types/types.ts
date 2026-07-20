@@ -65,9 +65,6 @@ type ColumnValidator = {
   maxLength?: number;
   minValue?: number;
   maxValue?: number;
-  minDayOffset?: number;    // day-offset from today: -30 = 30 days ago, 0 = not in the past
-  maxDayOffset?: number;    // day-offset from today: 0 = not in the future, 7 = up to 7 days ahead
-  minDate?: string;         // ISO 'YYYY-MM-DD'
   integer?: boolean;
   pattern?: string;
   patternMessage?: string;

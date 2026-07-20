@@ -75,6 +75,27 @@ Este proyecto implementa un sistema de gestión académica para la Facultad de C
    `ALTER TABLE students DROP COLUMN phone`. Las migraciones aplicadas son
    inmutables — modificarlas rompe la verificación de checksum.
 
+3. Agregar una tabla nueva requiere tres pasos coordinados:
+
+   1. **Migración** en `database/migrations/`: crear la tabla con FKs inline a tablas que
+      ya existan (nunca `ALTER TABLE` después para agregarlas), sus índices, y terminar
+      con un `GRANT` de mínimo privilegio a `aida26_user` — sin `DELETE` si la tabla es
+      soft-delete o append-only. Ejemplo completo a copiar:
+      `database/migrations/20260718_090000_appointment_series.sql`.
+   2. **Descriptor SSoT** en `shared/src/ssot/domain/*.ts`: columnas, `pk`, `crud`,
+      `roleRequired`, y el scoping que corresponda (`businessScoped`, `ownership`,
+      `grantScope`, `roleDiscriminator`). Si la tabla entra en un archivo de dominio ya
+      existente alcanza con sumar la clave a su objeto exportado; si es un archivo de
+      dominio nuevo hay que además importarlo y sumarlo a `schedulerTables` en
+      `shared/src/ssot/domain/index.ts`, respetando el orden de dependencia de la
+      migración.
+   3. **El `GRANT`** del paso 1 — se nombra aparte porque es el que más se olvida. Sin
+      él el rol `aida26_user` no puede tocar la tabla nueva y toda request contra ella
+      falla con 500 aunque el descriptor esté perfecto.
+
+   Sin el paso 2 la tabla existe en la base pero es invisible para la API: cualquier
+   ruta genérica contra ella devuelve 404, igual que una tabla desconocida.
+
 ### Backend
 
 1. Navegar al directorio `backend`

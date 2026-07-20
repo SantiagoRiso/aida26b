@@ -1,5 +1,8 @@
 import { describe, test, expect } from 'vitest';
 import { parseListRequest } from '../src/routes/list-request';
+import { buildListStatement, type ListScope } from '../src/db/generic';
+import { isKnownTable, assertCrudAllowed } from '../src/routes/crud-policy';
+import type { AuthUser } from '../src/auth';
 import {
   LIST_DEFAULT_LIMIT,
   LIST_MAX_LIMIT,
@@ -87,5 +90,96 @@ describe('parseListRequest', () => {
     const spec = parseListRequest({ sort: ['name', 'id'], dir: ['desc', 'asc'] });
     expect(spec.sort).toBe('name');
     expect(spec.dir).toBe('desc');
+  });
+});
+
+// The generic engine closes the injection surface by construction (every user value is a bind
+// param; every interpolated identifier comes from a descriptor-derived allowlist), but nothing
+// asserted that until now. These tests exercise the real compiler (buildListStatement,
+// db/generic.ts) and authz gate (crud-policy.ts) with hostile input end to end from the parsed
+// request spec — not just that the parser lexes it, but that the SQL text it produces never
+// carries the payload.
+describe('SQL injection surface is closed by construction, not convention', () => {
+  // No business/owner/grant scope in play — isolates the assertions to the filter/sort compiler.
+  const noScope: ListScope = { sqlTable: 'auth.users_directory', businessWhere: '', businessParams: [] };
+  const admin: AuthUser = {
+    id: 1,
+    username: 'probe',
+    email: null,
+    role: 'Admin',
+    business_id: null,
+    is_active: true,
+    must_change_password: false,
+  };
+
+  test('a hostile filter value is carried as a bind parameter, never spliced into SQL text', () => {
+    const payload = "x'; DROP TABLE appointments; --";
+    const spec = parseListRequest({ filter_display_name: payload });
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+
+    expect(dataQuery).not.toContain('DROP TABLE');
+    expect(dataQuery).not.toContain(payload);
+    expect(dataQuery).toMatch(/"display_name"::text ILIKE \$1/);
+    expect(dataValues).toContain(`%${payload}%`);
+  });
+
+  test('a hostile sort value is rejected by the allowlist, not interpolated into ORDER BY', () => {
+    const spec = parseListRequest({ sort: 'id; DROP TABLE clients' });
+    const { dataQuery } = buildListStatement('clients', spec, noScope);
+
+    expect(dataQuery).not.toContain('DROP TABLE');
+    // Not in getSortableColumns('clients') as an exact string -> falls back to the pk default.
+    expect(dataQuery).toMatch(/ORDER BY "id" ASC/);
+  });
+
+  test('a filter naming an unregistered column is dropped, never used as a SQL identifier', () => {
+    const hostileField = `notes"); DROP TABLE clients; --`;
+    const spec = parseListRequest({ [filterParam(hostileField)]: 'anything' });
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+
+    // Only the base projection's own (unrelated) soft-delete WHERE is present — no filter
+    // condition was appended after it, so the hostile field name was never made into SQL text.
+    expect(dataQuery).not.toContain('DROP TABLE');
+    expect(dataQuery).not.toContain(hostileField);
+    expect(dataQuery).toMatch(/\) AS base\s*\n\s*ORDER BY/);
+    // Only the default limit/offset bind params — no filter value was carried through either.
+    expect(dataValues).toEqual([LIST_DEFAULT_LIMIT, 0]);
+  });
+
+  test('a real but non-filterable column is refused the same way as an unknown one', () => {
+    // `notes` exists on clients but is declared filterable:false — must be silently ignored,
+    // not silently promoted to a queryable identifier.
+    const spec = parseListRequest({ filter_notes: 'anything' });
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+
+    expect(dataQuery).not.toContain('"notes"');
+    expect(dataQuery).toMatch(/\) AS base\s*\n\s*ORDER BY/);
+    expect(dataValues).toEqual([LIST_DEFAULT_LIMIT, 0]);
+  });
+
+  test('limit and page are clamped to safe integers and reach SQL only as bind params', () => {
+    const spec = parseListRequest({ limit: '99999; DROP TABLE clients', page: '2; DROP TABLE clients' });
+
+    // parseInt reads the leading digits; the clamp is what actually neutralizes an out-of-range value.
+    expect(spec.limit).toBe(LIST_MAX_LIMIT);
+    expect(spec.page).toBe(2);
+
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+    expect(dataQuery).not.toContain('DROP TABLE');
+    expect(dataQuery).toMatch(/LIMIT \$\d+\s+OFFSET \$\d+/);
+    expect(dataValues.slice(-2)).toEqual([LIST_MAX_LIMIT, (spec.page - 1) * LIST_MAX_LIMIT]);
+  });
+
+  test('an unknown or hostile table name never reaches the compiler — 404 without leaking existence', () => {
+    expect(isKnownTable('widgets')).toBe(false);
+    expect(isKnownTable("clients'; DROP TABLE clients; --")).toBe(false);
+
+    const result = assertCrudAllowed("clients'; DROP TABLE clients; --", 'read', admin);
+    expect(result).toEqual({
+      ok: false,
+      status: 404,
+      code: 'not_found',
+      message: expect.any(String),
+    });
   });
 });

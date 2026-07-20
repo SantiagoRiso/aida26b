@@ -19,7 +19,7 @@ export interface ListParams {
   filters?: Record<string, string>;
 }
 
-function buildQuery(params: ListParams): string {
+export function buildQuery(params: ListParams): string {
   const parts: string[] = [];
 
   if (params.page && params.page > 1) parts.push(`page=${params.page}`);

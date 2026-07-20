@@ -1,8 +1,8 @@
 // Shared recurrence-rule shape logic — used by AppointmentForm's create-time "Repetir" fields and
-// by the series rule editor (whole-series / this-and-future edits). One place for the
-// frequency-dependent field visibility and validation, mirroring validateSeriesRuleShape on the
-// backend (and the DB's appointment_series_pattern_shape / _end_shape CHECKs).
-import { weekdayOf } from '@shared/ssot/domain/availability';
+// by the series rule editor (whole-series / this-and-future edits). Frequency-dependent field
+// visibility and validation live here once, backed by the same validateRecurrenceRule the backend
+// calls (and the DB's appointment_series_pattern_shape / appointment_series_end_shape CHECKs).
+import { isWeekday, weekdayOf } from '@shared/ssot/domain/availability';
 import type { Frequency, EndKind } from '@shared/ssot/domain/recurrence';
 import { validateRecurrenceRule, type RecurrenceRuleFields } from '@shared/ssot/domain/recurrence';
 import type { AppointmentSeries, ScheduleSeriesBody } from '@/api/appointments';
@@ -90,7 +90,7 @@ export function buildRulePatch(recurrence: RecurrenceState): Partial<ScheduleSer
   return {
     frequency: recurrence.frequency,
     interval: Number(recurrence.interval),
-    weekday: showsWeekday ? recurrence.weekday : null,
+    weekday: showsWeekday && isWeekday(recurrence.weekday) ? recurrence.weekday : null,
     week_of_month: showsWeekOfMonth ? Number(recurrence.week_of_month) : null,
     day_of_month: showsDayOfMonth ? Number(recurrence.day_of_month) : null,
     end_kind: recurrence.end_kind,
@@ -99,7 +99,7 @@ export function buildRulePatch(recurrence: RecurrenceState): Partial<ScheduleSer
   };
 }
 
-// Reschedule-with-scope patch (Part 1): only the time itself moves — weekday is only meaningful
+// Reschedule-with-scope patch: only the time itself moves — weekday is only meaningful
 // (and only sent) when the series' own frequency is weekday-anchored; a monthly_dom series keeps
 // its day_of_month untouched by a plain time change.
 export function buildReschedulePatch(series: AppointmentSeries, date: string, start: string): Partial<ScheduleSeriesBody> {
