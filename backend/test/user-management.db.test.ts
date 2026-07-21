@@ -87,7 +87,7 @@ describe('Client user creation', () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'newclient1', password: 'clientpass1', role: 'Client', display_name: 'New Client' },
+      body: { username: 'newclient1', password: 'clientpass1', role: 'Client', display_name: 'New Client', email: 'newclient1@test.com' },
     });
     expect(res.status).toBe(201);
 
@@ -108,7 +108,7 @@ describe('Client user creation', () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'newclient2', password: 'clientpass2', role: 'Client', display_name: 'Profile Client' },
+      body: { username: 'newclient2', password: 'clientpass2', role: 'Client', display_name: 'Profile Client', email: 'newclient2@test.com' },
     });
     expect(res.status).toBe(201);
     const userId = dataOf(res).id;
@@ -127,7 +127,7 @@ describe('Client user creation', () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'dniclient1', password: 'clientpass9', role: 'Client', dni: '99887766' },
+      body: { username: 'dniclient1', password: 'clientpass9', role: 'Client', dni: '99887766', email: 'dniclient1@test.com' },
     });
     expect(res.status).toBe(201);
 
@@ -163,7 +163,7 @@ describe('client creation by non-admin staff', () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: proCookie,
-      body: { username: 'probooked1', password: 'clientpass1', role: 'Client' },
+      body: { username: 'probooked1', password: 'clientpass1', role: 'Client', email: 'probooked1@test.com' },
     });
     expect(res.status).toBe(201);
 
@@ -179,7 +179,7 @@ describe('client creation by non-admin staff', () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: recCookie,
-      body: { username: 'recbooked1', password: 'clientpass1', role: 'Client' },
+      body: { username: 'recbooked1', password: 'clientpass1', role: 'Client', email: 'recbooked1@test.com' },
     });
     expect(res.status).toBe(201);
 
@@ -272,7 +272,7 @@ describe('Rollback safety (no orphan auth.users row)', () => {
     const first = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'rollbacktest', password: 'testpass1', role: 'Client' },
+      body: { username: 'rollbacktest', password: 'testpass1', role: 'Client', email: 'rollbacktest1@test.com' },
     });
     expect(first.status).toBe(201);
 
@@ -284,7 +284,7 @@ describe('Rollback safety (no orphan auth.users row)', () => {
     const second = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'rollbacktest', password: 'testpass2', role: 'Client' },
+      body: { username: 'rollbacktest', password: 'testpass2', role: 'Client', email: 'rollbacktest2@test.com' },
     });
     expect(second.status).toBe(409);
 
@@ -730,16 +730,19 @@ describe('optional client email', () => {
     expect(row.role).toBe('Client');
   });
 
-  test('creates a client with login credentials but no email', async () => {
+  test('rejects a client created with login credentials but no email (400, no row)', async () => {
     const res = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
       body: { username: 'noemailclient1', password: 'clientpass1', role: 'Client' },
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(400);
+    expect(errorOf(res).detail?.key).toBe('emailFormat');
 
-    const row = await emailOf(dataOf(res).id);
-    expect(row.email).toBeNull();
+    const rows = await testPool.query(
+      `SELECT 1 FROM auth.users WHERE username = 'noemailclient1'`
+    );
+    expect(rows.rows).toHaveLength(0);
   });
 
   test('several clients without an email coexist — the email UNIQUE treats NULLs as distinct', async () => {
@@ -786,6 +789,17 @@ describe('optional client email', () => {
         role
       ).rejects.toThrow(/users_client_or_email/);
     }
+  });
+
+  test('a client with a username still requires an email — the CHECK constraint rejects a null one', async () => {
+    const { passwordHash, passwordSalt } = await hashPassword('clientpass1');
+    await expect(
+      testPool.query(
+        `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+         VALUES ('directnoemail1', NULL, 'Direct No Email', $1, $2, 'Client', $3)`,
+        [passwordHash, passwordSalt, adminBusinessId]
+      )
+    ).rejects.toThrow(/users_login_requires_email/);
   });
 
   test('enabling login on an email-less client requires an email, and stores the one supplied', async () => {
@@ -852,7 +866,7 @@ describe('role immutability', () => {
     const createRes = await request<CreatedUserResult>('/api/admin/users', {
       method: 'POST',
       cookie: adminCookie,
-      body: { username: 'roleimmute1', password: 'immpass123', role: 'Client' },
+      body: { username: 'roleimmute1', password: 'immpass123', role: 'Client', email: 'roleimmute1@test.com' },
     });
     expect(createRes.status).toBe(201);
     const userId = dataOf(createRes).id;

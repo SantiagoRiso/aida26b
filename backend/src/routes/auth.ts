@@ -162,9 +162,9 @@ export function mountAuthRoutes(
     const current = await getSelfProfile(pool, user.id);
     if (!current) return sendError(res, 404, 'not_found', 'Profile not found', { detail: { key: 'profileNotFound' } });
 
-    // A client recorded without an email keeps saving their profile without one. Staff always need
-    // an address, and nobody may drop the one they already have: it is how the account is reached.
-    if (email === null && !(user.role === 'Client' && current.email === null)) {
+    // Reaching this route means holding a session, which means holding a username, and a row with a
+    // username always carries an email. Nobody may drop the one they have: it is how they are reached.
+    if (email === null) {
       return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
     }
 

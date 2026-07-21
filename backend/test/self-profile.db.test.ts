@@ -136,25 +136,20 @@ describe('me/profile HTTP', () => {
     business_id: bizId, is_active: true, must_change_password: false,
   });
 
-  test('a client recorded without an email saves their profile without one', async () => {
-    const clientId = await makeClient('Sin Email Cliente', null);
-    currentUser = asClient(clientId);
-
-    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
-      { display_name: 'Sin Email Cliente', phone: '4444' });
-    expect(res.status).toBe(200);
-    expect(dataOf(res).profile.email).toBeNull();
-    expect(dataOf(res).profile.phone).toBe('4444');
+  // Reaching this route means holding a session, which means holding a username, and the schema
+  // refuses a username without an email. A logged-in client without one cannot exist.
+  test('a client holding login credentials cannot exist without an email', async () => {
+    await expect(makeClient('Sin Email Cliente', null)).rejects.toThrow(/users_login_requires_email/);
   });
 
-  test('a client may add an email later', async () => {
-    const clientId = await makeClient('Agrega Email', null);
+  test('a client may change their email', async () => {
+    const clientId = await makeClient('Cambia Email', 'antes@x.com');
     currentUser = asClient(clientId);
 
     const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
-      { display_name: 'Agrega Email', email: 'agrega@x.com', phone: null });
+      { display_name: 'Cambia Email', email: 'despues@x.com', phone: null });
     expect(res.status).toBe(200);
-    expect(dataOf(res).profile.email).toBe('agrega@x.com');
+    expect(dataOf(res).profile.email).toBe('despues@x.com');
   });
 
   test('a client who has an email cannot drop it', async () => {

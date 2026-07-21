@@ -234,7 +234,7 @@ test('admin can create users and reset passwords', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const adminCookie = await login(baseUrl, 'admin', 'adminpass');
-    const created = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'newclient', password: 'firstpass', role: 'Client' } });
+    const created = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'newclient', password: 'firstpass', role: 'Client', email: 'newclient@test.com' } });
     assert.equal(created.status, 201);
     assert.equal(created.body.data.role, 'Client');
 
@@ -257,7 +257,7 @@ test('non-admin cannot create staff users', async () => {
     assert.equal(createStaff.status, 403);
 
     const clientCookie = await login(baseUrl, 'client', 'clientpass');
-    const asClient = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: clientCookie, body: { username: 'other2', password: 'otherpass', role: 'Client' } });
+    const asClient = await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: clientCookie, body: { username: 'other2', password: 'otherpass', role: 'Client', email: 'other2@test.com' } });
     assert.equal(asClient.status, 403);
   });
 });
@@ -266,8 +266,8 @@ test('duplicate username returns conflict', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const adminCookie = await login(baseUrl, 'admin', 'adminpass');
-    assert.equal((await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'dupe', password: 'firstpass', role: 'Client' } })).status, 201);
-    assert.equal((await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'dupe', password: 'firstpass', role: 'Client' } })).status, 409);
+    assert.equal((await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'dupe', password: 'firstpass', role: 'Client', email: 'dupe1@test.com' } })).status, 201);
+    assert.equal((await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'dupe', password: 'firstpass', role: 'Client', email: 'dupe2@test.com' } })).status, 409);
   });
 });
 
@@ -275,7 +275,7 @@ test('first login users must change password before using the app', async () => 
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const adminCookie = await login(baseUrl, 'admin', 'adminpass');
-    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'tempuser', password: 'temppass1', role: 'Client' } });
+    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'tempuser', password: 'temppass1', role: 'Client', email: 'tempuser@test.com' } });
 
     const tempCookie = await login(baseUrl, 'tempuser', 'temppass1');
     const blocked = await request(baseUrl, '/api/clients', { cookie: tempCookie });
@@ -318,7 +318,7 @@ test('change-password response carries business_id', async () => {
   const db = await makeDb();
   await withServer(db, async (baseUrl) => {
     const adminCookie = await login(baseUrl, 'admin', 'adminpass');
-    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'chpwuser', password: 'oldpass1', role: 'Client' } });
+    await request(baseUrl, '/api/admin/users', { method: 'POST', cookie: adminCookie, body: { username: 'chpwuser', password: 'oldpass1', role: 'Client', email: 'chpwuser@test.com' } });
 
     const tempCookie = await login(baseUrl, 'chpwuser', 'oldpass1');
     const changed = await request(baseUrl, '/api/auth/change-password', {

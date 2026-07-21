@@ -108,9 +108,15 @@ async function createCredentialedUser(
   // user would mint a cross-tenant account. User creation requires a concrete business.
   const businessId = requireBusinessContext(req, res);
   if (businessId == null) return;
-  // Only clients may go without an email; staff accounts must always carry one, so a missing
-  // address falls back to a placeholder rather than tripping the users_client_or_email check.
-  const email = emailRaw ?? (role === 'Client' ? null : `${username}@noemail.local`);
+  // Email is the login identity: an account created with credentials has to be reachable at one.
+  // Only a contact-only client may go without, and it is getting credentials here.
+  if (role === 'Client' && emailRaw === null) {
+    return sendError(res, 400, 'invalid_request', 'A valid email is required', { detail: { key: 'emailFormat' } });
+  }
+
+  // Staff are never registered through the email-bearing client form, so a missing address
+  // falls back to a placeholder.
+  const email = emailRaw ?? `${username}@noemail.local`;
   const { passwordHash, passwordSalt } = await auth.hashPassword(password);
 
   try {
