@@ -8,14 +8,14 @@ import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import {
   TERMINAL_STATES,
-  APPOINTMENT_STATE_VALUES,
+  APPOINTMENT_STATES,
   assertValidTransition,
   canCancelAppointment,
   canMarkNoShow,
   canCompleteAppointment,
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
-import { BUSINESS_TZ, DATE_OR_ISO_RE, toBusinessDate } from '../time';
+import { BUSINESS_TZ, toBusinessDate } from '../time';
 import { httpError } from '../errors';
 import { assertAppointmentActionAllowed, auditInTx, auditConflictOverrideInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
@@ -39,7 +39,12 @@ import { insertSessionChargeIfAbsent } from '../db/ledger';
 import { getCancellationCutoffHours } from '../db/businesses';
 import { listVirtualOccurrences, flagRealConflictsWithVirtuals } from '../services/series-listing';
 import { mountAppointmentSeriesRoutes } from './appointment-series';
-import { isPositiveInteger } from './request-guards';
+import {
+  isPositiveInteger,
+  requireIdParam,
+  requireRequestFields,
+  type RequestSpec,
+} from './request-guards';
 import type { AppointmentRow, ListAppointment } from '../../../shared/src/ssot/query-types';
 import type { RelatedClientIdsResult } from '../../../shared/src/ssot/contracts/appointments';
 import { parsePagination } from './pagination';
@@ -49,6 +54,32 @@ function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, 'staff_note
   const { staff_note: _staffNote, override_actor_id: _overrideActorId, ...safe } = row;
   return safe;
 }
+
+const APPOINTMENT_STATE_LIST = APPOINTMENT_STATES.map((s) => s.value);
+
+const TRANSITION_BODY = {
+  to: { kind: 'enum', values: APPOINTMENT_STATE_LIST, required: true },
+} as const satisfies RequestSpec;
+
+const IGNORE_CONFLICT_BODY = {
+  ignored: { kind: 'boolean' },
+} as const satisfies RequestSpec;
+
+const PATCH_BODY = {
+  name: { kind: 'text' },
+  description: { kind: 'text' },
+  staff_note: { kind: 'text' },
+} as const satisfies RequestSpec;
+
+const LIST_QUERY = {
+  date_from: { kind: 'dateOrIso' },
+  date_to: { kind: 'dateOrIso' },
+  professional_user_id: { kind: 'id' },
+  resource_id: { kind: 'id' },
+  client_user_id: { kind: 'id' },
+  state: { kind: 'enum', values: APPOINTMENT_STATE_LIST },
+  conflicting: { kind: 'boolean' },
+} as const satisfies RequestSpec;
 
 export function mountAppointmentRoutes(
   app: express.Application,
@@ -206,10 +237,8 @@ export function mountAppointmentRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -267,10 +296,8 @@ export function mountAppointmentRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -374,15 +401,12 @@ export function mountAppointmentRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
-    const to = typeof req.body?.to === 'string' ? req.body.to : '';
-    if (!to) {
-      return sendError(res, 422, 'invalid_request', 'Field "to" is required');
-    }
+    const parsed = requireRequestFields(res, TRANSITION_BODY, req.body, 'Invalid transition request');
+    if (!parsed) return;
+    const to = parsed.to;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -477,10 +501,8 @@ export function mountAppointmentRoutes(
       return sendError(res, 403, 'forbidden', 'Clients may not manage conflicts');
     }
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -492,7 +514,9 @@ export function mountAppointmentRoutes(
     }
 
     // Default to ignoring; an explicit `{ ignored: false }` re-flags it.
-    const ignored = req.body?.ignored !== false;
+    const parsed = requireRequestFields(res, IGNORE_CONFLICT_BODY, req.body, 'Invalid conflict-ignore request');
+    if (!parsed) return;
+    const ignored = parsed.ignored !== false;
 
     const appt = await withTransaction(pool, async (tx) => {
       const updated = await setAppointmentConflictIgnored(tx, id, ignored);
@@ -509,10 +533,8 @@ export function mountAppointmentRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -527,10 +549,11 @@ export function mountAppointmentRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const body = req.body ?? {};
-    const isTerminal = TERMINAL_STATES.has(String(row.state));
+    const parsed = requireRequestFields(res, PATCH_BODY, req.body, 'Invalid appointment patch');
+    if (!parsed) return;
 
-    if (isTerminal && (body.name !== undefined || body.description !== undefined)) {
+    const isTerminal = TERMINAL_STATES.has(String(row.state));
+    if (isTerminal && (parsed.name !== undefined || parsed.description !== undefined)) {
       return sendError(
         res, 422, 'terminal_freeze',
         'Only staff_note may be updated on a terminal appointment',
@@ -538,12 +561,9 @@ export function mountAppointmentRoutes(
     }
 
     // staff_note is staff-only; clients are already blocked above.
-    const staffNote =
-      body.staff_note !== undefined ? String(body.staff_note) : undefined;
-    const name =
-      !isTerminal && body.name !== undefined ? String(body.name) : undefined;
-    const description =
-      !isTerminal && body.description !== undefined ? String(body.description) : undefined;
+    const { staff_note: staffNote } = parsed;
+    const name = isTerminal ? undefined : parsed.name;
+    const description = isTerminal ? undefined : parsed.description;
 
     if (name === undefined && description === undefined && staffNote === undefined) {
       return sendError(res, 422, 'invalid_request', 'No editable fields provided');
@@ -555,7 +575,9 @@ export function mountAppointmentRoutes(
       const updated = await patchAppointmentFields(tx, id, { name, description, staffNote });
       if (!updated) throw httpError(404, 'not_found', 'Appointment not found');
       await auditInTx(tx, user, 'appointment_patched', 'success', id, 'appointments', {
-        fields: Object.keys(body).filter((k) => ['name', 'description', 'staff_note'].includes(k)),
+        fields: Object.entries({ name, description, staff_note: staffNote })
+          .filter(([, value]) => value !== undefined)
+          .map(([field]) => field),
       });
       return updated;
     });
@@ -592,10 +614,8 @@ export function mountAppointmentRoutes(
       return sendError(res, 403, 'forbidden', 'Clients may not access the appointment detail view');
     }
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid appointment id');
-    }
+    const id = requireIdParam(res, req.params.id, 'appointment');
+    if (id == null) return;
 
     const row = await loadAppointment(pool, id, businessId);
     if (!row) return sendError(res, 404, 'not_found', 'Appointment not found');
@@ -615,55 +635,26 @@ export function mountAppointmentRoutes(
 
     const { limit, page, offset } = parsePagination(req.query);
 
+    const query = requireRequestFields(res, LIST_QUERY, req.query, 'Invalid appointment list query');
+    if (!query) return;
+
     let roleScope: AppointmentRoleScope;
     if (user.role === 'Client') roleScope = { kind: 'client', userId: user.id };
     else if (user.role === 'Professional') roleScope = { kind: 'professional', userId: user.id };
     else if (user.role === 'Receptionist') roleScope = { kind: 'receptionist', granteeUserId: user.id };
     else roleScope = { kind: 'all' };
 
-    let dateFrom: string | undefined;
-    if (req.query.date_from) {
-      if (!DATE_OR_ISO_RE.test(String(req.query.date_from))) {
-        return sendError(res, 422, 'invalid_request', 'date_from must be a date (YYYY-MM-DD) or ISO timestamp');
-      }
-      dateFrom = String(req.query.date_from);
-    }
+    const { date_from: dateFrom, date_to: dateTo, professional_user_id: professionalUserId, resource_id: resourceId } = query;
 
-    let dateTo: string | undefined;
-    if (req.query.date_to) {
-      if (!DATE_OR_ISO_RE.test(String(req.query.date_to))) {
-        return sendError(res, 422, 'invalid_request', 'date_to must be a date (YYYY-MM-DD) or ISO timestamp');
-      }
-      dateTo = String(req.query.date_to);
-    }
+    // Staff narrowing to one client's turnos. A Client is already pinned to their own via
+    // roleScope, so this param is meaningless (and must not widen their scope) for that role.
+    const clientUserId = user.role === 'Client' ? undefined : query.client_user_id;
 
-    const professionalUserId = req.query.professional_user_id
-      ? Number(req.query.professional_user_id)
-      : undefined;
-    const resourceId = req.query.resource_id ? Number(req.query.resource_id) : undefined;
+    // Requests span the whole future, so the Solicitudes screen filters by state rather than
+    // paging through every earlier appointment.
+    const state = query.state;
 
-    let clientUserId: number | undefined;
-    if (req.query.client_user_id && user.role !== 'Client') {
-      // Staff narrowing to one client's turnos. A Client is already pinned to their own via
-      // roleScope, so this param is meaningless (and must not widen their scope) for that role.
-      const cid = Number(req.query.client_user_id);
-      if (!Number.isInteger(cid) || cid <= 0) {
-        return sendError(res, 422, 'invalid_request', 'client_user_id must be a positive integer');
-      }
-      clientUserId = cid;
-    }
-
-    let state: string | undefined;
-    if (req.query.state) {
-      // Requests span the whole future, so the Solicitudes screen filters by state rather than
-      // paging through every earlier appointment.
-      if (!APPOINTMENT_STATE_VALUES.has(String(req.query.state))) {
-        return sendError(res, 422, 'invalid_request', 'Unknown appointment state');
-      }
-      state = String(req.query.state);
-    }
-
-    const conflicting = String(req.query.conflicting) === 'true';
+    const conflicting = query.conflicting === true;
 
     // Un-materialized recurring occurrences only expand over a bounded window — every current
     // caller that wants 'scheduled' turnos already supplies both bounds (a date-unbounded request

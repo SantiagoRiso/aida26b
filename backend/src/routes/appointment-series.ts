@@ -13,10 +13,17 @@ import {
   type RecurrenceRuleFields,
   type Conflict,
 } from '../../../shared/src/ssot/domain';
-import { DATE_RE, addDaysISO } from '../time';
+import { addDaysISO } from '../time';
 import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
-import { isPositiveInteger } from './request-guards';
+import {
+  isPositiveInteger,
+  requireIdParam,
+  requireRequestFields,
+  requestIssue,
+  sendFieldIssues,
+  type RequestSpec,
+} from './request-guards';
 import { resolveAndLoadService, runConflictDryRun } from '../services/booking';
 import {
   insertSeries,
@@ -37,6 +44,19 @@ import { APPOINTMENT_PATTERNS } from '../../../shared/src/ssot/api-paths';
 // Occurrences generated for the create-time preview span this many days from max(start_date,
 // today) — bounded so a preview never dry-runs an unbounded (open-ended) series.
 const SERIES_PREVIEW_DAYS = 56;
+
+const MATERIALIZE_BODY = {
+  occurrence_date: { kind: 'isoDate', required: true },
+} as const satisfies RequestSpec;
+
+const SPLIT_BODY = {
+  from_date: { kind: 'isoDate', required: true },
+} as const satisfies RequestSpec;
+
+// Omitted means "from the series' own start date" — the whole series.
+const END_BODY = {
+  from_date: { kind: 'isoDate' },
+} as const satisfies RequestSpec;
 
 export function mountAppointmentSeriesRoutes(
   app: express.Application,
@@ -157,10 +177,8 @@ export function mountAppointmentSeriesRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series id');
-    }
+    const id = requireIdParam(res, req.params.id, 'series');
+    if (id == null) return;
 
     const series = await getSeriesById(pool, id, businessId);
     if (!series) return sendError(res, 404, 'not_found', 'Series not found');
@@ -171,13 +189,13 @@ export function mountAppointmentSeriesRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const occurrenceDate = typeof req.body?.occurrence_date === 'string' ? req.body.occurrence_date : '';
-    if (!DATE_RE.test(occurrenceDate)) {
-      return sendError(res, 422, 'invalid_request', 'occurrence_date must be YYYY-MM-DD', { fields: { occurrence_date: 'required' } });
-    }
+    const parsed = requireRequestFields(res, MATERIALIZE_BODY, req.body, 'Invalid occurrence request');
+    if (!parsed) return;
+    const occurrenceDate = parsed.occurrence_date;
+
     if (!canMaterializeOccurrence(series, occurrenceDate)) {
-      return sendError(res, 422, 'invalid_request', 'occurrence_date is not part of this series', {
-        fields: { occurrence_date: 'not_in_series' },
+      return sendFieldIssues(res, 'occurrence_date is not part of this series', {
+        occurrence_date: requestIssue('notInSeries', 'is not one of this series\' occurrences'),
       });
     }
 
@@ -199,10 +217,8 @@ export function mountAppointmentSeriesRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series id');
-    }
+    const id = requireIdParam(res, req.params.id, 'series');
+    if (id == null) return;
 
     const series = await getSeriesById(pool, id, businessId);
     if (!series) return sendError(res, 404, 'not_found', 'Series not found');
@@ -223,10 +239,8 @@ export function mountAppointmentSeriesRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series id');
-    }
+    const id = requireIdParam(res, req.params.id, 'series');
+    if (id == null) return;
 
     const series = await getSeriesById(pool, id, businessId);
     if (!series) return sendError(res, 404, 'not_found', 'Series not found');
@@ -321,10 +335,8 @@ export function mountAppointmentSeriesRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series id');
-    }
+    const id = requireIdParam(res, req.params.id, 'series');
+    if (id == null) return;
 
     const series = await getSeriesById(pool, id, businessId);
     if (!series) return sendError(res, 404, 'not_found', 'Series not found');
@@ -336,10 +348,9 @@ export function mountAppointmentSeriesRoutes(
     }
 
     const body = req.body ?? {};
-    const fromDate = typeof body.from_date === 'string' ? body.from_date : '';
-    if (!DATE_RE.test(fromDate)) {
-      return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { fields: { from_date: 'required' } });
-    }
+    const parsedSplit = requireRequestFields(res, SPLIT_BODY, body, 'Invalid series split request');
+    if (!parsedSplit) return;
+    const fromDate = parsedSplit.from_date;
 
     const patch = body.patch ?? {};
     const rawRule: RecurrenceRuleFields = {
@@ -406,10 +417,8 @@ export function mountAppointmentSeriesRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid series id');
-    }
+    const id = requireIdParam(res, req.params.id, 'series');
+    if (id == null) return;
 
     const series = await getSeriesById(pool, id, businessId);
     if (!series) return sendError(res, 404, 'not_found', 'Series not found');
@@ -420,14 +429,9 @@ export function mountAppointmentSeriesRoutes(
       return sendError(res, authz.status, authz.code, authz.message);
     }
 
-    const body = req.body ?? {};
-    let fromDate = series.start_date;
-    if (body.from_date !== undefined) {
-      if (typeof body.from_date !== 'string' || !DATE_RE.test(body.from_date)) {
-        return sendError(res, 422, 'invalid_request', 'from_date must be YYYY-MM-DD', { fields: { from_date: 'invalid' } });
-      }
-      fromDate = body.from_date;
-    }
+    const parsedEnd = requireRequestFields(res, END_BODY, req.body, 'Invalid series end request');
+    if (!parsedEnd) return;
+    const fromDate = parsedEnd.from_date ?? series.start_date;
 
     const result = await withTransaction(pool, async (tx) => {
       await endSeriesAt(tx, String(id), addDaysISO(fromDate, -1));

@@ -8,7 +8,15 @@ import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
 import { countAppointmentsHitByTimeOff } from '../db/scheduling';
 import { assertOwnScheduleAllowed } from './crud-policy';
-import { BUSINESS_TZ, DATE_RE, addDaysISO } from '../time';
+import { BUSINESS_TZ, addDaysISO } from '../time';
+import {
+  parseRequestFields,
+  requireRequestFields,
+  requestIssue,
+  sendFieldIssues,
+  type RequestIssues,
+  type RequestSpec,
+} from './request-guards';
 import {
   loadOwnerState,
   resolveBookingWindow,
@@ -20,6 +28,41 @@ import { SCHEDULING_PATTERNS } from '../../../shared/src/ssot/api-paths';
 import type {
   AvailabilityResult, BookingWindowResult, ConflictCheckResult, TimeOffConflictCountResult,
 } from '../../../shared/src/ssot/contracts/scheduling';
+
+// A calendar owner is addressed as prof:<id> or res:<id> in one opaque param.
+const OWNER_TOKEN_RE = /^(prof|res):(\d+)$/;
+
+const AVAILABILITY_OWNER_QUERY = {
+  owner: { kind: 'pattern', pattern: OWNER_TOKEN_RE, key: 'ownerToken', required: true },
+} as const satisfies RequestSpec;
+
+// `service` and `exclude` narrow the answer but never define it: an unusable value degrades to
+// the service-agnostic view rather than failing the request, so they stay outside the shape check.
+function optionalId(raw: express.Request['query'][string]): number | undefined {
+  const parsed = typeof raw === 'string' ? Number(raw) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+const AVAILABILITY_DAY_QUERY = {
+  date: { kind: 'isoDate', required: true },
+} as const satisfies RequestSpec;
+
+const AVAILABILITY_RANGE_QUERY = {
+  date_from: { kind: 'isoDate', required: true },
+  date_to: { kind: 'isoDate', required: true },
+} as const satisfies RequestSpec;
+
+const BOOKING_WINDOW_QUERY = {
+  professional: { kind: 'id', required: true },
+  service: { kind: 'id', required: true },
+} as const satisfies RequestSpec;
+
+const TIME_OFF_PREVIEW_BODY = {
+  professional_user_id: { kind: 'id' },
+} as const satisfies RequestSpec;
+
+// An availability range is expanded day by day; a wider span would scan without bound.
+const MAX_AVAILABILITY_RANGE_DAYS = 42;
 
 export function mountSchedulingRoutes(
   app: express.Application,
@@ -77,59 +120,62 @@ export function mountSchedulingRoutes(
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
 
-    const ownerToken = typeof req.query.owner === 'string' ? req.query.owner : '';
-    const date = typeof req.query.date === 'string' ? req.query.date : '';
-    const dateFrom = typeof req.query.date_from === 'string' ? req.query.date_from : '';
-    const dateTo = typeof req.query.date_to === 'string' ? req.query.date_to : '';
-    const rangeRequested = dateFrom !== '' || dateTo !== '';
+    // A range and a single date are alternative modes, so which fields are required depends on
+    // which one the caller asked for; the two specs' issues merge into one response.
+    const rangeRequested = req.query.date_from != null || req.query.date_to != null;
 
-    const fields: Record<string, string> = {};
-    const owner = /^(prof|res):(\d+)$/.exec(ownerToken);
-    if (!owner) fields.owner = 'must be prof:<id> or res:<id>';
-    if (rangeRequested) {
-      if (date !== '') fields.date = 'cannot be combined with date_from/date_to';
-      if (!DATE_RE.test(dateFrom)) fields.date_from = 'must be YYYY-MM-DD';
-      if (!DATE_RE.test(dateTo)) fields.date_to = 'must be YYYY-MM-DD';
-      if (DATE_RE.test(dateFrom) && DATE_RE.test(dateTo) && dateTo <= dateFrom) {
-        fields.date_to = 'must be after date_from';
+    const ownerQuery = parseRequestFields(AVAILABILITY_OWNER_QUERY, req.query);
+    const range = rangeRequested ? parseRequestFields(AVAILABILITY_RANGE_QUERY, req.query) : null;
+    const single = rangeRequested ? null : parseRequestFields(AVAILABILITY_DAY_QUERY, req.query);
+
+    const issues: RequestIssues = { ...ownerQuery.issues, ...range?.issues, ...single?.issues };
+    if (range) {
+      if (req.query.date != null) {
+        issues.date = requestIssue('notAllowedWithRange', 'cannot be combined with date_from/date_to');
       }
-    } else if (!DATE_RE.test(date)) {
-      fields.date = 'must be YYYY-MM-DD';
+      const { date_from: from, date_to: to } = range.values;
+      if (!issues.date_from && !issues.date_to) {
+        if (to <= from) issues.date_to = requestIssue('dateRangeOrder', 'must be after date_from');
+        else if (addDaysISO(from, MAX_AVAILABILITY_RANGE_DAYS) < to) {
+          issues.date_to = requestIssue(
+            'dateRangeTooLong',
+            `range may not exceed ${MAX_AVAILABILITY_RANGE_DAYS} days`,
+            { max: MAX_AVAILABILITY_RANGE_DAYS },
+          );
+        }
+      }
     }
-    if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid availability query', { fields });
+    if (Object.keys(issues).length > 0) {
+      return sendFieldIssues(res, 'Invalid availability query', issues);
     }
-    if (!owner) {
-      return sendError(res, 422, 'invalid_request', 'Invalid availability query', {
-        fields: { owner: 'must be prof:<id> or res:<id>' },
-      });
-    }
+
+    const owner = OWNER_TOKEN_RE.exec(ownerQuery.values.owner);
+    // Shape already checked above; the re-match only recovers the captured groups.
+    if (!owner) return sendFieldIssues(res, 'Invalid availability query', {
+      owner: requestIssue('ownerToken', 'must be prof:<id> or res:<id>'),
+    });
 
     const kind = owner[1] === 'prof' ? 'professional' : 'resource';
     const ownerId = Number(owner[2]);
-    const serviceRaw = typeof req.query.service === 'string' ? Number(req.query.service) : NaN;
-    const serviceId = Number.isInteger(serviceRaw) && serviceRaw > 0 ? serviceRaw : undefined;
     // A service yields service-sized bookable slots (SlotPicker); with none, a professional's raw
     // working windows are returned for the staff calendar's service-agnostic shading and snap grid.
-    const excludeRaw = typeof req.query.exclude === 'string' ? Number(req.query.exclude) : NaN;
-    const exclude = Number.isInteger(excludeRaw) && excludeRaw > 0 ? excludeRaw : undefined;
+    const serviceId = optionalId(req.query.service);
+    const exclude = optionalId(req.query.exclude);
 
-    if (rangeRequested) {
+    if (range) {
+      const { date_from: dateFrom, date_to: dateTo } = range.values;
       if (user.role === 'Client') {
         return sendError(res, 403, 'forbidden', 'Availability ranges are staff-only');
       }
       const dates: string[] = [];
-      for (let current = dateFrom; current < dateTo && dates.length <= 42; current = addDaysISO(current, 1)) {
+      for (let current = dateFrom; current < dateTo; current = addDaysISO(current, 1)) {
         dates.push(current);
       }
-      if (dates.length > 42) {
-        return sendError(res, 422, 'invalid_request', 'Availability range may not exceed 42 days');
-      }
-      const states = await Promise.all(dates.map((day) => loadOwnerState(
+      const states = await Promise.all(dates.map((each) => loadOwnerState(
         pool,
         businessId,
         { kind, id: ownerId },
-        day,
+        each,
         { excludeAppointmentId: exclude },
       )));
       if (states.some((state) => state == null)) {
@@ -146,6 +192,8 @@ export function mountSchedulingRoutes(
       return sendData(res, response);
     }
 
+    // Range mode has already returned; single-date mode parsed and required `date` above.
+    const date = single?.values.date ?? '';
     const state = await loadOwnerState(pool, businessId, { kind, id: ownerId }, date, {
       serviceId,
       excludeAppointmentId: exclude,
@@ -173,14 +221,9 @@ export function mountSchedulingRoutes(
   app.get(SCHEDULING_PATTERNS.bookingWindow, guards.auth, guards.passwordReady, guardRoute(async (req, res) => {
     const businessId = requireBusinessContext(req, res);
     if (businessId == null) return;
-    const professionalId = Number(req.query.professional);
-    const serviceId = Number(req.query.service);
-    const fields: Record<string, string> = {};
-    if (!Number.isInteger(professionalId) || professionalId <= 0) fields.professional = 'required';
-    if (!Number.isInteger(serviceId) || serviceId <= 0) fields.service = 'required';
-    if (Object.keys(fields).length > 0) {
-      return sendError(res, 422, 'invalid_request', 'Invalid booking-window query', { fields });
-    }
+    const query = requireRequestFields(res, BOOKING_WINDOW_QUERY, req.query, 'Invalid booking-window query');
+    if (!query) return;
+    const { professional: professionalId, service: serviceId } = query;
 
     const bounds = await resolveBookingWindow(pool, businessId, professionalId, serviceId);
     if (!bounds) return sendError(res, 404, 'not_found', 'Professional not found in this business');
@@ -207,13 +250,12 @@ export function mountSchedulingRoutes(
     }
     const { date, start, end } = parsed;
 
+    const scoped = requireRequestFields(res, TIME_OFF_PREVIEW_BODY, body, 'Invalid time-off preview');
+    if (!scoped) return;
+
     let scope: { kind: 'business' } | { kind: 'professional'; professionalUserId: number };
-    const hasProf = body.professional_user_id != null && body.professional_user_id !== '';
-    if (hasProf) {
-      const professionalUserId = Number(body.professional_user_id);
-      if (!Number.isInteger(professionalUserId) || professionalUserId <= 0) {
-        return sendError(res, 422, 'invalid_request', 'professional_user_id must be a positive integer');
-      }
+    const professionalUserId = scoped.professional_user_id;
+    if (professionalUserId !== undefined) {
       const allowed = await assertOwnScheduleAllowed(pool, user, { professional_user_id: professionalUserId });
       if (!allowed.ok) {
         return sendError(res, allowed.status, allowed.code, allowed.message);

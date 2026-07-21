@@ -24,7 +24,12 @@ type Envelope = {
   success?: boolean;
   data?: object;
   meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string; fields?: Record<string, string> };
+  error?: {
+    code: string;
+    message: string;
+    fields?: Record<string, string>;
+    fieldDetails?: Record<string, { key: string; params?: Record<string, string | number> }>;
+  };
 };
 
 async function seriesReq(method: 'GET' | 'POST' | 'PUT', path: string, body?: ReqBody) {
@@ -283,7 +288,7 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
     const res = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: occurrenceDate });
 
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fields!.occurrence_date).toBe('not_in_series');
+    expect(res.body!.error!.fieldDetails!.occurrence_date.key).toBe('notInSeries');
   });
 
   test('rejects a date after the series end', async () => {
@@ -302,7 +307,7 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
     });
 
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fields!.occurrence_date).toBe('not_in_series');
+    expect(res.body!.error!.fieldDetails!.occurrence_date.key).toBe('notInSeries');
     await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [boundedSeriesId]);
   });
 

@@ -1,11 +1,11 @@
-import { HHMM_PATTERN, BUSINESS_TZ, ARGENTINA_OFFSET_MS } from '../../shared/src/ssot/domain/availability';
+import { HHMM_PATTERN, ISO_DATE_PATTERN, BUSINESS_TZ, ARGENTINA_OFFSET_MS } from '../../shared/src/ssot/domain/availability';
 
 // Shared by the booking and scheduling paths so the two cannot disagree on timezone, formats,
 // or the same-day rule. The timezone fact itself lives in the shared SSOT.
 export { BUSINESS_TZ };
 
 export const HHMM_RE = new RegExp(HHMM_PATTERN);
-export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE_RE = new RegExp(ISO_DATE_PATTERN);
 export const DATE_OR_ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?([+-]\d{2}:?\d{2})?)?$/;
 
 export function addMinutes(hhmm: string, minutes: number): string {

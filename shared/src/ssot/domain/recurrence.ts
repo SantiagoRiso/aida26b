@@ -2,7 +2,7 @@ import type { LocalizedText, TableStructure } from '../../types/types';
 import type { ErrorDetail, ErrorParams } from '../envelope';
 import { pkColumn } from './business';
 import { AMOUNT_PATTERN, AMOUNT_PATTERN_MESSAGE, AMOUNT_PATTERN_KEY } from './catalog';
-import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, HHMM_PATTERN_KEY, WEEKDAY_OPTIONS, isWeekday, type Weekday } from './availability';
+import { HHMM_PATTERN, HHMM_PATTERN_MESSAGE, HHMM_PATTERN_KEY, ISO_DATE_PATTERN, WEEKDAY_OPTIONS, isWeekday, type Weekday } from './availability';
 
 export const FREQUENCY_VALUES = ['weekly', 'monthly_dow', 'monthly_dom'] as const;
 export const END_KIND_VALUES = ['count', 'until', 'open'] as const;
@@ -64,7 +64,7 @@ export type ValidatedRecurrenceRuleFields = Omit<RecurrenceRuleFields, 'frequenc
   end_kind: EndKind;
 };
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_RE = new RegExp(ISO_DATE_PATTERN);
 const HHMM_RE = new RegExp(HHMM_PATTERN);
 
 function isIntegerInRange(value: number | null, min: number, max?: number): value is number {

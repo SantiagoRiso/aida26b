@@ -1,6 +1,10 @@
 // ARS and date formatting fixed to Argentine conventions — independent of the language toggle.
 // Only UI chrome/labels translate; monetary amounts and dates always render in es-AR.
 
+import { ISO_DATE_PATTERN } from '@shared/ssot/domain/availability';
+
+const ISO_DATE_RE = new RegExp(ISO_DATE_PATTERN);
+
 const ARS_FORMATTER = new Intl.NumberFormat('es-AR', {
   style: 'currency',
   currency: 'ARS',
@@ -33,8 +37,10 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
 // which renders as the previous day in Argentina (UTC-3).
 function toLocalDate(iso: string | Date): Date {
   if (typeof iso === 'string') {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (ISO_DATE_RE.test(iso)) {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
     return new Date(iso);
   }
   return iso;

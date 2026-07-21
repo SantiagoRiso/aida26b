@@ -17,11 +17,21 @@ export function sendData<T>(res: HttpResponse, data: T, status: number = 200) {
 
 // `detail`/`fieldDetails` are optional: an error without them still carries English prose, and
 // the client degrades to translating the code.
-export interface ErrorExtras {
+type ErrorExtrasFields = {
   fields?: Record<string, string>;
   detail?: ErrorDetail;
   fieldDetails?: Record<string, ErrorDetail>;
-}
+};
+
+// Every branch names at least one of the three known keys, so a bare Record<string, string> passed
+// where callers meant `{ fields: someMap }` has no named property to match and fails to compile,
+// instead of silently satisfying an all-optional shape and getting dropped. The value side stays
+// `| undefined` because callers narrow it from an already-optional field (e.g. a loader result).
+export type ErrorExtras =
+  | Record<string, never>
+  | (ErrorExtrasFields & { fields: Record<string, string> | undefined })
+  | (ErrorExtrasFields & { detail: ErrorDetail | undefined })
+  | (ErrorExtrasFields & { fieldDetails: Record<string, ErrorDetail> | undefined });
 
 export function sendError(
   res: HttpResponse,

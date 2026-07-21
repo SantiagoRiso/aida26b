@@ -17,6 +17,10 @@ export const HHMM_PATTERN = '^([01]\\d|2[0-3]):[0-5]\\d$';
 export const HHMM_PATTERN_MESSAGE = 'must be HH:MM';
 export const HHMM_PATTERN_KEY = 'timeOfDayFormat';
 
+// Shared by every plain calendar-date value (booking, scheduling, recurrence, request-parsing):
+// the one 'YYYY-MM-DD' shape, so backend and shared code can't quietly drift onto two regexes.
+export const ISO_DATE_PATTERN = '^\\d{4}-\\d{2}-\\d{2}$';
+
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
