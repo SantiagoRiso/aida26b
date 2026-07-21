@@ -9,6 +9,7 @@ import { mountAuditRoutes } from '../src/routes/audit';
 import { mountBusinessSettingsRoutes } from '../src/routes/business-settings';
 import type { AuthUser } from '../src/auth';
 import { makeApiClient, dataOf, errorOf, metaOf } from './api_client';
+import { BUSINESS_TZ, addDaysISO } from '../src/time';
 import type { JsonBody } from './api_client';
 import type { AuditEventRow, BusinessSettingsRow, Wire } from '../../shared/src/ssot/query-types';
 
@@ -560,5 +561,65 @@ describe('GET /api/audit — malformed date filters (WR-04)', () => {
     const iso = new Date(Date.now() - 60 * 1000).toISOString();
     const res = await auditReq<AuditRow[]>('GET', `/api/audit?date_from=${encodeURIComponent(iso)}`);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /api/audit — a date-only filter means that day in the business timezone', () => {
+  // The probe events sit on a day well in the past with their instants pinned explicitly, so the
+  // outcome does not depend on what time of day the suite happens to run.
+  const probeDay = new Date(Date.now() - 100 * 24 * 3600 * 1000)
+    .toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+  const dayBefore = addDaysISO(probeDay, -1);
+  const dayAfter = addDaysISO(probeDay, 1);
+
+  const probes: Array<{ eventType: string; day: string; time: string }> = [
+    { eventType: 'tz_probe_prev_day_end', day: dayBefore, time: '23:59:59' },
+    { eventType: 'tz_probe_day_start', day: probeDay, time: '00:00:00' },
+    { eventType: 'tz_probe_evening', day: probeDay, time: '21:18:02' },
+    { eventType: 'tz_probe_day_end', day: probeDay, time: '23:59:59' },
+    { eventType: 'tz_probe_next_day', day: dayAfter, time: '00:00:00' },
+  ];
+
+  beforeAll(async () => {
+    for (const { eventType, day, time } of probes) {
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, outcome, details, created_at)
+         VALUES ($1, $2, $3, 'appointments', 'success', '{}', (($4::date + $5::time) AT TIME ZONE $6))`,
+        [bizId, adminId, eventType, day, time, BUSINESS_TZ],
+      );
+    }
+  });
+
+  async function probeDayEvents(): Promise<{ types: string[]; total: number }> {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>(
+      'GET',
+      `/api/audit?date_from=${probeDay}&date_to=${probeDay}&limit=500`,
+    );
+    expect(res.status).toBe(200);
+    return { types: dataOf(res).map((r) => r.event_type), total: metaOf(res).total };
+  }
+
+  test('an event late in the business day is inside a filter naming that day', async () => {
+    const { types } = await probeDayEvents();
+    expect(types).toContain('tz_probe_evening');
+  });
+
+  test('date_to includes the last moment of the day and excludes the next day', async () => {
+    const { types } = await probeDayEvents();
+    expect(types).toContain('tz_probe_day_end');
+    expect(types).not.toContain('tz_probe_next_day');
+  });
+
+  test('date_from starts at the first moment of the day and excludes the day before', async () => {
+    const { types } = await probeDayEvents();
+    expect(types).toContain('tz_probe_day_start');
+    expect(types).not.toContain('tz_probe_prev_day_end');
+  });
+
+  test('meta.total counts exactly that business day', async () => {
+    const { total } = await probeDayEvents();
+    expect(total).toBe(3);
   });
 });

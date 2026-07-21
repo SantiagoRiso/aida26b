@@ -3,6 +3,7 @@ import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
 import { appointmentInConflictSql } from './scheduling';
 import { reNumberFragment } from './scope';
+import { dateBoundConditions } from './date-bounds';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
 
 // Null when absent or cross-tenant — both surface as 404 to hide existence.
@@ -230,8 +231,11 @@ export async function listAppointments(
     params.push(f.roleScope.granteeUserId);
   }
 
-  if (f.dateFrom != null) { conditions.push(`a.starts_at >= $${p++}`); params.push(f.dateFrom); }
-  if (f.dateTo != null) { conditions.push(`a.starts_at <= $${p++}`); params.push(f.dateTo); }
+  const dates = dateBoundConditions('a.starts_at', { from: f.dateFrom, to: f.dateTo }, p);
+  conditions.push(...dates.conditions);
+  params.push(...dates.params);
+  p = dates.nextIndex;
+
   if (f.professionalUserId != null) { conditions.push(`a.professional_user_id = $${p++}`); params.push(f.professionalUserId); }
   if (f.resourceId != null) { conditions.push(`a.resource_id = $${p++}`); params.push(f.resourceId); }
   if (f.clientUserId != null) { conditions.push(`a.client_user_id = $${p++}`); params.push(f.clientUserId); }

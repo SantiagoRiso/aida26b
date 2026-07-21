@@ -1,6 +1,7 @@
 import { query } from './core';
 import type { Queryable, SqlParam } from './core';
 import type { AuditEventRow } from '../../../shared/src/ssot/query-types';
+import { dateBoundConditions } from './date-bounds';
 
 // ip is null for in-transaction writes (auditInTx) that don't carry a request.
 export async function insertAuditEvent(
@@ -50,8 +51,11 @@ export async function listAuditEvents(
   if (f.actorUserId != null) { conditions.push(`a.actor_user_id = $${p++}`); params.push(f.actorUserId); }
   if (f.eventType != null) { conditions.push(`a.event_type = $${p++}`); params.push(f.eventType); }
   if (f.outcome != null) { conditions.push(`a.outcome = $${p++}`); params.push(f.outcome); }
-  if (f.dateFrom != null) { conditions.push(`a.created_at >= $${p++}`); params.push(f.dateFrom); }
-  if (f.dateTo != null) { conditions.push(`a.created_at <= $${p++}`); params.push(f.dateTo); }
+
+  const dates = dateBoundConditions('a.created_at', { from: f.dateFrom, to: f.dateTo }, p);
+  conditions.push(...dates.conditions);
+  params.push(...dates.params);
+  p = dates.nextIndex;
 
   const where = conditions.join(' AND ');
 
