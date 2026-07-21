@@ -38,8 +38,8 @@ export function useSettleCard() {
   }
 
   async function loadCurrent() {
-    // Full local day as ISO bounds — a bare date as date_to resolves to that day's midnight and
-    // would exclude the whole day (the filter compares starts_at directly).
+    // Full ISO instants, not bare dates: the server matches an instant bound exactly, so the
+    // window is the device's own local day span rather than the business calendar day.
     const from = new Date();
     from.setHours(0, 0, 0, 0);
     from.setDate(from.getDate() - LOOKBACK_DAYS);

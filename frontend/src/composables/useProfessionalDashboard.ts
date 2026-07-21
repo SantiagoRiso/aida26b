@@ -3,6 +3,7 @@ import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
+import { businessDate } from '@shared/ssot/domain/availability';
 
 export function useProfessionalDashboard() {
   const auth = useAuthStore();
@@ -17,7 +18,7 @@ export function useProfessionalDashboard() {
     const [upcomingRes, pendingRes] = await Promise.all([
       listAppointments({
         professional_user_id: userId.value,
-        date_from: new Date().toISOString().slice(0, 10),
+        date_from: businessDate(),
         limit: 5,
       }),
       listAppointments({

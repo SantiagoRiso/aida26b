@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { listAppointments } from '@/api/appointments';
 import { listAudit } from '@/api/audit';
@@ -112,6 +112,48 @@ describe('useProfessionalDashboard — virtual filter', () => {
 
     expect(proUpcoming.value.map((a) => a.id)).toEqual(['u1']);
     expect(proPending.value.map((a) => a.id)).toEqual(['p1']);
+  });
+});
+
+// "Today" is the business day in Argentina, not the device's UTC day. This instant is late evening
+// in Buenos Aires but already the next date in UTC, so a UTC-derived bound names the wrong day —
+// and the assertion holds whatever zone the suite runs in.
+describe('staff dashboards — "today" is the business day', () => {
+  const LATE_EVENING_IN_ARGENTINA = new Date('2026-07-21T02:30:00.000Z');
+  const BUSINESS_DAY = '2026-07-20';
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(LATE_EVENING_IN_ARGENTINA);
+    mockedList.mockResolvedValue({ ok: true, data: [] });
+    mockedAudit.mockResolvedValue({ ok: true, data: [] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function todayFilters() {
+    return mockedList.mock.calls.map(([filters]) => filters).find((filters) => filters.state !== 'requested');
+  }
+
+  it('admin bounds the today tile to that single business day', async () => {
+    await useAdminDashboard().loadAdmin();
+    expect(todayFilters()).toMatchObject({ date_from: BUSINESS_DAY, date_to: BUSINESS_DAY });
+  });
+
+  it('receptionist bounds the today list to that single business day', async () => {
+    await useReceptionistDashboard().loadReceptionist();
+    expect(todayFilters()).toMatchObject({ date_from: BUSINESS_DAY, date_to: BUSINESS_DAY });
+  });
+
+  it('professional lists upcoming turnos from that business day, not the UTC one', async () => {
+    const auth = useAuthStore();
+    auth.user = {
+      id: 7, username: 'pro', email: null, role: 'Professional',
+      business_id: '1', is_active: true, must_change_password: false,
+    };
+    await useProfessionalDashboard().loadProfessional();
+    expect(todayFilters()).toMatchObject({ date_from: BUSINESS_DAY });
   });
 });
 

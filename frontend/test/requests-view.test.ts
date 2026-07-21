@@ -14,7 +14,12 @@ vi.mock('@/api/appointments', () => ({
   approveAppointment: vi.fn(),
   transitionAppointment: vi.fn(),
 }));
-vi.mock('@/api/crud', () => ({ listRows: vi.fn().mockResolvedValue({ ok: true, data: [] }) }));
+vi.mock('@/api/crud', () => ({
+  listRows: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  getRow: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+}));
+vi.mock('@/api/ledger', () => ({ getBalance: vi.fn().mockResolvedValue({ ok: true, data: { balance_ars: '0.00' } }) }));
+vi.mock('@/api/scheduling', () => ({ getAvailability: vi.fn().mockResolvedValue({ ok: true, data: { slots: [] } }) }));
 
 import RequestsView from '@/views/staff/RequestsView.vue';
 
@@ -92,5 +97,28 @@ describe('RequestsView — virtual filter', () => {
     await flushPromises();
 
     expect(wrapper.findAll('li[role="button"]')).toHaveLength(1);
+  });
+});
+
+// The detail drawer shows the professional's schedule for the requested day only. A bare date_to
+// covers that whole day server-side, so naming the next day would drag a second day into the view.
+describe('RequestsView — detail day range', () => {
+  it('loads exactly the requested day, both bounds on that date', async () => {
+    const request = makeAppt('r1');
+    mockedList.mockResolvedValue({ ok: true, data: [request] });
+
+    const wrapper = mount(RequestsView, {
+      global: { plugins: [makeI18n()], stubs: { CalendarView: true } },
+    });
+    await flushPromises();
+    await wrapper.get('li[role="button"]').trigger('click');
+    await flushPromises();
+
+    const day = request.starts_at.slice(0, 10);
+    const dayCall = mockedList.mock.calls
+      .map(([filters]) => filters)
+      .find((filters) => filters.professional_user_id === request.professional_user_id);
+    expect(dayCall?.date_from).toBe(day);
+    expect(dayCall?.date_to).toBe(day);
   });
 });

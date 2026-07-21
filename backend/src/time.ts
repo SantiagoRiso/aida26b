@@ -1,4 +1,4 @@
-import { HHMM_PATTERN, ISO_DATE_PATTERN, BUSINESS_TZ, ARGENTINA_OFFSET_MS } from '../../shared/src/ssot/domain/availability';
+import { HHMM_PATTERN, ISO_DATE_PATTERN, BUSINESS_TZ, ARGENTINA_OFFSET_MS, businessDate } from '../../shared/src/ssot/domain/availability';
 
 // Shared by the booking and scheduling paths so the two cannot disagree on timezone, formats,
 // or the same-day rule. The timezone fact itself lives in the shared SSOT.
@@ -27,7 +27,7 @@ export function buildStartsAt(date: string, start: string): string {
 // A list filter's date_from/date_to may already be a bare date or a full ISO instant; virtual
 // occurrence expansion always needs a plain calendar date in BUSINESS_TZ.
 export function toBusinessDate(input: string): string {
-  return DATE_RE.test(input) ? input : new Date(input).toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+  return DATE_RE.test(input) ? input : businessDate(new Date(input));
 }
 
 // Same date+HH:MM -> business-tz instant as buildStartsAt, but rendered as a wire-ready ISO string

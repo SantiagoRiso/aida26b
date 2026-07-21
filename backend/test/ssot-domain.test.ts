@@ -25,6 +25,7 @@ import {
   LEDGER_ENTRY_TYPES,
   BUSINESS_TZ,
   ARGENTINA_OFFSET_MS,
+  businessDate,
   parseRecurrenceRule,
   validateRecurrenceRuleIssues,
 } from '../../shared/src/ssot/domain';
@@ -792,6 +793,14 @@ describe('BUSINESS_TZ ↔ ARGENTINA_OFFSET_MS drift guard', () => {
     const year = new Date().getUTCFullYear();
     expect(ianaOffsetMs(new Date(Date.UTC(year, 0, 15)))).toBe(ARGENTINA_OFFSET_MS);
     expect(ianaOffsetMs(new Date(Date.UTC(year, 6, 15)))).toBe(ARGENTINA_OFFSET_MS);
+  });
+});
+
+describe('businessDate', () => {
+  it('names the Argentine calendar day, not the UTC one', () => {
+    // 02:30 UTC is still the previous evening in Buenos Aires.
+    expect(businessDate(new Date('2026-07-21T02:30:00.000Z'))).toBe('2026-07-20');
+    expect(businessDate(new Date('2026-07-21T12:00:00.000Z'))).toBe('2026-07-21');
   });
 });
 

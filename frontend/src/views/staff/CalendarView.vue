@@ -59,6 +59,10 @@ const visibleRange = ref<{ from: string; to: string }>({
   to: dayISO(new Date(), 7),
 });
 
+// visibleRange.to is FullCalendar's activeEnd, which is exclusive. The availability endpoint wants
+// exactly that, but an appointments date_to names an included day, so it stops one day earlier.
+const lastVisibleDay = computed(() => dayISO(new Date(`${visibleRange.value.to}T00:00:00`), -1));
+
 const filters = ref<FilterState>({ professional_user_id: null, resource_id: null });
 
 // An exception always needs a single owner; the form has no picker of its own and reads
@@ -117,7 +121,7 @@ async function fetchAppointments() {
   try {
     result = await listAppointments({
       date_from: visibleRange.value.from,
-      date_to: visibleRange.value.to,
+      date_to: lastVisibleDay.value,
       professional_user_id: filters.value.professional_user_id ?? undefined,
       resource_id: filters.value.resource_id ?? undefined,
       limit: 200,

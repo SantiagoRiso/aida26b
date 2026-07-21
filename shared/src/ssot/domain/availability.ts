@@ -12,6 +12,12 @@ export const BUSINESS_TZ = 'America/Argentina/Buenos_Aires';
 // (e.g. Argentina re-adopting DST).
 export const ARGENTINA_OFFSET_MS = -3 * 60 * 60 * 1000;
 
+// The calendar day an instant falls on in the business zone. Slicing an ISO string instead names
+// the UTC day, which is tomorrow for any evening in Argentina.
+export function businessDate(instant: Date = new Date()): string {
+  return instant.toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+}
+
 // Shared by every 'HH:MM' 24h column (block/exception start and end times).
 export const HHMM_PATTERN = '^([01]\\d|2[0-3]):[0-5]\\d$';
 export const HHMM_PATTERN_MESSAGE = 'must be HH:MM';

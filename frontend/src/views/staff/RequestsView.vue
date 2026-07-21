@@ -14,7 +14,6 @@ import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence, toDisplayAppointment } from '@/composables/seriesOccurrence';
 import { toMinutes } from '@shared/ssot/domain/availability';
 import { structure } from '@shared/ssot/structure';
-import { nextDay } from '@/composables/scheduleExceptions';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { useLabel } from '@/composables/useLabel';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
@@ -144,7 +143,7 @@ async function openDetail(appt: Appointment) {
     listAppointments({
       professional_user_id: appt.professional_user_id,
       date_from: day,
-      date_to: nextDay(day),
+      date_to: day,
       limit: 200,
     }),
     getAvailability(`prof:${appt.professional_user_id}`, day),

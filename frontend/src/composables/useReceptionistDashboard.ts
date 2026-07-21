@@ -2,23 +2,21 @@ import { ref } from 'vue';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
+import { businessDate } from '@shared/ssot/domain/availability';
 
 export function useReceptionistDashboard() {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
-
   const recToday = ref<Appointment[]>([]);
   const recPending = ref<Appointment[]>([]);
   const loadingRec = ref(false);
 
   async function loadReceptionist() {
     loadingRec.value = true;
+    // Both bounds are the same business day; the server resolves a bare date to that whole day.
+    const today = businessDate();
     const [todayRes, pendingRes] = await Promise.all([
       listAppointments({
-        date_from: todayStart.toISOString().slice(0, 10),
-        date_to: todayEnd.toISOString().slice(0, 10),
+        date_from: today,
+        date_to: today,
         limit: 50,
       }),
       listAppointments({ state: 'requested', limit: 5 }),

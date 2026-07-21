@@ -20,6 +20,7 @@ export const schedulerTables = {
 export {
   BUSINESS_TZ,
   ARGENTINA_OFFSET_MS,
+  businessDate,
   WEEKDAYS,
   computeServiceSlots,
   computeFreeWindows,
