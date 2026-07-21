@@ -1,5 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ref, nextTick } from 'vue';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import { listRows } from '@/api/crud';
 import {
@@ -7,6 +6,8 @@ import {
   invalidateFkOptions,
   resetFkOptionsCache,
   FK_OPTIONS_LIMIT,
+  FK_SEARCH_LIMIT,
+  FK_SEARCH_DEBOUNCE_MS,
 } from '@/composables/useForeignKeyOptions';
 import type { ForeignKeyDef } from '@shared/types/types';
 
@@ -95,38 +96,101 @@ describe('useForeignKeyOptions — shared cache', () => {
   });
 });
 
-describe('useForeignKeyOptions — dependsOn (filtered, uncached)', () => {
-  const servicesFk: ForeignKeyDef = {
-    table: 'services',
-    valueField: 'id',
-    labelField: 'name',
-    dependsOn: { field: 'professional_user_id', foreignField: 'professional_user_id' },
-  };
-
-  it('fetches only once a parent value exists, filtered by it', async () => {
-    const parent = ref<string | undefined>(undefined);
-    const { options } = useForeignKeyOptions(servicesFk, () => parent.value);
-    await flushPromises();
-    expect(mockedListRows).not.toHaveBeenCalled();
-    expect(options.value).toEqual([]);
-
-    mockedListRows.mockResolvedValue({ ok: true, data: [{ id: 's1', name: 'Corte' }] });
-    parent.value = '7';
-    await nextTick();
-    await flushPromises();
-    expect(mockedListRows).toHaveBeenCalledWith('services', {
-      filters: { professional_user_id: '7' },
-      limit: 500,
-    });
-    expect(options.value).toEqual([{ value: 's1', label: 'Corte' }]);
+describe('useForeignKeyOptions — server-side search', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('is never served from the shared cache', async () => {
-    mockedListRows.mockResolvedValue({ ok: true, data: [{ id: 's1', name: 'Corte' }] });
-    const parent = ref<string | undefined>('7');
-    useForeignKeyOptions(servicesFk, () => parent.value);
-    useForeignKeyOptions(servicesFk, () => parent.value);
+  // Draining a debounced search: advance past the wait, then let the request's promise settle.
+  async function settleSearch() {
+    await vi.advanceTimersByTimeAsync(FK_SEARCH_DEBOUNCE_MS);
     await flushPromises();
+  }
+
+  it('does not fire a request per keystroke', async () => {
+    const { search } = useForeignKeyOptions(professionalsFk);
+    await flushPromises();
+    // The first page only.
+    expect(mockedListRows).toHaveBeenCalledTimes(1);
+
+    for (const term of ['z', 'za', 'zar', 'zara']) search(term);
+    // Still nothing: the burst has not settled.
+    await vi.advanceTimersByTimeAsync(FK_SEARCH_DEBOUNCE_MS - 1);
+    expect(mockedListRows).toHaveBeenCalledTimes(1);
+
+    await settleSearch();
     expect(mockedListRows).toHaveBeenCalledTimes(2);
+    expect(mockedListRows).toHaveBeenLastCalledWith('professionals', {
+      filters: { display_name: 'zara' },
+      limit: FK_SEARCH_LIMIT,
+      includeUnrelated: true,
+    });
+  });
+
+  it('reaches a value the first page never carried, and keeps it selectable afterwards', async () => {
+    // The roster is capped: this professional sits past the first page.
+    const { options, labelFor, search } = useForeignKeyOptions(professionalsFk);
+    await flushPromises();
+    expect(labelFor('999')).toBeNull();
+
+    mockedListRows.mockResolvedValue({ ok: true, data: [{ id: '999', display_name: 'Dra. Zaráte', dni: '999' }] });
+    search('zar');
+    await settleSearch();
+
+    expect(options.value).toContainEqual({ value: '999', label: 'Dra. Zaráte' });
+    // A match joins the known rows rather than replacing them: clearing the query must not
+    // strand the value that was just chosen.
+    search('');
+    await settleSearch();
+    expect(labelFor('999')).toBe('Dra. Zaráte');
+    expect(labelFor('1')).toBe('Dr. Ana');
+  });
+
+  it('a blank query asks the server nothing', async () => {
+    const { search } = useForeignKeyOptions(professionalsFk);
+    await flushPromises();
+    mockedListRows.mockClear();
+
+    search('   ');
+    await settleSearch();
+    expect(mockedListRows).not.toHaveBeenCalled();
+  });
+
+  it('a slow earlier query cannot overwrite the newest one', async () => {
+    const { options, search } = useForeignKeyOptions(professionalsFk);
+    await flushPromises();
+
+    let resolveSlow!: (v: { ok: boolean; data: Array<Record<string, string>> }) => void;
+    mockedListRows.mockReturnValueOnce(new Promise((r) => { resolveSlow = r; }));
+    search('slow');
+    await vi.advanceTimersByTimeAsync(FK_SEARCH_DEBOUNCE_MS);
+
+    mockedListRows.mockResolvedValue({ ok: true, data: [{ id: '42', display_name: 'Dr. Rápido' }] });
+    search('fast');
+    await settleSearch();
+
+    resolveSlow({ ok: true, data: [{ id: '77', display_name: 'Dr. Lento' }] });
+    await flushPromises();
+
+    expect(options.value).toContainEqual({ value: '42', label: 'Dr. Rápido' });
+    expect(options.value.some((o) => o.value === '77')).toBe(false);
+  });
+
+  it('searches the column the caller names, not always the label', async () => {
+    const { search } = useForeignKeyOptions(professionalsFk, {
+      searchField: (term) => (/^\d+$/.test(term) ? 'dni' : 'display_name'),
+    });
+    await flushPromises();
+
+    search('30123456');
+    await settleSearch();
+    expect(mockedListRows).toHaveBeenLastCalledWith('professionals', {
+      filters: { dni: '30123456' },
+      limit: FK_SEARCH_LIMIT,
+      includeUnrelated: true,
+    });
   });
 });

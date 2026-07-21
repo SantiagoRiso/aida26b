@@ -125,7 +125,6 @@ export const es = {
     userNotFound: 'No se encontró el usuario.',
     profileNotFound: 'No se encontró el perfil.',
     displayNameRequired: 'Ingresar el nombre visible.',
-    displayNameAndEmailRequired: 'Ingresar un nombre visible y un email válidos.',
     emailFormat: 'Ingresar un email válido.',
     usernamePasswordRoleRequired: 'Completar usuario, contraseña y rol.',
     userIdAndPasswordRequired: 'Elegir un usuario e ingresar la nueva contraseña.',
@@ -171,6 +170,12 @@ export const es = {
     maxLength: 'Ingresar como máximo {max} caracteres.',
     minValue: 'Ingresar un valor mayor o igual a {min}.',
     maxValue: 'Ingresar un valor menor o igual a {max}.',
+    // Workflow-route request shapes (appointments, series, scheduling queries).
+    ownerToken: 'La agenda elegida no es válida.',
+    notAllowedWithRange: 'No se puede combinar una fecha suelta con un rango.',
+    dateRangeOrder: 'La fecha de fin debe ser posterior a la de inicio.',
+    dateRangeTooLong: 'El rango no puede superar los {max} días.',
+    notInSeries: 'Esa fecha no es una repetición de esta serie.',
     // Recurrence rule (appointment_series) — one key per rule the recurrence validator names.
     recurrenceFrequencyInvalid: 'Elegir una frecuencia válida.',
     recurrenceIntervalInvalid: 'El intervalo debe ser un número entero mayor o igual a {min}.',

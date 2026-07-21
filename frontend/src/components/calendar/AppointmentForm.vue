@@ -10,7 +10,7 @@ import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useBookingOptions } from '@/composables/useBookingOptions';
 import { useToast } from '@/composables/useToast';
-import { fieldErrorMessages } from '@/i18n/api-errors';
+import { fieldErrorMessage, fieldErrorMessages } from '@/i18n/api-errors';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
@@ -122,6 +122,8 @@ const sobreturno = ref(!!props.appointment || !!props.prefillSobreturno);
 
 const {
   clientOptions,
+  searchClients,
+  searchingClients,
   professionalOptions: availableProfessionalOptions,
   availableServiceOptions,
 } = useBookingOptions({
@@ -307,7 +309,9 @@ function submit() {
     sobreturno.value = true;
     fieldErrors.value = {
       ...(!form.start ? { start: t('calendar.selectTimeError') } : {}),
-      ...(!form.duration_minutes ? { duration_minutes: t('generic.required') } : {}),
+      // Same fieldError.<key> ladder the server's own rejection resolves through, so a
+      // locally-caught gap reads identically to the one the API would have returned.
+      ...(!form.duration_minutes ? { duration_minutes: fieldErrorMessage({ key: 'required' }) } : {}),
     };
     return;
   }
@@ -327,7 +331,9 @@ function submit() {
         :model-value="form.client_user_id || null"
         :options="clientOptions"
         :extra-search="(o) => o.dni"
+        :loading="searchingClients"
         :placeholder="t('calendar.searchClient')"
+        @search="searchClients"
         @update:model-value="form.client_user_id = $event ?? ''"
       >
         <template #option="{ option, selected }">

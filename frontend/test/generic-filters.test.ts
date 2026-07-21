@@ -1,12 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import { structure } from '@shared/ssot/structure';
 import type { TableKey } from '@shared/ssot/derived';
+import { listRows } from '@/api/crud';
+import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
 import GenericFilters from '@/components/generic/GenericFilters.vue';
+
+vi.mock('@/api/crud', () => ({ listRows: vi.fn().mockResolvedValue({ ok: true, data: [] }) }));
 
 // GenericFilters needs no auth/router: Pinia backs useLabel() (SSOT column labels follow
 // ui.language), and vue-i18n backs the chrome strings (Agregar, excluir, mín/máx…).
@@ -159,6 +163,45 @@ describe('GenericFilters — multiple active filters serialize together', () => 
     await wrapper.get(`input[placeholder="${es.generic.minPlaceholder}"]`).setValue('15');
 
     expect(lastChange(wrapper)).toEqual({ name: 'corte', default_duration_minutes: '15,' });
+  });
+});
+
+describe('GenericFilters — foreign key column', () => {
+  beforeEach(() => {
+    resetFkOptionsCache();
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [{ id: 'biz-1', name: 'Clínica Central' }],
+    });
+  });
+
+  it('offers the referenced rows by name instead of free text on an id', async () => {
+    const wrapper = mountFilters('users' as TableKey);
+    await addFilter(wrapper, 'business_id');
+    await flushPromises();
+
+    // The backend matches a referenced id exactly, so this column never gets a text box.
+    expect(wrapper.find(`input[placeholder="${es.generic.filterPlaceholder}"]`).exists()).toBe(false);
+
+    const picker = wrapper.get(`input[placeholder="${es.generic.all}"]`);
+    await picker.setValue('clínica');
+    const rendered = wrapper.findAll('[role=option]').map((o) => o.text());
+    expect(rendered.some((t) => t.includes('Clínica Central'))).toBe(true);
+  });
+
+  it('serializes the chosen id, and the exclude prefix still applies to it', async () => {
+    const wrapper = mountFilters('users' as TableKey);
+    await addFilter(wrapper, 'business_id');
+    await flushPromises();
+
+    const picker = wrapper.get(`input[placeholder="${es.generic.all}"]`);
+    await picker.setValue('clínica');
+    await picker.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(lastChange(wrapper)).toEqual({ business_id: 'biz-1' });
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(lastChange(wrapper)).toEqual({ business_id: '!biz-1' });
   });
 });
 

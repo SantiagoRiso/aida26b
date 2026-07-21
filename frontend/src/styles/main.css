@@ -13,9 +13,12 @@
   --color-destructive: #DC2626;
   --color-destructive-hover: #B91C1C;
 
-  /* State-indicator tokens — never used for layout, only for status/feedback. */
-  --color-success: #16A34A;
-  --color-warning: #D97706;
+  /* State-indicator tokens — never used for layout, only for status/feedback. Success and
+     warning are darkened past their original swatch (green-600/amber-600) to clear 4.5:1 as
+     text on card/surface; darkening them helps rather than hurts as a fill, since the same
+     value sits under --color-inverted white text (bg-success text-inverted, toasts). */
+  --color-success: #15803D;
+  --color-warning: #B45309;
   --color-info: #0891B2;
   --color-neutral: #6B7280;
 
@@ -36,6 +39,11 @@
 
   --color-info-tint: #DBEAFE;
   --color-info-strong: #1E40AF;
+
+  /* Indigo, not the same blue --color-info borrows for its own tint/strong: the accent badge
+     (scheduled) must not read as the same colour as the info badge (requested). */
+  --color-accent-tint: #E0E7FF;
+  --color-accent-strong: #3730A3;
 
   /* The neutral badge pairs with --color-body; a neutral-strong step would only restate it. */
   --color-neutral-tint: #F1F5F9;
@@ -102,6 +110,9 @@
   --color-info-tint: #172554;
   --color-info-strong: #93C5FD;
 
+  --color-accent-tint: #1E1B4B;
+  --color-accent-strong: #A5B4FC;
+
   --color-neutral-tint: #293546;
 
   --color-heading: #F1F5F9;
@@ -123,7 +134,7 @@ html {
 /* Match the shared DateField (vue-datepicker) to the app's input styling and palette. */
 .dp--theme-light {
   --dp-background-color: #FFFFFF;
-  --dp-text-color: #1E293B;
+  --dp-text-color: var(--color-heading);
   --dp-border-color: #E2E8F0;
   --dp-border-color-hover: #2563EB;
   --dp-border-color-focus: #2563EB;
@@ -140,7 +151,7 @@ html {
 /* Same mapping against the dark tokens; DateField picks the class via its `dark` prop. */
 .dp--theme-dark {
   --dp-background-color: #1E293B;
-  --dp-text-color: #F1F5F9;
+  --dp-text-color: var(--color-heading);
   --dp-border-color: #64748B;
   --dp-border-color-hover: #60A5FA;
   --dp-border-color-focus: #60A5FA;

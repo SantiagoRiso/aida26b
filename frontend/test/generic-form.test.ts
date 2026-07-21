@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createRouter, createMemoryHistory } from 'vue-router';
@@ -6,7 +6,11 @@ import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import type { TableKey } from '@shared/ssot/derived';
-import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
+import {
+  resetFkOptionsCache,
+  FK_SEARCH_LIMIT,
+  FK_SEARCH_DEBOUNCE_MS,
+} from '@/composables/useForeignKeyOptions';
 import DateField from '@/components/shared/DateField.vue';
 
 vi.mock('@/api/crud', () => ({
@@ -20,55 +24,6 @@ vi.mock('@/api/crud', () => ({
   getRow: vi.fn(),
   deleteRow: vi.fn(),
 }));
-
-// No SSOT table declares a dependsOn FK today (grep confirms), so the cascade has no real
-// tableKey to mount GenericForm against. Merge one synthetic table into the real structure
-// (every other test in this file still sees the real tables untouched) purely to exercise the
-// wiring GenericForm already has for it: getFkOptions passes `dependsOn ? () => values[field] : undefined`
-// to useForeignKeyOptions, which fk-options-cache.test.ts proves works in isolation — this proves
-// GenericForm actually wires it up.
-vi.mock('@shared/ssot/structure', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@shared/ssot/structure')>();
-  return {
-    structure: {
-      ...actual.structure,
-      tables: {
-        ...actual.structure.tables,
-        __cascade_test__: {
-          columns: {
-            id: { type: 'string', label: { es: 'ID', en: 'ID' }, editable: false, sortable: true },
-            professional_user_id: {
-              type: 'string',
-              label: { es: 'Profesional', en: 'Professional' },
-              input: 'select',
-              validator: { required: true },
-              filterable: false,
-              sortable: false,
-              foreignKey: { table: 'professionals', valueField: 'id', labelField: 'display_name' },
-            },
-            service_id: {
-              type: 'string',
-              label: { es: 'Servicio', en: 'Service' },
-              input: 'select',
-              validator: { required: true },
-              filterable: false,
-              sortable: false,
-              foreignKey: {
-                table: 'services',
-                valueField: 'id',
-                labelField: 'name',
-                dependsOn: { field: 'professional_user_id', foreignField: 'professional_user_id' },
-              },
-            },
-          },
-          pk: 'id',
-          uiName: { es: 'Cascada de prueba', en: 'Cascade Test' },
-          crud: { create: true, read: true, update: true, delete: true },
-        },
-      },
-    },
-  };
-});
 
 function makePlugins() {
   const pinia = createPinia();
@@ -223,13 +178,20 @@ describe('GenericForm — backend field error mapping', () => {
 });
 
 describe('GenericForm — foreign key select option loading', () => {
+  beforeEach(() => {
+    resetFkOptionsCache();
+  });
+
   it('loads options from the referenced table for a foreignKey select column', async () => {
-    // users.business_id is a foreignKey → businesses; the select loads its rows.
+    // users.business_id is a foreignKey → businesses; the picker loads its rows.
     const { listRows } = await import('@/api/crud');
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      data: [{ id: 'biz-1', name: 'Clínica Central' }],
-      meta: { page: 1, limit: 20, total: 1 },
+      data: [
+        { id: 'biz-1', name: 'Clínica Central' },
+        { id: 'biz-2', name: 'Clínica Norte' },
+      ],
+      meta: { page: 1, limit: 20, total: 2 },
     });
 
     const { pinia, router, i18n } = makePlugins();
@@ -239,11 +201,10 @@ describe('GenericForm — foreign key select option loading', () => {
     });
     await flushPromises();
 
-    const selects = wrapper.findAll('select');
-    expect(selects.length).toBeGreaterThan(0);
-
-    const text = wrapper.text();
-    expect(text).toContain('Clínica Central');
+    // Typing opens the list; the referenced rows are what it offers.
+    await wrapper.find('input#business_id').setValue('clínica');
+    const rendered = wrapper.findAll('[role=option]').map((o) => o.text());
+    expect(rendered.some((t) => t.includes('Clínica Central'))).toBe(true);
   });
 });
 
@@ -355,42 +316,48 @@ describe('GenericForm — full-object validation runs on submit, not just on blu
   });
 });
 
-describe('GenericForm — FK dependsOn cascade', () => {
+describe('GenericForm — a referenced id beyond the first page stays selectable', () => {
   beforeEach(() => {
     resetFkOptionsCache();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('the dependent select has no options until its parent has a value, then loads options filtered by it', async () => {
+  it('asks the server for what was typed and offers the match the first page never carried', async () => {
     const { listRows } = await import('@/api/crud');
-    (listRows as ReturnType<typeof vi.fn>).mockImplementation(async (table: string, params?: { filters?: Record<string, string> }) => {
-      if (table === 'professionals') {
-        return { ok: true, data: [{ id: '7', display_name: 'Dra. Cascada' }] };
-      }
-      if (table === 'services') {
-        if (params?.filters?.professional_user_id === '7') {
-          return { ok: true, data: [{ id: 's1', name: 'Corte Cascada' }] };
+    (listRows as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_table: string, params?: { filters?: Record<string, string> }) => {
+        // Past the cap: only a query finds it.
+        if (params?.filters?.name === 'zar') {
+          return { ok: true, data: [{ id: 'biz-999', name: 'Clínica Zaráte' }] };
         }
-        return { ok: true, data: [] };
-      }
-      return { ok: true, data: [] };
-    });
+        return { ok: true, data: [{ id: 'biz-1', name: 'Clínica Central' }] };
+      },
+    );
 
     const { pinia, router, i18n } = makePlugins();
     const wrapper = mount(GenericForm, {
-      props: { tableKey: '__cascade_test__' as TableKey, mode: 'create' },
+      props: { tableKey: 'users' as TableKey, mode: 'create' },
       global: { plugins: [pinia, router, i18n] },
     });
     await flushPromises();
 
-    const serviceSelectBefore = wrapper.find('select#service_id');
-    expect(serviceSelectBefore.exists()).toBe(true);
-    // Only the placeholder option — the parent professional_user_id is still unset.
-    expect(serviceSelectBefore.findAll('option')).toHaveLength(1);
+    // users.business_id is a foreignKey → businesses, rendered as a searchable picker.
+    const input = wrapper.find('input#business_id');
+    expect(input.exists()).toBe(true);
 
-    await wrapper.find('select#professional_user_id').setValue('7');
+    await input.setValue('zar');
+    await vi.advanceTimersByTimeAsync(FK_SEARCH_DEBOUNCE_MS);
     await flushPromises();
 
-    const optionsAfter = wrapper.find('select#service_id').findAll('option').map((o) => o.text());
-    expect(optionsAfter).toContain('Corte Cascada');
+    expect(listRows).toHaveBeenCalledWith('businesses', {
+      filters: { name: 'zar' },
+      limit: FK_SEARCH_LIMIT,
+      includeUnrelated: true,
+    });
+    const rendered = wrapper.findAll('[role=option]').map((o) => o.text());
+    expect(rendered.some((t) => t.includes('Clínica Zaráte'))).toBe(true);
   });
 });

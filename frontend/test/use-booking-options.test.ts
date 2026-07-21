@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ref } from 'vue';
 import { flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import { listRows } from '@/api/crud';
 import { listAppointments } from '@/api/appointments';
 import { useAuthStore, type AuthUser } from '@/stores/auth';
-import { useBookingOptions } from '@/composables/useBookingOptions';
+import { useBookingOptions, CLIENT_SEARCH_DEBOUNCE_MS } from '@/composables/useBookingOptions';
 import type { Appointment } from '@/api/appointments';
 import { apiSuccess, listRowsFrom } from './helpers/api-fixtures';
 
@@ -241,5 +241,72 @@ describe('useBookingOptions — client roster', () => {
     await flushPromises();
 
     expect(mockListRows).not.toHaveBeenCalledWith('clients', expect.anything());
+  });
+});
+
+describe('useBookingOptions — client search past the roster cap', () => {
+  const beyondCap = {
+    id: '900', display_name: 'Zulema Zapata', email: null, dni: '30999888',
+    username: null, phone: null, notes: null,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setUser({ id: 99, role: 'Admin' });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function settle() {
+    await vi.advanceTimersByTimeAsync(CLIENT_SEARCH_DEBOUNCE_MS);
+    await flushPromises();
+  }
+
+  it('spends one request on a burst of keystrokes, not one per character', async () => {
+    const { searchClients } = useBookingOptions({ withClients: true });
+    await flushPromises();
+    mockListRows.mockClear();
+
+    for (const term of ['z', 'zu', 'zul', 'zule']) searchClients(term);
+    await vi.advanceTimersByTimeAsync(CLIENT_SEARCH_DEBOUNCE_MS - 1);
+    expect(mockListRows).not.toHaveBeenCalled();
+
+    await settle();
+    expect(mockListRows).toHaveBeenCalledTimes(1);
+    expect(mockListRows).toHaveBeenCalledWith('clients', {
+      filters: { display_name: 'zule' },
+      limit: 50,
+      includeUnrelated: true,
+    });
+  });
+
+  it('makes a client past the roster page selectable, without dropping the roster', async () => {
+    const { clientOptions, searchClients } = useBookingOptions({ withClients: true });
+    await flushPromises();
+    expect(clientOptions.value.some((o) => o.value === '900')).toBe(false);
+
+    mockListRows.mockResolvedValue(apiSuccess([beyondCap]));
+    searchClients('zulema');
+    await settle();
+
+    expect(clientOptions.value).toContainEqual({ value: '900', label: 'Zulema Zapata', dni: '30999888' });
+    // The roster the staff member started from is still there: a chosen client cannot vanish
+    // because someone typed a different name.
+    expect(clientOptions.value.some((o) => o.value === '7')).toBe(true);
+  });
+
+  it('looks a number up as a document, not as a name', async () => {
+    const { searchClients } = useBookingOptions({ withClients: true });
+    await flushPromises();
+    mockListRows.mockClear();
+
+    searchClients('30999888');
+    await settle();
+    expect(mockListRows).toHaveBeenCalledWith('clients', {
+      filters: { dni: '30999888' },
+      limit: 50,
+      includeUnrelated: true,
+    });
   });
 });

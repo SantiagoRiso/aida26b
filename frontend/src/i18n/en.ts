@@ -124,7 +124,6 @@ export const en: Messages = {
     userNotFound: 'User not found.',
     profileNotFound: 'Profile not found.',
     displayNameRequired: 'Enter the display name.',
-    displayNameAndEmailRequired: 'Enter a valid display name and email.',
     emailFormat: 'Enter a valid email.',
     usernamePasswordRoleRequired: 'Fill in username, password and role.',
     userIdAndPasswordRequired: 'Choose a user and enter the new password.',
@@ -168,6 +167,12 @@ export const en: Messages = {
     maxLength: 'Enter at most {max} characters.',
     minValue: 'Enter a value greater than or equal to {min}.',
     maxValue: 'Enter a value less than or equal to {max}.',
+    // Workflow-route request shapes (appointments, series, scheduling queries).
+    ownerToken: 'That calendar is not valid.',
+    notAllowedWithRange: 'A single date cannot be combined with a range.',
+    dateRangeOrder: 'The end date must be after the start date.',
+    dateRangeTooLong: 'The range may not exceed {max} days.',
+    notInSeries: "That date is not one of this series' occurrences.",
     // Recurrence rule (appointment_series) — one key per rule the recurrence validator names.
     recurrenceFrequencyInvalid: 'Choose a valid frequency.',
     recurrenceIntervalInvalid: 'The interval must be a whole number greater than or equal to {min}.',

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import Selector from '@/components/shared/Selector.vue';
+import { es } from '@/i18n/es';
 
 interface ProfOpt { value: string; label: string; services: string }
 
@@ -124,5 +125,22 @@ describe('Selector — readonly', () => {
     expect(wrapper.find('input').exists()).toBe(false);
     expect(wrapper.text()).toContain('Dr. Nick Riviera');
     expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+});
+
+describe('Selector — server-side search', () => {
+  it('reports what was typed so the owner can answer it from the server', async () => {
+    const wrapper = mount(Selector, { props: { modelValue: null, options, searchable: true } });
+    await openAndQuery(wrapper, 'zar');
+    expect(wrapper.emitted('search')!.at(-1)).toEqual(['zar']);
+  });
+
+  it('says the options are still arriving instead of "no results"', async () => {
+    const wrapper = mount(Selector, {
+      props: { modelValue: null, options: [] as ProfOpt[], searchable: true, loading: true },
+    });
+    await openAndQuery(wrapper, 'zar');
+    expect(wrapper.text()).toContain(es.loading);
+    expect(wrapper.text()).not.toContain(es.selector.noResults);
   });
 });

@@ -95,6 +95,7 @@ describe('Tailwind v4 semantic token → utility generation', () => {
     for (const utility of [
       'bg-success-tint', 'text-success-strong', 'bg-destructive-tint', 'text-destructive-strong',
       'bg-warning-tint', 'text-warning-strong', 'bg-info-tint', 'text-info-strong',
+      'bg-accent-tint', 'text-accent-strong',
       'bg-neutral-tint', 'border-warning-tint-border',
     ]) {
       expect(css, `${utility} generated no rule`).toMatch(new RegExp(`\\.${utility}[\\s,{:]`));
@@ -229,6 +230,7 @@ describe('dark theme token coverage', () => {
       ['--color-destructive-tint', '--color-destructive-strong'],
       ['--color-warning-tint', '--color-warning-strong'],
       ['--color-info-tint', '--color-info-strong'],
+      ['--color-accent-tint', '--color-accent-strong'],
       ['--color-neutral-tint', '--color-body'],
     ];
 

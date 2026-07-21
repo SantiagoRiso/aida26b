@@ -13,7 +13,7 @@ const badgeClass = computed(() => {
     case 'requested':
       return 'bg-info-tint text-info-strong';
     case 'scheduled':
-      return 'bg-accent/10 text-accent';
+      return 'bg-accent-tint text-accent-strong';
     case 'completed':
       return 'bg-success-tint text-success-strong';
     case 'canceled':

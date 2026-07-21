@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue';
 import { listRows } from '@/api/crud';
+import { debounce } from '@/composables/debounce';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
@@ -28,6 +29,16 @@ export interface BookingOptionsConfig {
 // Only interactions within the last year influence the recency ordering.
 const RECENCY_WINDOW_MS = 365 * 86400000;
 
+// The roster is a starting point, not the business: past it, a client is found by searching.
+const CLIENT_ROSTER_LIMIT = 200;
+const CLIENT_SEARCH_LIMIT = 50;
+export const CLIENT_SEARCH_DEBOUNCE_MS = 250;
+
+// Staff look a client up either by name or by document number; the typed text says which.
+function clientSearchField(term: string): 'dni' | 'display_name' {
+  return /^\d+$/.test(term) ? 'dni' : 'display_name';
+}
+
 export function useBookingOptions(config: BookingOptionsConfig = {}) {
   const auth = useAuthStore();
 
@@ -45,7 +56,7 @@ export function useBookingOptions(config: BookingOptionsConfig = {}) {
       listRows('services', { limit: 200 }),
       listRows('professional_services', { limit: 500 }),
       // Staff book turnos for anyone in the business, including a client they have never seen.
-      config.withClients ? listRows('clients', { limit: 200, includeUnrelated: true }) : null,
+      config.withClients ? listRows('clients', { limit: CLIENT_ROSTER_LIMIT, includeUnrelated: true }) : null,
       // Server-scoped to the calling client's own appointments.
       config.rankByRecency ? listAppointments({ limit: 200 }) : null,
     ]);
@@ -59,6 +70,36 @@ export function useBookingOptions(config: BookingOptionsConfig = {}) {
     if (apptRes?.ok) myAppointments.value = apptRes.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
   }
   void load();
+
+  const searchingClients = ref(false);
+  let currentClientQuery = 0;
+
+  // Matches join the roster instead of replacing it, so an already chosen client never
+  // disappears from the list while someone types a different name.
+  async function runClientSearch(term: string): Promise<void> {
+    const q = term.trim();
+    if (q === '') {
+      searchingClients.value = false;
+      return;
+    }
+    const mine = ++currentClientQuery;
+    searchingClients.value = true;
+    try {
+      const result = await listRows('clients', {
+        filters: { [clientSearchField(q)]: q },
+        limit: CLIENT_SEARCH_LIMIT,
+        includeUnrelated: true,
+      });
+      if (mine !== currentClientQuery || !result.ok) return;
+      const byId = new Map(clients.value.map((c) => [String(c.id), c]));
+      for (const c of result.data) byId.set(String(c.id), c);
+      clients.value = [...byId.values()];
+    } finally {
+      if (mine === currentClientQuery) searchingClients.value = false;
+    }
+  }
+
+  const searchClients = debounce((term: string) => { void runClientSearch(term); }, CLIENT_SEARCH_DEBOUNCE_MS);
 
   const clientOptions = computed<BookingClientOption[]>(() =>
     clients.value.map((c) => ({ value: String(c.id), label: c.display_name, dni: c.dni ?? '' })),
@@ -129,6 +170,8 @@ export function useBookingOptions(config: BookingOptionsConfig = {}) {
     professionals,
     services,
     clientOptions,
+    searchClients,
+    searchingClients,
     rankedProfessionals,
     professionalOptions,
     serviceNamesByProfessional,
