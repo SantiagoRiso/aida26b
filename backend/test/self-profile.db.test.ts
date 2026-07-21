@@ -8,6 +8,9 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { getSelfProfile, updateSelfProfile } from '../src/db/users';
+import { makeApiClient, dataOf, errorOf } from './api_client';
+import type { JsonBody } from './api_client';
+import type { SelfProfileRow } from '../../shared/src/ssot/query-types';
 
 let pool: Pool;
 let bizId: number;
@@ -66,7 +69,7 @@ describe('me/profile HTTP', () => {
   };
   const asPro = (id: number): AuthUser => ({
     id, username: 'pro_prof', email: 'x@x.com', role: 'Professional',
-    business_id: String(bizId), is_active: true, must_change_password: false,
+    business_id: bizId, is_active: true, must_change_password: false,
   });
 
   beforeAll(async () => {
@@ -80,31 +83,30 @@ describe('me/profile HTTP', () => {
   });
   afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
-  async function reqJson(method: string, path: string, body?: object) {
-    const res = await fetch(`${baseUrl}${path}`, {
-      method, headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : null };
-  }
+  type ProfileResult = { profile: SelfProfileRow };
+  // A profile PATCH also echoes the refreshed session user, since email is part of that identity.
+  type PatchedProfileResult = ProfileResult & { user: AuthUser };
+
+  const request = makeApiClient(() => baseUrl);
+  const reqJson = <T,>(method: 'GET' | 'PATCH', path: string, body?: JsonBody) =>
+    request<T>(path, { method, body });
 
   test('GET returns the caller profile', async () => {
-    const res = await reqJson('GET', '/api/auth/me/profile');
+    const res = await reqJson<ProfileResult>('GET', '/api/auth/me/profile');
     expect(res.status).toBe(200);
-    expect(res.body.data.profile.id).toBe(String(proId));
+    expect(dataOf(res).profile.id).toBe(String(proId));
   });
 
   test('PATCH updates fields and echoes refreshed user email', async () => {
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'Patched', bio: 'b', email: 'patched@x.com', phone: '333' });
     expect(res.status).toBe(200);
-    expect(res.body.data.profile.display_name).toBe('Patched');
-    expect(res.body.data.user.email).toBe('patched@x.com');
+    expect(dataOf(res).profile.display_name).toBe('Patched');
+    expect(dataOf(res).user.email).toBe('patched@x.com');
   });
 
   test('PATCH rejects an invalid email -> 400', async () => {
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'X', email: 'not-an-email', phone: null });
     expect(res.status).toBe(400);
   });
@@ -115,7 +117,7 @@ describe('me/profile HTTP', () => {
        VALUES ('other_pro', 'taken@x.com', 'Other', 'h', 's', 'Professional', $1)`,
       [bizId],
     );
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'X', email: 'taken@x.com', phone: null });
     expect(res.status).toBe(409);
   });
@@ -131,38 +133,38 @@ describe('me/profile HTTP', () => {
 
   const asClient = (id: number): AuthUser => ({
     id, username: 'client_prof', email: null, role: 'Client',
-    business_id: String(bizId), is_active: true, must_change_password: false,
+    business_id: bizId, is_active: true, must_change_password: false,
   });
 
   test('a client recorded without an email saves their profile without one', async () => {
     const clientId = await makeClient('Sin Email Cliente', null);
     currentUser = asClient(clientId);
 
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'Sin Email Cliente', phone: '4444' });
     expect(res.status).toBe(200);
-    expect(res.body.data.profile.email).toBeNull();
-    expect(res.body.data.profile.phone).toBe('4444');
+    expect(dataOf(res).profile.email).toBeNull();
+    expect(dataOf(res).profile.phone).toBe('4444');
   });
 
   test('a client may add an email later', async () => {
     const clientId = await makeClient('Agrega Email', null);
     currentUser = asClient(clientId);
 
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'Agrega Email', email: 'agrega@x.com', phone: null });
     expect(res.status).toBe(200);
-    expect(res.body.data.profile.email).toBe('agrega@x.com');
+    expect(dataOf(res).profile.email).toBe('agrega@x.com');
   });
 
   test('a client who has an email cannot drop it', async () => {
     const clientId = await makeClient('Con Email', 'conemail@x.com');
     currentUser = asClient(clientId);
 
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'Con Email', email: '', phone: null });
     expect(res.status).toBe(400);
-    expect(res.body.error.detail.key).toBe('emailFormat');
+    expect(errorOf(res).detail?.key).toBe('emailFormat');
 
     const reread = await getSelfProfile(pool, clientId);
     expect(reread!.email).toBe('conemail@x.com');
@@ -170,9 +172,9 @@ describe('me/profile HTTP', () => {
 
   test('staff still cannot save a profile without an email', async () => {
     currentUser = asPro(proId);
-    const res = await reqJson('PATCH', '/api/auth/me/profile',
+    const res = await reqJson<PatchedProfileResult>('PATCH', '/api/auth/me/profile',
       { display_name: 'Pro Sin Email', email: '', phone: null });
     expect(res.status).toBe(400);
-    expect(res.body.error.detail.key).toBe('emailFormat');
+    expect(errorOf(res).detail?.key).toBe('emailFormat');
   });
 });

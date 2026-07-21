@@ -40,26 +40,24 @@ const DEFAULT_SORT = 'display_name';
 const isAdmin = computed(() => auth.user?.role === 'Admin');
 
 const clients = ref<Wire<TableRecordMap['clients']>[]>([]);
-// Clients with a prior relationship = at least one appointment in the viewer-scoped list
-// (for a Professional that list is already limited to their own appointments).
-// Keyed by string id — the API serializes ids as strings.
+// Only the badge needs this: which of the rows on screen the viewer has no history with. The
+// narrowing itself is the server's. Keyed by string id — the API serializes ids as strings.
 const relatedIds = ref<Set<string>>(new Set());
 const loading = ref(true);
 const total = ref(0);
 // The server owns the page size; this only seeds the render before the first response lands.
 const limit = ref(LIST_DEFAULT_LIMIT);
 
-const includeUnrelated = ref(false);
-
-// Filters, sort and page live in the URL under the shared list vocabulary, so a search can be
-// reloaded or shared. Search is server-side: the whole client list is never in memory.
+// Filters, sort, page and the relationship toggle live in the URL under the shared list
+// vocabulary, so a search can be reloaded or shared. Search is server-side: the whole client
+// list is never in memory.
 const listQuery = useListQuerySync({
-  onChange: () => { void loadClients(); },
+  onChange: () => { void load(); },
   sortableFields: () => LIST_COLUMNS.filter((key) => clientColumns[key].sortable),
   filterableFields: () => [...SEARCH_COLUMNS],
   defaultFilters: () => ({ display_name: '', dni: '' }),
 });
-const { page, sort, dir, filters } = listQuery;
+const { page, sort, dir, filters, includeUnrelated } = listQuery;
 
 const activeSort = computed(() => sort.value || DEFAULT_SORT);
 
@@ -83,6 +81,11 @@ function goToPage(next: number) {
   listQuery.commit();
 }
 
+function onIncludeUnrelatedChange() {
+  page.value = 1;
+  listQuery.commit();
+}
+
 async function loadClients() {
   loading.value = true;
   const result = await listRows('clients', {
@@ -91,6 +94,7 @@ async function loadClients() {
     sort: activeSort.value,
     dir: dir.value,
     filters: filters.value,
+    includeUnrelated: includeUnrelated.value,
   });
   if (result.ok) {
     clients.value = result.data;
@@ -100,19 +104,20 @@ async function loadClients() {
   loading.value = false;
 }
 
-// Relatedness is a property of the viewer, not of the page — fetched once, not per page.
+// Relatedness is a property of the viewer, not of the page — fetched once, not per page. Only
+// needed while unrelated clients are on screen, to tell them apart.
+const relatedIdsLoaded = ref(false);
 async function loadRelatedIds() {
-  if (isAdmin.value) return;
+  if (isAdmin.value || !includeUnrelated.value || relatedIdsLoaded.value) return;
   const result = await listRelatedClientIds();
-  if (result.ok) relatedIds.value = new Set(result.data.map((id) => String(id)));
+  if (!result.ok) return;
+  relatedIds.value = new Set(result.data.map((id) => String(id)));
+  relatedIdsLoaded.value = true;
 }
 
-// Unrelated clients stay hidden from non-Admin staff unless they ask for them. The server has
-// no membership filter, so this narrows the fetched page rather than the query.
-const visibleClients = computed(() => {
-  if (isAdmin.value || includeUnrelated.value) return clients.value;
-  return clients.value.filter((c) => relatedIds.value.has(String(c.id)));
-});
+// Every row is related unless the viewer asked for the wider list, so the badge only means
+// something once that set is known.
+const showsRelationship = computed(() => !isAdmin.value && includeUnrelated.value && relatedIdsLoaded.value);
 
 async function load() {
   await Promise.all([loadClients(), loadRelatedIds()]);
@@ -163,7 +168,12 @@ onMounted(load);
         @input="onSearchInput"
       />
       <label v-if="!isAdmin" class="flex items-center gap-2 text-sm text-neutral">
-        <input type="checkbox" v-model="includeUnrelated" class="accent-accent" />
+        <input
+          type="checkbox"
+          v-model="includeUnrelated"
+          class="accent-accent"
+          @change="onIncludeUnrelatedChange"
+        />
         {{ t('clients.includeUnrelated') }}
       </label>
     </div>
@@ -172,7 +182,7 @@ onMounted(load);
       <Skeleton variant="row" :rows="6" />
     </div>
 
-    <div v-else-if="visibleClients.length === 0">
+    <div v-else-if="clients.length === 0">
       <EmptyState
         :heading="t('clients.emptyHeading')"
         :body="(includeUnrelated || isAdmin)
@@ -201,7 +211,7 @@ onMounted(load);
         </thead>
         <tbody>
           <tr
-            v-for="c in visibleClients"
+            v-for="c in clients"
             :key="c.id"
             class="virtualized-row border-t border-border hover:bg-surface cursor-pointer"
             @pointerenter="prefetchClientDetail(Number(c.id))"
@@ -211,7 +221,7 @@ onMounted(load);
             <td class="px-4 py-3 font-medium">
               {{ c.display_name }}
               <span
-                v-if="!isAdmin && !relatedIds.has(String(c.id))"
+                v-if="showsRelationship && !relatedIds.has(String(c.id))"
                 class="ml-2 rounded-full bg-border px-2 py-0.5 text-xs font-normal text-neutral"
               >
                 {{ t('clients.noRelationship') }}

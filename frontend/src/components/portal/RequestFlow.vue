@@ -267,7 +267,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
     <section v-if="step === 2" class="space-y-4">
       <h2 class="text-lg font-semibold">{{ t('portal.chooseDateTime') }}</h2>
 
-      <div v-if="slotConflict" class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800" role="alert">
+      <div v-if="slotConflict" class="rounded-md bg-warning-tint border border-warning-tint-border px-4 py-3 text-sm text-warning-strong" role="alert">
         {{ t('portal.slotNoLongerAvailable') }}
       </div>
 
@@ -333,7 +333,7 @@ const atMaxDate = computed(() => windowMax.value != null && (selectedDate.value 
           <p class="text-xs text-neutral mt-1">
             {{ t('portal.costDisclaimer') }}
           </p>
-          <p v-if="priceError" class="text-xs text-amber-600 mt-1">
+          <p v-if="priceError" class="text-xs text-warning-strong mt-1">
             {{ t('portal.priceFallbackNote') }}
           </p>
         </div>

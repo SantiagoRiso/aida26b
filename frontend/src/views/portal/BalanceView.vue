@@ -82,20 +82,18 @@ onMounted(load);
         :class="[
           'rounded-xl border p-6',
           balancePositive
-            ? 'border-red-200 bg-red-50'
-            : 'border-green-200 bg-green-50',
+            ? 'border-destructive-tint-border bg-destructive-tint text-destructive-strong'
+            : 'border-success-tint-border bg-success-tint text-success-strong',
         ]"
       >
-        <p class="text-sm text-neutral">{{ t('portal.currentBalance') }}</p>
-        <p
-          :class="['mt-1 text-3xl font-bold tabular-nums', balancePositive ? 'text-destructive' : 'text-success']"
-        >
+        <p class="text-sm">{{ t('portal.currentBalance') }}</p>
+        <p class="mt-1 text-3xl font-bold tabular-nums">
           {{ balanceArs != null ? formatARS(balanceArs) : t('generic.emptyValue') }}
         </p>
-        <p v-if="balancePositive" class="mt-2 text-sm text-destructive">
+        <p v-if="balancePositive" class="mt-2 text-sm">
           {{ t('portal.balanceDue') }}
         </p>
-        <p v-else class="mt-2 text-sm text-success">
+        <p v-else class="mt-2 text-sm">
           {{ t('portal.balanceOk') }}
         </p>
       </div>

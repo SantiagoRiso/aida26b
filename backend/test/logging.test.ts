@@ -65,7 +65,7 @@ describe('request logger middleware', () => {
     });
 
     const entry = entries.find((e) => e.url === '/api/clients');
-    expect(entry).toBeTruthy();
+    if (!entry) throw new Error('expected an access-log entry for /api/clients');
     expect(entry.method).toBe('POST');
     expect(entry.status).toBe(201);
     expect(typeof entry.reqId).toBe('string');

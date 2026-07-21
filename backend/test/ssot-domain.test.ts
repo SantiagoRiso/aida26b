@@ -35,8 +35,8 @@ import type {
   ColumnDef,
   ColumnValue,
   LocalizedText,
-  TableKey,
 } from '../../shared/src/types/types';
+import type { TableKey } from '../../shared/src/ssot/derived';
 
 // eslint-disable-next-line no-restricted-syntax -- type-guard boundary: narrows an unvalidated SSOT field value before asserting its shape
 function isLocalized(text: unknown): text is LocalizedText {
@@ -761,7 +761,7 @@ describe('owner-scheduled tables are derived from schedulable capabilities', () 
       expected.add(schedulable.availability.exceptionSource);
     }
     expect(expected.size).toBeGreaterThan(0);
-    for (const key of Object.keys(structure.tables)) {
+    for (const key of Object.keys(structure.tables) as TableKey[]) {
       expect(isOwnerScheduledTable(key)).toBe(expected.has(key));
     }
   });

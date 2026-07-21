@@ -37,6 +37,8 @@ const props = withDefaults(
     id?: string;
     // Extra text to match against besides the label (searchable only), e.g. a professional's services.
     extraSearch?: (option: T) => string;
+    // Options are still arriving (a server-side search is in flight).
+    loading?: boolean;
   }>(),
   {
     searchable: false,
@@ -46,14 +48,23 @@ const props = withDefaults(
     placeholder: '',
     showEmptyOption: true,
     disabled: false,
+    loading: false,
   },
 );
 
 const emit = defineEmits<{
   'update:modelValue': [value: string | null];
+  // What the viewer typed, for owners that answer it from the server rather than from the
+  // options already loaded.
+  search: [query: string];
 }>();
 
 const query = ref('');
+
+function onQuery(value: string) {
+  query.value = value;
+  emit('search', value);
+}
 
 const selectedValue = computed({
   get: () => props.modelValue,
@@ -135,7 +146,7 @@ watch(
         :placeholder="placeholder"
         :display-value="(v) => labelFor(v as string | null)"
         autocomplete="off"
-        @change="query = ($event.target as HTMLInputElement).value"
+        @change="onQuery(($event.target as HTMLInputElement).value)"
         @blur="query = ''"
       />
       <ComboboxButton class="absolute inset-y-0 right-0 flex items-center px-2" :aria-label="i18n.global.t('selector.openOptions')">
@@ -146,7 +157,10 @@ watch(
     <ComboboxOptions
       class="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-lg focus:outline-none"
     >
-      <div v-if="filtered.length === 0" class="px-3 py-2 text-neutral">
+      <div v-if="loading && filtered.length === 0" class="px-3 py-2 text-neutral">
+        {{ i18n.global.t('loading') }}
+      </div>
+      <div v-else-if="filtered.length === 0" class="px-3 py-2 text-neutral">
         <slot name="empty">{{ i18n.global.t('selector.noResults') }}</slot>
       </div>
       <ComboboxOption

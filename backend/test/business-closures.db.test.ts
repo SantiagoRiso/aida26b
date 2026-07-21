@@ -8,6 +8,8 @@ import { resetTestDb, makeTestPool } from './helpers';
 import { mountSchedulingRoutes } from '../src/routes/scheduling';
 import { mountBusinessClosureRoutes } from '../src/routes/business-closures';
 import type { AuthUser } from '../src/auth';
+import { makeApiClient, dataOf } from './api_client';
+import type { AvailabilityResult } from '../../shared/src/ssot/contracts/scheduling';
 
 // Lightweight app with pass-through guards and a swappable current user — the same pattern
 // conflict-check uses, mounting both the availability route and the closures route so a closure's
@@ -22,29 +24,9 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type Slot = { start: string; end: string };
-type AvailabilityData = { date: string; slots: Slot[]; open: boolean };
 type ClosureData = { id: string; exception_date: string; start_time: string | null; end_time: string | null; reason: string | null };
 type DeleteData = { id: string; deleted: boolean };
-type Envelope = {
-  success?: boolean;
-  data?: AvailabilityData | ClosureData | ClosureData[] | DeleteData;
-  meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string };
-};
-
-async function request(
-  path: string,
-  { method = 'GET', body }: { method?: string; body?: Record<string, string | number | boolean | null> } = {}
-) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
-}
+const request = makeApiClient(() => baseUrl);
 
 const MONDAY = '2026-06-29';
 let bizId: string;
@@ -118,21 +100,21 @@ afterAll(async () => {
 
 async function availabilitySlotCount(): Promise<number> {
   currentUser = admin();
-  const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
+  const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
   expect(res.status).toBe(200);
-  return (res.body!.data as AvailabilityData).slots.length;
+  return dataOf(res).slots.length;
 }
 
 describe('business-wide closures', () => {
   test('a non-admin cannot create a business closure', async () => {
     currentUser = professional();
-    const res = await request('/api/business-closures', { method: 'POST', body: { exception_date: MONDAY } });
+    const res = await request<ClosureData>('/api/business-closures', { method: 'POST', body: { exception_date: MONDAY } });
     expect(res.status).toBe(403);
   });
 
   test('a partial closure needs both endpoints or neither', async () => {
     currentUser = admin();
-    const res = await request('/api/business-closures', { method: 'POST', body: { exception_date: MONDAY, start_time: '13:00' } });
+    const res = await request<ClosureData>('/api/business-closures', { method: 'POST', body: { exception_date: MONDAY, start_time: '13:00' } });
     expect(res.status).toBe(422);
   });
 
@@ -142,25 +124,25 @@ describe('business-wide closures', () => {
 
     // Admin closes the whole clinic.
     currentUser = admin();
-    const created = await request('/api/business-closures', {
+    const created = await request<ClosureData>('/api/business-closures', {
       method: 'POST',
       body: { exception_date: MONDAY, reason: 'Feriado nacional' },
     });
     expect(created.status).toBe(201);
-    const closureId = (created.body!.data as ClosureData).id;
+    const closureId = dataOf(created).id;
 
     // The closure unions into the professional's availability → no slots left.
     expect(await availabilitySlotCount()).toBe(0);
 
     // It is listed for the Negocio management UI (one closure, this tenant).
     currentUser = admin();
-    const list = await request('/api/business-closures');
+    const list = await request<ClosureData[]>('/api/business-closures');
     expect(list.status).toBe(200);
-    expect((list.body!.data as ClosureData[]).length).toBe(1);
+    expect(dataOf(list).length).toBe(1);
 
     // Deleting it reopens the day.
     currentUser = admin();
-    const del = await request(`/api/business-closures/${closureId}`, { method: 'DELETE' });
+    const del = await request<DeleteData>(`/api/business-closures/${closureId}`, { method: 'DELETE' });
     expect(del.status).toBe(200);
     expect(await availabilitySlotCount()).toBeGreaterThan(0);
   });
@@ -169,36 +151,36 @@ describe('business-wide closures', () => {
 describe('business closure update', () => {
   test('an admin edits a closure (date/time/reason); a non-admin cannot', async () => {
     currentUser = admin();
-    const created = await request('/api/business-closures', { method: 'POST', body: { exception_date: '2026-06-30', reason: 'Original' } });
+    const created = await request<ClosureData>('/api/business-closures', { method: 'POST', body: { exception_date: '2026-06-30', reason: 'Original' } });
     expect(created.status).toBe(201);
-    const id = (created.body!.data as ClosureData).id;
+    const id = dataOf(created).id;
 
     currentUser = professional();
-    const denied = await request(`/api/business-closures/${id}`, { method: 'PUT', body: { exception_date: '2026-06-30' } });
+    const denied = await request<ClosureData>(`/api/business-closures/${id}`, { method: 'PUT', body: { exception_date: '2026-06-30' } });
     expect(denied.status).toBe(403);
 
     currentUser = admin();
-    const updated = await request(`/api/business-closures/${id}`, {
+    const updated = await request<ClosureData>(`/api/business-closures/${id}`, {
       method: 'PUT',
       body: { exception_date: '2026-07-01', start_time: '10:00', end_time: '12:00', reason: 'Editado' },
     });
     expect(updated.status).toBe(200);
-    const row = updated.body!.data as ClosureData;
+    const row = dataOf(updated);
     expect(row).toMatchObject({ exception_date: '2026-07-01', start_time: '10:00', end_time: '12:00', reason: 'Editado' });
 
-    await request(`/api/business-closures/${id}`, { method: 'DELETE' });
+    await request<DeleteData>(`/api/business-closures/${id}`, { method: 'DELETE' });
   });
 
   test('an inverted time range is rejected, and a missing closure is 404', async () => {
     currentUser = admin();
-    const created = await request('/api/business-closures', { method: 'POST', body: { exception_date: '2026-06-30' } });
-    const id = (created.body!.data as ClosureData).id;
+    const created = await request<ClosureData>('/api/business-closures', { method: 'POST', body: { exception_date: '2026-06-30' } });
+    const id = dataOf(created).id;
 
-    const bad = await request(`/api/business-closures/${id}`, { method: 'PUT', body: { exception_date: '2026-06-30', start_time: '12:00', end_time: '09:00' } });
+    const bad = await request<ClosureData>(`/api/business-closures/${id}`, { method: 'PUT', body: { exception_date: '2026-06-30', start_time: '12:00', end_time: '09:00' } });
     expect(bad.status).toBe(422);
-    await request(`/api/business-closures/${id}`, { method: 'DELETE' });
+    await request<DeleteData>(`/api/business-closures/${id}`, { method: 'DELETE' });
 
-    const missing = await request('/api/business-closures/999999', { method: 'PUT', body: { exception_date: '2026-07-01' } });
+    const missing = await request<ClosureData>('/api/business-closures/999999', { method: 'PUT', body: { exception_date: '2026-07-01' } });
     expect(missing.status).toBe(404);
   });
 });

@@ -19,9 +19,32 @@
   --color-info: #0891B2;
   --color-neutral: #6B7280;
 
-  /* The strongest text step: headings, table headers, field labels, emphasised values.
-     --color-neutral is the muted step below it. */
+  /* Tinted status surfaces (badges, banners, flagged rows) and the text step that stays
+     legible on them. The -strong step is the role at text weight, so it also reads on a
+     plain card; the base role colour above is a fill, not a text colour. */
+  --color-success-tint: #DCFCE7;
+  --color-success-strong: #14532D;
+  --color-success-tint-border: #BBF7D0;
+
+  --color-destructive-tint: #FEE2E2;
+  --color-destructive-strong: #991B1B;
+  --color-destructive-tint-border: #FECACA;
+
+  --color-warning-tint: #FEF3C7;
+  --color-warning-strong: #92400E;
+  --color-warning-tint-border: #FDE68A;
+
+  --color-info-tint: #DBEAFE;
+  --color-info-strong: #1E40AF;
+
+  /* The neutral badge pairs with --color-body; a neutral-strong step would only restate it. */
+  --color-neutral-tint: #F1F5F9;
+
+  /* Three text steps, strongest to weakest: --color-heading (headings, table headers, field
+     labels, emphasised values), --color-body (running text, the inherited default), and
+     --color-neutral (muted, secondary). */
   --color-heading: #0F172A;
+  --color-body: #334155;
 
   /* Text sitting on a solid accent/destructive/success/info fill. */
   --color-inverted: #FFFFFF;
@@ -63,32 +86,38 @@
   --color-info: #22D3EE;
   --color-neutral: #94A3B8;
 
+  /* Tints and their text step swap ends: the tint goes near-black, the -strong step light. */
+  --color-success-tint: #052E16;
+  --color-success-strong: #86EFAC;
+  --color-success-tint-border: #14532D;
+
+  --color-destructive-tint: #450A0A;
+  --color-destructive-strong: #FCA5A5;
+  --color-destructive-tint-border: #7F1D1D;
+
+  --color-warning-tint: #422006;
+  --color-warning-strong: #FCD34D;
+  --color-warning-tint-border: #78350F;
+
+  --color-info-tint: #172554;
+  --color-info-strong: #93C5FD;
+
+  --color-neutral-tint: #293546;
+
   --color-heading: #F1F5F9;
+  --color-body: #CBD5E1;
 
   --color-inverted: #0F172A;
+}
 
-  /*
-   * Tinted status backgrounds reach for stock palette steps in a handful of screens. Those
-   * utilities are var()-backed too, so the tints are remapped here rather than chased down
-   * component by component.
-   */
-  /* Dark enough to keep --color-neutral legible on it; it carries the neutral badge. */
-  --color-slate-100: #293546;
-  --color-red-50: #2A1215;
-  --color-red-100: #450A0A;
-  --color-red-200: #7F1D1D;
-  --color-green-50: #0B2013;
-  --color-green-100: #052E16;
-  --color-green-200: #14532D;
-  --color-yellow-100: #422006;
-  --color-blue-100: #172554;
-  --color-blue-700: #93C5FD;
-  --color-amber-50: #291A05;
-  --color-amber-100: #422006;
-  --color-amber-200: #78350F;
-  --color-amber-600: #FBBF24;
-  --color-amber-700: #FCD34D;
-  --color-amber-800: #FDE68A;
+/*
+ * Preflight declares no colour, so any text node without an explicit colour utility would fall
+ * back to the user-agent default (pure black in light, pure white in dark). Anchoring the body
+ * step here gives that inherited default a designed value in both themes; utilities such as
+ * text-heading, text-neutral and text-inverted still win wherever they are applied.
+ */
+html {
+  color: var(--color-body);
 }
 
 /* Match the shared DateField (vue-datepicker) to the app's input styling and palette. */

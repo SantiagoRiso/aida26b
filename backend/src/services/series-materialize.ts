@@ -1,6 +1,6 @@
-import { queryOne } from '../db/core';
 import type { Queryable } from '../db/core';
 import { insertScheduledAppointment } from '../db/appointments';
+import { getMaterializedOccurrence } from '../db/series';
 import { DbError } from '../db/errors';
 import { buildStartsAt } from '../time';
 import type { AppointmentSeriesRow, AppointmentRow } from '../../../shared/src/ssot/query-types';
@@ -8,14 +8,6 @@ import { isSeriesOccurrenceDate, seriesRuleFromRow } from '../../../shared/src/s
 
 export function canMaterializeOccurrence(series: AppointmentSeriesRow, occurrenceDate: string): boolean {
   return isSeriesOccurrenceDate(seriesRuleFromRow(series), occurrenceDate);
-}
-
-function selectMaterialized(db: Queryable, seriesId: string, occurrenceDate: string): Promise<AppointmentRow | null> {
-  return queryOne<AppointmentRow>(
-    db,
-    `SELECT * FROM appointments WHERE series_id = $1 AND occurrence_date = $2`,
-    [seriesId, occurrenceDate],
-  );
 }
 
 // Idempotent: returns the existing (series_id, occurrence_date) appointment if present, else inserts
@@ -32,7 +24,7 @@ export async function ensureOccurrenceMaterialized(
     throw new Error('ensureOccurrenceMaterialized: date is not an occurrence of the series');
   }
 
-  const existing = await selectMaterialized(q, series.id, occurrenceDate);
+  const existing = await getMaterializedOccurrence(q, series.id, occurrenceDate);
   if (existing) return existing;
 
   // Same date+HH:MM -> business-tz timestamptz construction the schedule route uses (buildStartsAt).
@@ -60,7 +52,7 @@ export async function ensureOccurrenceMaterialized(
     const err = DbError.from(e);
     // 23505 = unique_violation: a concurrent call already materialized this occurrence.
     if (err.pgCode !== '23505') throw err;
-    const winner = await selectMaterialized(q, series.id, occurrenceDate);
+    const winner = await getMaterializedOccurrence(q, series.id, occurrenceDate);
     if (!winner) throw new Error('ensureOccurrenceMaterialized: unique violation but no row found on re-select');
     return winner;
   }

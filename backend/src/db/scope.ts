@@ -22,6 +22,10 @@ export type ScopeConditionsInput = {
   grantParams?: SqlParam[];
   discriminatorWhere?: string;
   discriminatorParams?: SqlParam[];
+  // Relevance narrowing, not permission: rows the viewer may read but has no reason to see.
+  // The viewer can waive it per request, so only read paths ever supply it.
+  relevanceWhere?: string;
+  relevanceParams?: SqlParam[];
 };
 
 export function reNumberFragment(template: string, startIndex: number): { sql: string; nextIndex: number } {
@@ -30,7 +34,7 @@ export function reNumberFragment(template: string, startIndex: number): { sql: s
   return { sql, nextIndex: idx };
 }
 
-// Renumbers and orders the scope fragments (discriminator → business → owner → grant) starting at
+// Renumbers and orders the scope fragments (discriminator → business → owner → grant → relevance) starting at
 // `startIndex`, returning the conditions and their bound params. The single source for how a
 // resolved scope becomes SQL — shared by every generic read/write path so the ordering and param
 // numbering can never drift between them. Discriminator first so the DB can index on it.
@@ -47,6 +51,7 @@ export function buildScopeConditions(
     [allowed.businessWhere, allowed.businessParams],
     [allowed.ownerWhere, allowed.ownerParams],
     [allowed.grantWhere, allowed.grantParams],
+    [allowed.relevanceWhere, allowed.relevanceParams],
   ];
 
   for (const [where, params] of fragments) {

@@ -7,6 +7,11 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountAppointmentRoutes } from '../src/routes/appointments';
 import type { AuthUser } from '../src/auth';
+import { makeApiClient, dataOf, errorOf } from './api_client';
+import type { JsonBody } from './api_client';
+import type { AppointmentResponse } from '../../shared/src/ssot/query-types';
+import type { ConflictVerdict } from '../../shared/src/ssot/domain/conflict';
+import type { RelatedClientIdsResult } from '../../shared/src/ssot/contracts/appointments';
 
 let pool: Pool;
 let server: http.Server;
@@ -18,28 +23,13 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type ReqBody = Record<string, string | number | boolean | null>;
-// Wire shape: fields come back over JSON, not coerced to the app-side TableRecordMap types
-// (e.g. starts_at is a string here, not a Date).
-type AppointmentRow = {
-  id: string;
-  client_user_id: string;
-  professional_user_id: string;
-  starts_at: string;
-};
-type Envelope = {
-  success?: boolean;
-  data?: Record<string, string | number | boolean | null> | AppointmentRow[];
-  meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
+type ReqBody = JsonBody;
 
-async function apptReq(method: 'GET' | 'POST' | 'PATCH', path: string, body?: ReqBody) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const response = await fetch(`${baseUrl}${path}`, opts);
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
+const request = makeApiClient(() => baseUrl);
+
+// Each call declares the payload it expects: an appointment row, a conflict verdict, or a list.
+function apptReq<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: ReqBody) {
+  return request<T>(path, { method, body });
 }
 
 let bizId: number;
@@ -172,18 +162,18 @@ function requestBody(overrides: ReqBody = {}) {
 describe('POST /api/appointments/request', () => {
   test('creates a requested appointment with correct fields', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('POST', '/api/appointments/request', requestBody());
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/request', requestBody());
     expect(res.status).toBe(201);
-    expect(res.body.data.state).toBe('requested');
-    expect(res.body.data.override_conflict).toBe(false);
+    expect(dataOf(res).state).toBe('requested');
+    expect(dataOf(res).override_conflict).toBe(false);
     // staff fields stripped from client-facing payload
-    expect(res.body.data.staff_note).toBeUndefined();
-    expect(res.body.data.override_actor_id).toBeUndefined();
+    expect(dataOf(res).staff_note).toBeUndefined();
+    expect(dataOf(res).override_actor_id).toBeUndefined();
     // price captured from resolveBooking
-    expect(res.body.data.price).toBe('1500.00');
-    expect(res.body.data.resource_id).toBeNull();
+    expect(dataOf(res).price).toBe('1500.00');
+    expect(dataOf(res).resource_id).toBeNull();
 
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [dataOf(res).id]);
   });
 
   test('conflicting slot returns 200 verdict with can_override=false and writes no row', async () => {
@@ -201,10 +191,10 @@ describe('POST /api/appointments/request', () => {
     );
 
     currentUser = asUser(client2Id, 'Client');
-    const res = await apptReq('POST', '/api/appointments/request', requestBody());
+    const res = await apptReq<ConflictVerdict>('POST', '/api/appointments/request', requestBody());
     expect(res.status).toBe(200);
-    expect(res.body.data.requires_override).toBe(true);
-    expect(res.body.data.can_override).toBe(false);
+    expect(dataOf(res).requires_override).toBe(true);
+    expect(dataOf(res).can_override).toBe(false);
 
     const countAfter = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM appointments WHERE professional_user_id = $1 AND state = 'requested'`,
@@ -217,7 +207,7 @@ describe('POST /api/appointments/request', () => {
 
   test('non-client caller is rejected (403)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/request', requestBody());
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/request', requestBody());
     expect(res.status).toBe(403);
   });
 });
@@ -233,9 +223,9 @@ describe('POST /api/appointments/schedule', () => {
     );
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({ start: '10:00' }));
+    const res = await apptReq<ConflictVerdict>('POST', '/api/appointments/schedule', requestBody({ start: '10:00' }));
     expect(res.status).toBe(200);
-    expect(res.body.data.requires_override).toBe(true);
+    expect(dataOf(res).requires_override).toBe(true);
 
     const check = await pool.query(
       `SELECT id FROM appointments
@@ -260,57 +250,57 @@ describe('POST /api/appointments/schedule', () => {
     );
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '11:00',
       override: true,
       client_user_id: client2Id,
     }));
     expect(res.status).toBe(201);
-    expect(res.body.data.state).toBe('scheduled');
-    expect(res.body.data.override_conflict).toBe(true);
+    expect(dataOf(res).state).toBe('scheduled');
+    expect(dataOf(res).override_conflict).toBe(true);
     // DB returns IDs as strings; compare as numbers.
-    expect(Number(res.body.data.override_actor_id)).toBe(proId);
+    expect(Number(dataOf(res).override_actor_id)).toBe(proId);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [Number(blocker.rows[0].id)]);
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [dataOf(res).id]);
   });
 
   test('override=true on a conflict-free slot does not mark the row as a sobreturno', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '11:30',
       override: true,
       client_user_id: client2Id,
     }));
     expect(res.status).toBe(201);
-    expect(res.body.data.override_conflict).toBe(false);
-    expect(res.body.data.override_actor_id).toBeNull();
+    expect(dataOf(res).override_conflict).toBe(false);
+    expect(dataOf(res).override_actor_id).toBeNull();
 
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [dataOf(res).id]);
   });
 
   test('professional cannot schedule on another professional calendar (403)', async () => {
     currentUser = asUser(pro2Id, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody());
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody());
     expect(res.status).toBe(403);
   });
 
   test('receptionist without grant cannot schedule (403)', async () => {
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody());
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody());
     expect(res.status).toBe(403);
   });
 
   test('receptionist with grant can schedule on a free slot (201)', async () => {
     // Use a clean slot (09:30 — all prior tests clean up 09:00).
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '09:30',
       client_user_id: clientId,
     }));
     expect(res.status).toBe(201);
-    expect(res.body.data.state).toBe('scheduled');
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+    expect(dataOf(res).state).toBe('scheduled');
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [dataOf(res).id]);
   });
 });
 
@@ -334,7 +324,7 @@ describe('cross-business tenant isolation on /schedule (CR-03)', () => {
 
   test('staff cannot schedule for a client in another business → 404', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '11:30',
       client_user_id: foreignClientId,
     }));
@@ -370,20 +360,20 @@ describe('POST /api/appointments/schedule — deactivated client', () => {
 
   test('booking a deactivated client fails exactly like an unknown client (404, existence hidden)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '10:30',
       client_user_id: inactiveClientId,
     }));
     expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('not_found');
-    expect(res.body.error.message).toBe('Client not found in this business');
+    expect(errorOf(res).code).toBe('not_found');
+    expect(errorOf(res).message).toBe('Client not found in this business');
   });
 
   test('the deactivated client is still readable in appointment history', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', `/api/appointments?client_user_id=${inactiveClientId}`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?client_user_id=${inactiveClientId}`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     expect(rows.some((r) => Number(r.id) === historyApptId)).toBe(true);
   });
 });
@@ -408,9 +398,9 @@ describe('POST /api/appointments/:id/approve', () => {
     );
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${requestedId}/approve`, {});
+    const res = await apptReq<ConflictVerdict>('POST', `/api/appointments/${requestedId}/approve`, {});
     expect(res.status).toBe(200);
-    expect(res.body.data.requires_override).toBe(true);
+    expect(dataOf(res).requires_override).toBe(true);
 
     const check = await pool.query<{ state: string }>(
       `SELECT state FROM appointments WHERE id = $1`,
@@ -440,10 +430,10 @@ describe('POST /api/appointments/:id/approve', () => {
     );
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${requestedId}/approve`, { override: true });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${requestedId}/approve`, { override: true });
     expect(res.status).toBe(200);
-    expect(res.body.data.state).toBe('scheduled');
-    expect(Number(res.body.data.override_actor_id)).toBe(proId);
+    expect(dataOf(res).state).toBe('scheduled');
+    expect(Number(dataOf(res).override_actor_id)).toBe(proId);
 
     await pool.query(`DELETE FROM appointments WHERE id IN ($1, $2)`, [requestedId, Number(blocker.rows[0].id)]);
   });
@@ -461,7 +451,7 @@ describe('POST /api/appointments/:id/transition — illegal transitions', () => 
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
     expect(res.status).toBe(422);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
@@ -497,7 +487,7 @@ describe('POST /api/appointments/:id/transition — timing guard', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
     expect(res.status).toBe(422);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
@@ -520,11 +510,11 @@ describe('POST /api/appointments/:id/transition — timing guard', () => {
 
     currentUser = asUser(proId, 'Professional');
     const outsideId = await insertFuture(25);
-    const outside = await apptReq('POST', `/api/appointments/${outsideId}/transition`, { to: 'no_show' });
+    const outside = await apptReq<AppointmentResponse>('POST', `/api/appointments/${outsideId}/transition`, { to: 'no_show' });
     expect(outside.status).toBe(422);
 
     const insideId = await insertFuture(1);
-    const inside = await apptReq('POST', `/api/appointments/${insideId}/transition`, { to: 'no_show' });
+    const inside = await apptReq<AppointmentResponse>('POST', `/api/appointments/${insideId}/transition`, { to: 'no_show' });
     expect(inside.status).toBe(200);
 
     await pool.query(`DELETE FROM appointments WHERE id IN ($1, $2)`, [outsideId, insideId]);
@@ -557,7 +547,7 @@ describe('POST /api/appointments/:id/transition — charge on completion', () =>
   test('completing (attended) posts a single charge for the session price', async () => {
     const id = await insertPastScheduled();
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
     expect(res.status).toBe(200);
     const charges = await chargesFor(id);
     expect(charges).toHaveLength(1);
@@ -574,7 +564,7 @@ describe('POST /api/appointments/:id/transition — charge on completion', () =>
       [clientId, id, proId],
     );
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
     expect(res.status).toBe(200);
     expect(await chargesFor(id)).toHaveLength(1);
   });
@@ -582,7 +572,7 @@ describe('POST /api/appointments/:id/transition — charge on completion', () =>
   test('no_show posts no charge', async () => {
     const id = await insertPastScheduled();
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'no_show' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'no_show' });
     expect(res.status).toBe(200);
     expect(await chargesFor(id)).toHaveLength(0);
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
@@ -604,9 +594,9 @@ describe('Client cancellation cutoff', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
     expect(res.status).toBe(200);
-    expect(res.body.data.state).toBe('canceled');
+    expect(dataOf(res).state).toBe('canceled');
   });
 
   test('large cutoff: cancel outside the allowed window → 422', async () => {
@@ -624,7 +614,7 @@ describe('Client cancellation cutoff', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
     expect(res.status).toBe(422);
 
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 0 WHERE id = $1`, [bizId]);
@@ -644,9 +634,9 @@ describe('Client cancellation cutoff', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
     expect(res.status).toBe(200);
-    expect(res.body.data.state).toBe('canceled');
+    expect(dataOf(res).state).toBe('canceled');
 
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 0 WHERE id = $1`, [bizId]);
   });
@@ -664,14 +654,14 @@ describe('POST /api/appointments/:id/reschedule', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/reschedule`, {
       date: MONDAY,
       start: '10:00',
       duration_minutes: 30,
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.price).toBe('1500.00');
-    expect(Number(res.body.data.duration_minutes)).toBe(30);
+    expect(dataOf(res).price).toBe('1500.00');
+    expect(Number(dataOf(res).duration_minutes)).toBe(30);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
@@ -687,14 +677,14 @@ describe('POST /api/appointments/:id/reschedule', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/reschedule`, {
       date: MONDAY,
       start: '23:30',
       duration_minutes: 60,
     });
     expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe('invalid_request');
-    expect(res.body.error.fields.duration_minutes).toBeTruthy();
+    expect(errorOf(res).code).toBe('invalid_request');
+    expect(errorOf(res).fields?.duration_minutes).toBeTruthy();
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
@@ -727,31 +717,31 @@ describe('conflict_override audit event', () => {
     const blockerId = await blockerAt('09:30');
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '09:30',
       override: true,
       client_user_id: client2Id,
     }));
     expect(res.status).toBe(201);
 
-    expect(await overrideEvents(Number(res.body.data.id))).toEqual([{ operation: 'schedule' }]);
+    expect(await overrideEvents(Number(dataOf(res).id))).toEqual([{ operation: 'schedule' }]);
 
-    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[blockerId, Number(res.body.data.id)]]);
+    await pool.query(`DELETE FROM appointments WHERE id = ANY($1)`, [[blockerId, Number(dataOf(res).id)]]);
   });
 
   test('a redundant override on a clean slot emits nothing', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '10:30',
       override: true,
       client_user_id: client2Id,
     }));
     expect(res.status).toBe(201);
-    expect(res.body.data.override_conflict).toBe(false);
+    expect(dataOf(res).override_conflict).toBe(false);
 
-    expect(await overrideEvents(Number(res.body.data.id))).toEqual([]);
+    expect(await overrideEvents(Number(dataOf(res).id))).toEqual([]);
 
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [res.body.data.id]);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [dataOf(res).id]);
   });
 
   test('a forced reschedule emits conflict_override tagged with the operation', async () => {
@@ -766,14 +756,14 @@ describe('conflict_override audit event', () => {
     const id = Number(moving.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/reschedule`, {
       date: MONDAY,
       start: '11:00',
       duration_minutes: 30,
       override: true,
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.override_conflict).toBe(true);
+    expect(dataOf(res).override_conflict).toBe(true);
 
     expect(await overrideEvents(id)).toEqual([{ operation: 'reschedule' }]);
 
@@ -792,9 +782,9 @@ describe('conflict_override audit event', () => {
     const id = Number(requested.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', `/api/appointments/${id}/approve`, { override: true });
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/approve`, { override: true });
     expect(res.status).toBe(200);
-    expect(res.body.data.override_conflict).toBe(true);
+    expect(dataOf(res).override_conflict).toBe(true);
 
     expect(await overrideEvents(id)).toEqual([{ operation: 'approve' }]);
 
@@ -814,7 +804,7 @@ describe('PATCH /api/appointments/:id — terminal freeze', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('PATCH', `/api/appointments/${id}`, { name: 'new name' });
+    const res = await apptReq<AppointmentResponse>('PATCH', `/api/appointments/${id}`, { name: 'new name' });
     expect(res.status).toBe(422);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
@@ -831,9 +821,9 @@ describe('PATCH /api/appointments/:id — terminal freeze', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('PATCH', `/api/appointments/${id}`, { staff_note: 'called patient' });
+    const res = await apptReq<AppointmentResponse>('PATCH', `/api/appointments/${id}`, { staff_note: 'called patient' });
     expect(res.status).toBe(200);
-    expect(res.body.data.staff_note).toBe('called patient');
+    expect(dataOf(res).staff_note).toBe('called patient');
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
@@ -851,7 +841,7 @@ describe('GET /api/appointments/:id — staff detail read', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('GET', `/api/appointments/${id}`);
+    const res = await apptReq<AppointmentResponse>('GET', `/api/appointments/${id}`);
     expect(res.status).toBe(403);
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
@@ -868,9 +858,9 @@ describe('GET /api/appointments/:id — staff detail read', () => {
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', `/api/appointments/${id}`);
+    const res = await apptReq<AppointmentResponse>('GET', `/api/appointments/${id}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.staff_note).toBe('staff memo');
+    expect(dataOf(res).staff_note).toBe('staff memo');
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
@@ -896,9 +886,9 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('client list returns only own appointments and strips staff_note + override_actor_id', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('GET', '/api/appointments');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(Number(row.client_user_id)).toBe(clientId);
@@ -909,9 +899,9 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('client2 list returns no rows from client1 appointments', async () => {
     currentUser = asUser(client2Id, 'Client');
-    const res = await apptReq('GET', '/api/appointments');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     for (const row of rows) {
       expect(Number(row.client_user_id)).not.toBe(clientId);
     }
@@ -919,9 +909,9 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('list filters by professional_user_id', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', `/api/appointments?professional_user_id=${proId}`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?professional_user_id=${proId}`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     for (const row of rows) {
       expect(Number(row.professional_user_id)).toBe(proId);
     }
@@ -931,9 +921,9 @@ describe('GET /api/appointments — paginated list', () => {
     currentUser = asUser(proId, 'Professional');
     const dayBefore = new Date(farFutureDate.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
     const dayAfter = new Date(farFutureDate.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
-    const res = await apptReq('GET', `/api/appointments?date_from=${dayBefore}&date_to=${dayAfter}T23:59:59Z`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?date_from=${dayBefore}&date_to=${dayAfter}T23:59:59Z`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
     const from = new Date(`${dayBefore}T00:00:00Z`).getTime();
     const to = new Date(`${dayAfter}T23:59:59Z`).getTime();
@@ -946,9 +936,9 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('receptionist list is limited to granted calendar appointments', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await apptReq('GET', '/api/appointments');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(Number(row.professional_user_id)).toBe(proId);
@@ -957,16 +947,16 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('receptionist without grant sees no appointments', async () => {
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await apptReq('GET', '/api/appointments');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(0);
+    expect(dataOf(res)).toHaveLength(0);
   });
 
   test('list is ordered by starts_at ascending', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     for (let i = 1; i < rows.length; i++) {
       expect(new Date(rows[i].starts_at).getTime()).toBeGreaterThanOrEqual(
         new Date(rows[i - 1].starts_at).getTime(),
@@ -976,7 +966,7 @@ describe('GET /api/appointments — paginated list', () => {
 
   test('audit events are written in the same transaction as lifecycle actions', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', {
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', {
       professional_user_id: proId,
       service_id: svcId,
       date: MONDAY,
@@ -985,7 +975,7 @@ describe('GET /api/appointments — paginated list', () => {
       client_user_id: clientId,
     });
     expect(res.status).toBe(201);
-    const apptId = res.body.data.id;
+    const apptId = dataOf(res).id;
 
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'appointments'`,
@@ -1026,33 +1016,33 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
 
   test('staff filter by client_user_id returns only that client’s turnos', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', `/api/appointments?client_user_id=${clientId}`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?client_user_id=${clientId}`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
   });
 
   test('a Client cannot widen scope via client_user_id (stays self-scoped)', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('GET', `/api/appointments?client_user_id=${client2Id}`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?client_user_id=${client2Id}`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as AppointmentRow[];
+    const rows = dataOf(res);
     // The param is ignored for a Client — they still only ever see their own rows.
     for (const row of rows) expect(Number(row.client_user_id)).toBe(clientId);
   });
 
   test('non-numeric client_user_id → 422', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments?client_user_id=abc');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments?client_user_id=abc');
     expect(res.status).toBe(422);
   });
 
   test('related-clients resolves (not shadowed by /:id) and lists distinct ids', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await apptReq('GET', '/api/appointments/related-clients');
+    const res = await apptReq<RelatedClientIdsResult>('GET', '/api/appointments/related-clients');
     expect(res.status).toBe(200);
-    const ids: number[] = res.body.data.client_user_ids;
+    const ids: number[] = dataOf(res).client_user_ids;
     expect(Array.isArray(ids)).toBe(true);
     expect(ids).toContain(clientId);
     expect(ids).toContain(client2Id);
@@ -1061,21 +1051,21 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
 
   test('related-clients for a professional is scoped to their own calendar', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments/related-clients');
+    const res = await apptReq<RelatedClientIdsResult>('GET', '/api/appointments/related-clients');
     expect(res.status).toBe(200);
-    expect(res.body.data.client_user_ids).toEqual(expect.arrayContaining([clientId, client2Id]));
+    expect(dataOf(res).client_user_ids).toEqual(expect.arrayContaining([clientId, client2Id]));
   });
 
   test('related-clients for a receptionist without a grant is empty', async () => {
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await apptReq('GET', '/api/appointments/related-clients');
+    const res = await apptReq<RelatedClientIdsResult>('GET', '/api/appointments/related-clients');
     expect(res.status).toBe(200);
-    expect(res.body.data.client_user_ids).toHaveLength(0);
+    expect(dataOf(res).client_user_ids).toHaveLength(0);
   });
 
   test('related-clients is forbidden for the Client role', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await apptReq('GET', '/api/appointments/related-clients');
+    const res = await apptReq<RelatedClientIdsResult>('GET', '/api/appointments/related-clients');
     expect(res.status).toBe(403);
   });
 });
@@ -1083,22 +1073,22 @@ describe('GET /api/appointments — client_user_id filter & related-clients endp
 describe('GET /api/appointments — malformed date filters (WR-04)', () => {
   test('malformed date_from returns 422 invalid_request', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments?date_from=notadate');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments?date_from=notadate');
     expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe('invalid_request');
+    expect(errorOf(res).code).toBe('invalid_request');
   });
 
   test('malformed date_to returns 422 invalid_request', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments?date_to=2024/01/01');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments?date_to=2024/01/01');
     expect(res.status).toBe(422);
-    expect(res.body.error.code).toBe('invalid_request');
+    expect(errorOf(res).code).toBe('invalid_request');
   });
 
   test('valid ISO timestamp date_from still returns 200', async () => {
     currentUser = asUser(proId, 'Professional');
     const iso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const res = await apptReq('GET', `/api/appointments?date_from=${encodeURIComponent(iso)}`);
+    const res = await apptReq<AppointmentResponse[]>('GET', `/api/appointments?date_from=${encodeURIComponent(iso)}`);
     expect(res.status).toBe(200);
   });
 });
@@ -1115,7 +1105,7 @@ describe('POST /api/appointments/:id/reschedule — authz before state check (WR
     const id = Number(r.rows[0].id);
 
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await apptReq('POST', `/api/appointments/${id}/reschedule`, {
+    const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/reschedule`, {
       date: MONDAY,
       start: '09:00',
       duration_minutes: 30,
@@ -1143,7 +1133,7 @@ describe('POST /api/appointments/schedule — foreign resource_id (WR-02)', () =
 
   test('foreign resource_id → 404', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('POST', '/api/appointments/schedule', requestBody({
+    const res = await apptReq<AppointmentResponse>('POST', '/api/appointments/schedule', requestBody({
       start: '09:00',
       resource_id: foreignResourceId,
     }));
@@ -1180,9 +1170,9 @@ describe('GET /api/appointments?state= — state filter', () => {
 
   test('state=requested returns only requested rows (includes the requested, excludes the scheduled)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments?state=requested&limit=200');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments?state=requested&limit=200');
     expect(res.status).toBe(200);
-    const rows = res.body.data as { id: number | string; state: string }[];
+    const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.state === 'requested')).toBe(true);
     expect(rows.some((r) => Number(r.id) === reqId)).toBe(true);
@@ -1191,7 +1181,7 @@ describe('GET /api/appointments?state= — state filter', () => {
 
   test('unknown state → 422', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await apptReq('GET', '/api/appointments?state=bogus');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments?state=bogus');
     expect(res.status).toBe(422);
   });
 });

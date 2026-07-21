@@ -7,7 +7,10 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountLedgerRoutes } from '../src/routes/ledger';
 import type { AuthUser } from '../src/auth';
-import type { TableRecordMap } from '../../shared/src/ssot/derived';
+import { makeApiClient, dataOf, metaOf } from './api_client';
+import type { JsonBody } from './api_client';
+import type { LedgerEntryRow, Wire } from '../../shared/src/ssot/query-types';
+import type { BalanceResult } from '../../shared/src/ssot/contracts/ledger';
 
 let pool: Pool;
 let server: http.Server;
@@ -19,22 +22,13 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-// ledger_entries rows come back with created_at too — a DB timestamp outside the SSOT column map.
-type LedgerRow = TableRecordMap['ledger_entries'] & { created_at: string };
-type ReqBody = Record<string, string | number | boolean | null>;
-type Envelope = {
-  success?: boolean;
-  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
-  meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
+type LedgerRow = Wire<LedgerEntryRow>;
+type ReqBody = JsonBody;
 
-async function req(method: 'GET' | 'POST', path: string, body?: ReqBody) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const response = await fetch(`${baseUrl}${path}`, opts);
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
+const request = makeApiClient(() => baseUrl);
+
+function req<T>(method: 'GET' | 'POST', path: string, body?: ReqBody) {
+  return request<T>(path, { method, body });
 }
 
 let bizId: number;
@@ -147,83 +141,83 @@ afterAll(async () => {
 describe('POST /api/ledger — Admin write matrix', () => {
   test('admin creates a charge → 201 with audit event in same transaction', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
       amount_ars: '1000.00',
     });
     expect(res.status).toBe(201);
-    expect(res.body.data.entry_type).toBe('charge');
-    expect(res.body.data.amount_ars).toBe('1000.00');
+    expect(dataOf(res).entry_type).toBe('charge');
+    expect(dataOf(res).amount_ars).toBe('1000.00');
 
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'ledger_entries'`,
-      [res.body.data.id],
+      [dataOf(res).id],
     );
     expect(audit.rows.some((r) => r.event_type === 'ledger_charge_created')).toBe(true);
   });
 
   test('admin creates a payment → 201 with correct audit event type', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'payment',
       amount_ars: '500.00',
     });
     expect(res.status).toBe(201);
-    expect(res.body.data.entry_type).toBe('payment');
+    expect(dataOf(res).entry_type).toBe('payment');
 
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'ledger_entries'`,
-      [res.body.data.id],
+      [dataOf(res).id],
     );
     expect(audit.rows.some((r) => r.event_type === 'ledger_payment_created')).toBe(true);
   });
 
   test('admin creates adjustment_debit → 201', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'adjustment_debit',
       amount_ars: '200.00',
     });
     expect(res.status).toBe(201);
-    expect(res.body.data.entry_type).toBe('adjustment_debit');
+    expect(dataOf(res).entry_type).toBe('adjustment_debit');
 
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'ledger_entries'`,
-      [res.body.data.id],
+      [dataOf(res).id],
     );
     expect(audit.rows.some((r) => r.event_type === 'ledger_adjustment_debit_created')).toBe(true);
   });
 
   test('admin creates adjustment_credit → 201', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'adjustment_credit',
       amount_ars: '100.00',
     });
     expect(res.status).toBe(201);
-    expect(res.body.data.entry_type).toBe('adjustment_credit');
+    expect(dataOf(res).entry_type).toBe('adjustment_credit');
 
     const audit = await pool.query<{ event_type: string }>(
       `SELECT event_type FROM audit_events WHERE entity_id = $1 AND entity_type = 'ledger_entries'`,
-      [res.body.data.id],
+      [dataOf(res).id],
     );
     expect(audit.rows.some((r) => r.event_type === 'ledger_adjustment_credit_created')).toBe(true);
   });
 
   test('two charges referencing the same appointment both succeed (no dedupe)', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const r1 = await req('POST', '/api/ledger', {
+    const r1 = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
       amount_ars: '300.00',
     });
-    const r2 = await req('POST', '/api/ledger', {
+    const r2 = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
@@ -231,41 +225,41 @@ describe('POST /api/ledger — Admin write matrix', () => {
     });
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
-    expect(Number(r1.body.data.appointment_id)).toBe(apptId);
-    expect(Number(r2.body.data.appointment_id)).toBe(apptId);
+    expect(Number(dataOf(r1).appointment_id)).toBe(apptId);
+    expect(Number(dataOf(r2).appointment_id)).toBe(apptId);
   });
 });
 
 describe('POST /api/ledger — charge prefill from appointment', () => {
   test('charge with appointment_id but no amount_ars prefills from booked price', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
     });
     expect(res.status).toBe(201);
     // Service booked at 2500.00; should be prefilled.
-    expect(res.body.data.amount_ars).toBe('2500.00');
+    expect(dataOf(res).amount_ars).toBe('2500.00');
   });
 
   test('charge with explicit amount_ars overrides the appointment price', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
       amount_ars: '999.00',
     });
     expect(res.status).toBe(201);
-    expect(res.body.data.amount_ars).toBe('999.00');
+    expect(dataOf(res).amount_ars).toBe('999.00');
   });
 });
 
 describe('POST /api/ledger — Professional write matrix', () => {
   test('professional creates charge for own client → 201', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
@@ -276,7 +270,7 @@ describe('POST /api/ledger — Professional write matrix', () => {
 
   test('professional creates charge for a client they have no appointment with → 403', async () => {
     currentUser = asUser(pro2Id, 'Professional');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId, // client1 only has appointments with pro1, not pro2
       entry_type: 'charge',
       amount_ars: '500.00',
@@ -286,7 +280,7 @@ describe('POST /api/ledger — Professional write matrix', () => {
 
   test('professional creates payment for own client → 201 (all types allowed)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'payment',
       amount_ars: '250.00',
@@ -298,7 +292,7 @@ describe('POST /api/ledger — Professional write matrix', () => {
 describe('POST /api/ledger — Receptionist write matrix', () => {
   test('receptionist with grant creates appointment-linked charge → 201', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
@@ -309,7 +303,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 
   test('receptionist with grant creates appointment-linked payment → 201', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'payment',
@@ -320,7 +314,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 
   test('receptionist standalone payment (no appointment_id) → 403', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'payment',
       amount_ars: '100.00',
@@ -330,7 +324,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 
   test('receptionist cannot create an adjustment_debit → 403', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'adjustment_debit',
       amount_ars: '100.00',
@@ -340,7 +334,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 
   test('receptionist standalone charge (no appointment_id) → 403', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'charge',
       amount_ars: '100.00',
@@ -350,7 +344,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 
   test('receptionist without grant → 403', async () => {
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       appointment_id: apptId,
       entry_type: 'charge',
@@ -363,7 +357,7 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
 describe('POST /api/ledger — Client write forbidden', () => {
   test('client cannot create any ledger entry → 403', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'charge',
       amount_ars: '100.00',
@@ -375,7 +369,7 @@ describe('POST /api/ledger — Client write forbidden', () => {
 describe('POST /api/ledger — Validation (422 / 404)', () => {
   test('invalid entry_type → 422', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'adjustment', // old single-type, no longer valid
       amount_ars: '100.00',
@@ -385,7 +379,7 @@ describe('POST /api/ledger — Validation (422 / 404)', () => {
 
   test('negative amount format → 422', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'charge',
       amount_ars: '-50.00',
@@ -395,7 +389,7 @@ describe('POST /api/ledger — Validation (422 / 404)', () => {
 
   test('malformed amount (letters) → 422', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
       entry_type: 'charge',
       amount_ars: 'abc',
@@ -405,7 +399,7 @@ describe('POST /api/ledger — Validation (422 / 404)', () => {
 
   test('cross-tenant (unknown) client → 404', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: 999999,
       entry_type: 'charge',
       amount_ars: '100.00',
@@ -454,11 +448,11 @@ describe('GET /api/clients/:id/balance — signed balance formula', () => {
 
   test('balance is exact signed sum for seeded entries', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(200);
     // (1500 + 500) - (300 + 200) = 1500.00
-    expect(Number(res.body.data.balance_ars)).toBe(1500);
-    expect(Number(res.body.data.client_user_id)).toBe(balanceClientId);
+    expect(Number(dataOf(res).balance_ars)).toBe(1500);
+    expect(Number(dataOf(res).client_user_id)).toBe(balanceClientId);
   });
 
   test('partial payment reduces balance correctly', async () => {
@@ -470,22 +464,22 @@ describe('GET /api/clients/:id/balance — signed balance formula', () => {
     );
 
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(200);
     // 1500 (previous) - 1000 (new payment) = 500.00
-    expect(Number(res.body.data.balance_ars)).toBe(500);
+    expect(Number(dataOf(res).balance_ars)).toBe(500);
   });
 
   test('client can read own balance → 200', async () => {
     currentUser = asUser(balanceClientId, 'Client');
-    const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(200);
   });
 
   test('client cannot read another client balance → 403', async () => {
     // balanceClientId = client2; clientId = client1; using client1's session
     currentUser = asUser(clientId, 'Client');
-    const res = await req('GET', `/api/clients/${balanceClientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${balanceClientId}/balance`);
     expect(res.status).toBe(403);
   });
 });
@@ -493,28 +487,28 @@ describe('GET /api/clients/:id/balance — signed balance formula', () => {
 describe('GET /api/clients/:id/ledger — paginated list', () => {
   test('admin reads paginated ledger for client → 200 with total', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('GET', `/api/clients/${clientId}/ledger?page=1&limit=10`);
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?page=1&limit=10`);
     expect(res.status).toBe(200);
-    expect(res.body.data).toBeInstanceOf(Array);
-    expect(typeof res.body.meta.total).toBe('number');
-    expect(res.body.meta.page).toBe(1);
-    expect(res.body.data[0]).not.toHaveProperty('total_count');
+    expect(dataOf(res)).toBeInstanceOf(Array);
+    expect(typeof metaOf(res).total).toBe('number');
+    expect(metaOf(res).page).toBe(1);
+    expect(dataOf(res)[0]).not.toHaveProperty('total_count');
   });
 
   test('an out-of-range page remains empty but preserves the filtered total', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const first = await req('GET', `/api/clients/${clientId}/ledger?page=1&limit=1`);
-    const empty = await req('GET', `/api/clients/${clientId}/ledger?page=500&limit=1`);
+    const first = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?page=1&limit=1`);
+    const empty = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?page=500&limit=1`);
     expect(empty.status).toBe(200);
-    expect(empty.body.data).toEqual([]);
-    expect(empty.body.meta.total).toBe(first.body.meta.total);
+    expect(dataOf(empty)).toEqual([]);
+    expect(metaOf(empty).total).toBe(metaOf(first).total);
   });
 
   test('entries are ordered newest-first (created_at DESC)', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('GET', `/api/clients/${clientId}/ledger`);
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger`);
     expect(res.status).toBe(200);
-    const rows = res.body?.data as LedgerRow[];
+    const rows = dataOf(res);
     for (let i = 1; i < rows.length; i++) {
       expect(new Date(rows[i].created_at).getTime()).toBeLessThanOrEqual(
         new Date(rows[i - 1].created_at).getTime(),
@@ -524,13 +518,13 @@ describe('GET /api/clients/:id/ledger — paginated list', () => {
 
   test('client reads own ledger → 200', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await req('GET', `/api/clients/${clientId}/ledger`);
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger`);
     expect(res.status).toBe(200);
   });
 
   test('client reads another client ledger → 403', async () => {
     currentUser = asUser(clientId, 'Client');
-    const res = await req('GET', `/api/clients/${client2Id}/ledger`);
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${client2Id}/ledger`);
     expect(res.status).toBe(403);
   });
 });
@@ -568,19 +562,19 @@ describe('ledger reads are business-scoped for Admin', () => {
 
   test('admin from another business cannot read a foreign client balance → 404', async () => {
     currentUser = biz2Admin();
-    const res = await req('GET', `/api/clients/${clientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${clientId}/balance`);
     expect(res.status).toBe(404);
   });
 
   test('admin from another business cannot read a foreign client ledger → 404', async () => {
     currentUser = biz2Admin();
-    const res = await req('GET', `/api/clients/${clientId}/ledger`);
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger`);
     expect(res.status).toBe(404);
   });
 
   test('same-business admin still reads the client balance → 200 (no regression)', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('GET', `/api/clients/${clientId}/balance`);
+    const res = await req<BalanceResult>('GET', `/api/clients/${clientId}/balance`);
     expect(res.status).toBe(200);
   });
 });
@@ -642,7 +636,7 @@ describe("POST /api/ledger — prefill rejects an appointment not belonging to t
 
   test('Admin charge on client1 using an appointment that belongs to client2 → 404', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await req('POST', '/api/ledger', {
+    const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,       // billing client1
       appointment_id: otherClientApptId, // but the appointment belongs to client2
       entry_type: 'charge',

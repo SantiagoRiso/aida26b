@@ -5,6 +5,8 @@ import type { LocationQuery, LocationQueryRaw, LocationQueryValue } from 'vue-ro
 import {
   LIST_MAX_LIMIT,
   LIST_MAX_PAGE,
+  INCLUDE_UNRELATED_PARAM,
+  INCLUDE_UNRELATED_VALUE,
   isFilterParam,
   isReservedListParam,
   listParamEntries,
@@ -33,6 +35,8 @@ export interface ListQuerySync {
   dir: Ref<'asc' | 'desc'>;
   limit: Ref<number | undefined>;
   filters: Ref<Record<string, string>>;
+  // Waives the server's relevance narrowing for lists that apply one.
+  includeUnrelated: Ref<boolean>;
   commit: () => void;
   commitDebounced: () => void;
   reset: () => void;
@@ -68,6 +72,7 @@ export function useListQuerySync(options: ListQuerySyncOptions): ListQuerySync {
   const dir = ref<'asc' | 'desc'>('asc');
   const limit = ref<number | undefined>(undefined);
   const filters = ref<Record<string, string>>({});
+  const includeUnrelated = ref(false);
 
   let lastWritten = '';
 
@@ -83,6 +88,7 @@ export function useListQuerySync(options: ListQuerySyncOptions): ListQuerySync {
     page.value = clampInt(firstValue(query.page), 1, LIST_MAX_PAGE) ?? 1;
     limit.value = clampInt(firstValue(query.limit), 1, LIST_MAX_LIMIT);
     dir.value = firstValue(query.dir) === 'desc' ? 'desc' : 'asc';
+    includeUnrelated.value = firstValue(query[INCLUDE_UNRELATED_PARAM]) === INCLUDE_UNRELATED_VALUE;
 
     const requestedSort = firstValue(query.sort);
     sort.value = accepts(options.sortableFields, requestedSort) ? requestedSort : '';
@@ -114,6 +120,7 @@ export function useListQuerySync(options: ListQuerySyncOptions): ListQuerySync {
       sort: sort.value || undefined,
       dir: sort.value ? dir.value : undefined,
       filters: filters.value,
+      includeUnrelated: includeUnrelated.value,
     });
     for (const [key, value] of params) next[key] = value;
 
@@ -159,6 +166,7 @@ export function useListQuerySync(options: ListQuerySyncOptions): ListQuerySync {
     sort.value = '';
     dir.value = 'asc';
     limit.value = undefined;
+    includeUnrelated.value = false;
     filters.value = { ...(options.defaultFilters?.() ?? {}) };
     writeUrl();
   }
@@ -177,5 +185,5 @@ export function useListQuerySync(options: ListQuerySyncOptions): ListQuerySync {
 
   onScopeDispose(cancelPending);
 
-  return { page, sort, dir, limit, filters, commit, commitDebounced, reset };
+  return { page, sort, dir, limit, filters, includeUnrelated, commit, commitDebounced, reset };
 }

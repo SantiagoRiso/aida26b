@@ -18,10 +18,14 @@ async function logout() {
   <!-- Distinct top-nav shell for the client portal — no sidebar, no staff screens. -->
   <div class="flex min-h-screen flex-col bg-surface">
     <header class="border-b border-border bg-card">
-      <div class="mx-auto flex max-w-4xl items-center justify-between px-4 h-14">
+      <!-- Brand and account controls hold the top line; the three nav links drop to their own line
+           on a phone, where one row squeezes the links and overflows on the narrowest handsets. -->
+      <div
+        class="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 sm:h-14 sm:flex-nowrap sm:py-0"
+      >
         <span class="text-sm font-semibold text-current">Agenda</span>
 
-        <PortalNav />
+        <PortalNav class="order-last w-full sm:order-none sm:w-auto" />
 
         <div class="flex items-center gap-3">
           <span class="text-sm text-neutral hidden sm:block">{{ auth.user?.username }}</span>

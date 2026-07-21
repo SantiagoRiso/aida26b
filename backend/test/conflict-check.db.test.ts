@@ -7,7 +7,8 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountSchedulingRoutes } from '../src/routes/scheduling';
 import type { AuthUser } from '../src/auth';
-import type { ConflictVerdict, Conflict } from '../../shared/src/ssot/domain';
+import { makeApiClient, dataOf, errorOf } from './api_client';
+import type { AvailabilityResult, ConflictCheckResult } from '../../shared/src/ssot/contracts/scheduling';
 
 // Minimal app with pass-through guards and a swappable current user — createApp mounts only
 // generic routes, so the workflow endpoints are exercised via their own mount function here.
@@ -21,25 +22,7 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type ConflictCheckData = ConflictVerdict & { effective_price: string; effective_duration_minutes: number };
-type Envelope = {
-  success?: boolean;
-  data?: ConflictCheckData;
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
-
-async function request(
-  path: string,
-  { method = 'GET', body }: { method?: string; body?: Record<string, string | number | boolean | null> } = {}
-) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
-}
+const request = makeApiClient(() => baseUrl);
 
 const MONDAY = '2026-06-29';
 let bizId: string;
@@ -138,70 +121,70 @@ afterAll(async () => {
 describe('POST /api/conflict-check', () => {
   test('a free slot returns can_save:true with no conflicts and effective price/duration', async () => {
     currentUser = staffUser();
-    const res = await request('/api/conflict-check', {
+    const res = await request<ConflictCheckResult>('/api/conflict-check', {
       method: 'POST',
       body: { professional_user_id: proId, service_id: serviceId, date: MONDAY, start: '11:00', duration_minutes: 15 },
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.can_save).toBe(true);
-    expect(res.body.data.conflicts).toEqual([]);
-    expect(res.body.data.effective_price).toBe('1000.00');
-    expect(res.body.data.effective_duration_minutes).toBe(15);
+    expect(dataOf(res).can_save).toBe(true);
+    expect(dataOf(res).conflicts).toEqual([]);
+    expect(dataOf(res).effective_price).toBe('1000.00');
+    expect(dataOf(res).effective_duration_minutes).toBe(15);
   });
 
   test('an already-booked slot returns can_save:false with a professional_overlap', async () => {
     currentUser = staffUser();
-    const res = await request('/api/conflict-check', {
+    const res = await request<ConflictCheckResult>('/api/conflict-check', {
       method: 'POST',
       body: { professional_user_id: proId, service_id: serviceId, date: MONDAY, start: '10:00', duration_minutes: 15 },
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.can_save).toBe(false);
-    expect(res.body.data.conflicts.some((c: Conflict) => c.type === 'professional_overlap')).toBe(true);
+    expect(dataOf(res).can_save).toBe(false);
+    expect(dataOf(res).conflicts.some((c) => c.type === 'professional_overlap')).toBe(true);
   });
 
   test('overlap is end-exclusive: the 10:15 slot adjacent to a 10:00-10:15 booking is free', async () => {
     currentUser = staffUser();
-    const res = await request('/api/conflict-check', {
+    const res = await request<ConflictCheckResult>('/api/conflict-check', {
       method: 'POST',
       body: { professional_user_id: proId, service_id: serviceId, date: MONDAY, start: '10:15', duration_minutes: 15 },
     });
     expect(res.status).toBe(200);
-    expect(res.body.data.conflicts.some((c: Conflict) => c.type === 'professional_overlap')).toBe(false);
-    expect(res.body.data.can_save).toBe(true);
+    expect(dataOf(res).conflicts.some((c) => c.type === 'professional_overlap')).toBe(false);
+    expect(dataOf(res).can_save).toBe(true);
   });
 
   test('can_override is false for a Client and true for staff', async () => {
     const body = { professional_user_id: proId, service_id: serviceId, date: MONDAY, start: '10:00', duration_minutes: 15 };
 
     currentUser = clientCaller();
-    const asClient = await request('/api/conflict-check', { method: 'POST', body });
-    expect(asClient.body.data.can_override).toBe(false);
-    expect(asClient.body.data.requires_override).toBe(true);
+    const asClient = await request<ConflictCheckResult>('/api/conflict-check', { method: 'POST', body });
+    expect(dataOf(asClient).can_override).toBe(false);
+    expect(dataOf(asClient).requires_override).toBe(true);
 
     currentUser = staffUser();
-    const asStaff = await request('/api/conflict-check', { method: 'POST', body });
-    expect(asStaff.body.data.can_override).toBe(true);
+    const asStaff = await request<ConflictCheckResult>('/api/conflict-check', { method: 'POST', body });
+    expect(dataOf(asStaff).can_override).toBe(true);
   });
 
   test('rejects malformed input with 422 and a fields map', async () => {
     currentUser = staffUser();
-    const res = await request('/api/conflict-check', {
+    const res = await request<ConflictCheckResult>('/api/conflict-check', {
       method: 'POST',
       body: { professional_user_id: proId, service_id: serviceId, date: 'nope', start: '99:99', duration_minutes: 0 },
     });
     expect(res.status).toBe(422);
-    expect(res.body.error.fields).toBeTruthy();
+    expect(errorOf(res).fields).toBeTruthy();
   });
 });
 
 describe('GET /api/availability', () => {
   test('returns discrete free slots excluding the booked slot', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.date).toBe(MONDAY);
-    const slots = res.body.data.slots as Array<{ start: string; end: string }>;
+    expect(dataOf(res).date).toBe(MONDAY);
+    const slots = dataOf(res).slots;
     expect(slots.length).toBe(11); // 12 grid slots minus the booked 10:00-10:15
     expect(slots.find((s) => s.start === '10:00')).toBeUndefined();
     expect(slots.find((s) => s.start === '09:00' && s.end === '09:15')).toBeTruthy();
@@ -209,7 +192,7 @@ describe('GET /api/availability', () => {
 
   test('rejects a malformed owner token with 422', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=bogus&date=${MONDAY}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=bogus&date=${MONDAY}`);
     expect(res.status).toBe(422);
   });
 
@@ -217,10 +200,10 @@ describe('GET /api/availability', () => {
     currentUser = staffUser();
     // No `service` param: the endpoint must not 422; it returns the 09:00-12:00 block as contiguous
     // free windows split around the booked 10:00-10:15, not service-sized 15-min slots.
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.open).toBe(true);
-    expect(res.body.data.slots).toEqual([
+    expect(dataOf(res).open).toBe(true);
+    expect(dataOf(res).slots).toEqual([
       { start: '09:00', end: '10:00' },
       { start: '10:15', end: '12:00' },
     ]);
@@ -237,29 +220,29 @@ describe('GET /api/availability', () => {
     );
     const excludeId = appt.rows[0].id;
 
-    const without = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
-    expect(without.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
+    const without = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
+    expect(dataOf(without).slots.find((s) => s.start === '10:00')).toBeUndefined();
 
-    const withExclude = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=${excludeId}`);
-    const slots = withExclude.body.data.slots as Array<{ start: string; end: string }>;
+    const withExclude = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=${excludeId}`);
+    const slots = dataOf(withExclude).slots;
     expect(slots.find((s) => s.start === '10:00' && s.end === '10:15')).toBeTruthy();
     expect(slots.length).toBe(12); // full grid, nothing booked once the only appt is excluded
   });
 
   test('a non-numeric exclude is ignored (no 422)', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=nope`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}&exclude=nope`);
     expect(res.status).toBe(200);
-    expect(res.body.data.slots.find((s: { start: string }) => s.start === '10:00')).toBeUndefined();
+    expect(dataOf(res).slots.find((s) => s.start === '10:00')).toBeUndefined();
   });
 
   test('open distinguishes a not-worked day from a fully booked one', async () => {
     currentUser = staffUser();
 
     // Tuesday is not in the weekly schedule: closed.
-    const closed = await request(`/api/availability?owner=prof:${proId}&date=2026-06-30&service=${serviceId}`);
-    expect(closed.body.data.open).toBe(false);
-    expect(closed.body.data.slots).toHaveLength(0);
+    const closed = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=2026-06-30&service=${serviceId}`);
+    expect(dataOf(closed).open).toBe(false);
+    expect(dataOf(closed).slots).toHaveLength(0);
 
     // A professional with a single slot that is booked: working day, nothing free.
     const pro2 = await pool.query<{ id: string }>(
@@ -284,11 +267,11 @@ describe('GET /api/availability', () => {
       [clientId, pro2Id, serviceId]
     );
 
-    const full = await request(`/api/availability?owner=prof:${pro2Id}&date=${MONDAY}&service=${serviceId}`);
-    expect(full.body.data.open).toBe(true);
-    expect(full.body.data.slots).toHaveLength(0);
+    const full = await request<AvailabilityResult>(`/api/availability?owner=prof:${pro2Id}&date=${MONDAY}&service=${serviceId}`);
+    expect(dataOf(full).open).toBe(true);
+    expect(dataOf(full).slots).toHaveLength(0);
 
-    const free = await request(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
-    expect(free.body.data.open).toBe(true);
+    const free = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${MONDAY}&service=${serviceId}`);
+    expect(dataOf(free).open).toBe(true);
   });
 });

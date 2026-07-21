@@ -1,5 +1,5 @@
 import { businessTables, AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES } from './business';
-import { peopleTables, ROLE_OPTIONS, ROLE_LABELS } from './people';
+import { peopleTables, ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS } from './people';
 import { catalogTables } from './catalog';
 import { recurrenceTables } from './recurrence';
 import { schedulingTables } from './scheduling';
@@ -86,4 +86,4 @@ export type { SeriesRule } from './recurrence-expand';
 export { seriesOccupancyForDate } from './recurrence-occupancy';
 export { AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES };
 export type { AuditOutcome } from './business';
-export { ROLE_OPTIONS, ROLE_LABELS };
+export { ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS };

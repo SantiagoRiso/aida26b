@@ -265,7 +265,7 @@ const past = computed(() =>
                 <button
                   v-if="isCancelable(appt)"
                   type="button"
-                  class="min-h-[36px] rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
+                  class="min-h-[36px] rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-destructive-tint hover:text-destructive-strong transition-colors"
                   @click="requestCancel(appt)"
                 >
                   {{ appt.state === 'requested' ? t('portal.withdrawRequest') : t('actions.cancel') }}
@@ -374,7 +374,7 @@ const past = computed(() =>
       <button
         v-if="!selectedAppt.is_virtual && isOpenAppointmentState(selectedAppt.state) && isCancelable(selectedAppt)"
         type="button"
-        class="min-h-[36px] w-full rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-red-50 transition-colors"
+        class="min-h-[36px] w-full rounded-md border border-destructive px-3 py-1.5 text-sm font-semibold text-destructive hover:bg-destructive-tint hover:text-destructive-strong transition-colors"
         @click="requestSelectedCancel"
       >
         {{ selectedAppt.state === 'requested' ? t('portal.withdrawRequest') : t('portal.cancelAppointment') }}

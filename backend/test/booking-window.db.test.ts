@@ -9,6 +9,9 @@ import { mountSchedulingRoutes } from '../src/routes/scheduling';
 import { mountAppointmentRoutes } from '../src/routes/appointments';
 import { addDaysISO, BUSINESS_TZ } from '../src/time';
 import type { AuthUser } from '../src/auth';
+import { makeApiClient, dataOf, errorOf } from './api_client';
+import type { AvailabilityResult, BookingWindowResult } from '../../shared/src/ssot/contracts/scheduling';
+import type { AppointmentResponse } from '../../shared/src/ssot/query-types';
 
 // Client self-service is bounded by the booking window; staff are exempt. The professional here
 // works every weekday, so any future date is a working day and only the window governs the result.
@@ -23,24 +26,7 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type Slot = { start: string; end: string };
-type Envelope = {
-  data?: { slots?: Slot[]; open?: boolean; outside_window?: boolean; min_date?: string; max_date?: string | null };
-  error?: { code: string; message: string };
-};
-
-async function request(
-  path: string,
-  { method = 'GET', body }: { method?: string; body?: Record<string, string | number | null> } = {},
-) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
-}
+const request = makeApiClient(() => baseUrl);
 
 const MAX_DAYS = 30;
 let bizId: string;
@@ -132,42 +118,42 @@ afterAll(async () => {
 describe('GET /api/availability booking window', () => {
   test('a Client gets no slots and outside_window for a date past the window', async () => {
     currentUser = clientCaller();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${outWindow}&service=${serviceId}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${outWindow}&service=${serviceId}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.slots).toHaveLength(0);
-    expect(res.body.data.open).toBe(false);
-    expect(res.body.data.outside_window).toBe(true);
+    expect(dataOf(res).slots).toHaveLength(0);
+    expect(dataOf(res).open).toBe(false);
+    expect(dataOf(res).outside_window).toBe(true);
   });
 
   test('staff are exempt: the same out-of-window date returns real slots', async () => {
     currentUser = staffUser();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${outWindow}&service=${serviceId}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${outWindow}&service=${serviceId}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.slots!.length).toBeGreaterThan(0);
-    expect(res.body.data.outside_window).toBeUndefined();
+    expect(dataOf(res).slots.length).toBeGreaterThan(0);
+    expect(dataOf(res).outside_window).toBeUndefined();
   });
 
   test('a Client gets real slots for a date inside the window', async () => {
     currentUser = clientCaller();
-    const res = await request(`/api/availability?owner=prof:${proId}&date=${inWindow}&service=${serviceId}`);
+    const res = await request<AvailabilityResult>(`/api/availability?owner=prof:${proId}&date=${inWindow}&service=${serviceId}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.slots!.length).toBeGreaterThan(0);
-    expect(res.body.data.outside_window).toBeFalsy();
+    expect(dataOf(res).slots.length).toBeGreaterThan(0);
+    expect(dataOf(res).outside_window).toBeFalsy();
   });
 });
 
 describe('GET /api/booking-window', () => {
   test('returns the concrete min/max dates for the professional+service', async () => {
     currentUser = clientCaller();
-    const res = await request(`/api/booking-window?professional=${proId}&service=${serviceId}`);
+    const res = await request<BookingWindowResult>(`/api/booking-window?professional=${proId}&service=${serviceId}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.min_date).toBe(today);
-    expect(res.body.data.max_date).toBe(addDaysISO(today, MAX_DAYS));
+    expect(dataOf(res).min_date).toBe(today);
+    expect(dataOf(res).max_date).toBe(addDaysISO(today, MAX_DAYS));
   });
 
   test('rejects a missing professional with 422', async () => {
     currentUser = clientCaller();
-    const res = await request(`/api/booking-window?service=${serviceId}`);
+    const res = await request<BookingWindowResult>(`/api/booking-window?service=${serviceId}`);
     expect(res.status).toBe(422);
   });
 });
@@ -175,11 +161,11 @@ describe('GET /api/booking-window', () => {
 describe('POST /api/appointments/request booking window', () => {
   test('a Client requesting past the window is rejected with 422 outside_booking_window', async () => {
     currentUser = clientCaller();
-    const res = await request('/api/appointments/request', {
+    const res = await request<AppointmentResponse>('/api/appointments/request', {
       method: 'POST',
       body: { professional_user_id: proId, service_id: serviceId, date: outWindow, start: '09:00', duration_minutes: 15 },
     });
     expect(res.status).toBe(422);
-    expect(res.body.error!.code).toBe('outside_booking_window');
+    expect(errorOf(res).code).toBe('outside_booking_window');
   });
 });

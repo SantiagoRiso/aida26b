@@ -32,6 +32,24 @@ export const ROLE_LABELS: Record<Role, LocalizedText> = {
 };
 export const ROLE_OPTIONS = ROLES.map((value) => ({ value, label: ROLE_LABELS[value] }));
 
+// Privileged auth state — role, credentials, tenancy, activation, archival — changes only through
+// the dedicated auth/admin routes, never through generic CRUD. Keyed on the physical write table,
+// not on a descriptor: clients/professionals are logical views over auth.users, so the protection
+// has to outlive any one of them and cover any view added later. A descriptor that starts
+// declaring one of these columns editable still cannot write it.
+export const WRITE_PROTECTED_COLUMNS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'auth.users': Object.freeze([
+    'role',
+    'password_hash',
+    'password_salt',
+    'is_active',
+    'business_id',
+    'must_change_password',
+    'deleted_at',
+    'deleted_by_user_id',
+  ]),
+});
+
 const professionalSchedulable: SchedulableCapability = {
   calendarLabel: { es: 'Profesional', en: 'Professional' },
   identityField: 'id',

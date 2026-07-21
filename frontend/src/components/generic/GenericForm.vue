@@ -2,7 +2,6 @@
 import { ref, computed, reactive } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
-import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { validateFieldIssue, validateFullObject } from '@shared/validation/validate';
 import { fieldErrorMessage, fieldErrorMessages } from '@/i18n/api-errors';
 import { createRow, updateRow } from '@/api/crud';
@@ -14,6 +13,7 @@ import type { Wire } from '@shared/ssot/query-types';
 import FieldError from '@/components/shared/FieldError.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import DateField from '@/components/shared/DateField.vue';
+import ForeignKeySelect from '@/components/shared/ForeignKeySelect.vue';
 
 const props = defineProps<{
   tableKey: K;
@@ -61,20 +61,6 @@ function onBlur(field: string) {
   } else {
     delete fieldErrors[field];
   }
-}
-
-const fkOptionsCache = new Map<string, ReturnType<typeof useForeignKeyOptions>>();
-function getFkOptions(field: string, col: ColumnDef) {
-  if (!col.foreignKey) return { options: ref([]), loading: ref(false) };
-  if (!fkOptionsCache.has(field)) {
-    const dependsOn = col.foreignKey.dependsOn;
-    const opts = useForeignKeyOptions(
-      col.foreignKey,
-      dependsOn ? () => String(values[dependsOn.field] ?? '') : undefined,
-    );
-    fkOptionsCache.set(field, opts);
-  }
-  return fkOptionsCache.get(field)!;
 }
 
 async function onSubmit() {
@@ -141,24 +127,15 @@ async function onSubmit() {
         @blur="onBlur(field)"
       />
 
-      <select
+      <ForeignKeySelect
         v-else-if="col.input === 'select' && col.foreignKey"
         :id="field"
-        v-model="values[field] as string"
-        class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-        :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :foreign-key="col.foreignKey"
+        :model-value="(values[field] as string) || null"
+        :placeholder="i18n.global.t('generic.selectPlaceholder')"
+        @update:model-value="values[field] = $event ?? ''"
         @blur="onBlur(field)"
-        @change="onBlur(field)"
-      >
-        <option value="">{{ i18n.global.t('generic.selectPlaceholder') }}</option>
-        <option
-          v-for="opt in getFkOptions(field, col).options.value"
-          :key="opt.value"
-          :value="opt.value"
-        >
-          {{ opt.label }}
-        </option>
-      </select>
+      />
 
       <select
         v-else-if="col.input === 'select' && col.options"

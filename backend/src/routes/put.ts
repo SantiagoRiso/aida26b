@@ -8,6 +8,7 @@ import {
   ownerHasResourceColumn,
   getEntityName,
   getNotDerivableFields,
+  getWriteProtectedColumns,
 } from '../../../shared/src/utils/utils';
 
 import { query as runQuery } from '../db/core';
@@ -26,20 +27,6 @@ import {
   sendErrorsIfInvalid,
   updatableColumns,
 } from '../validation/validate';
-
-// clients/professionals are logical views over auth.users. Even if the SSOT ever marks one
-// of these editable, generic writes must never touch privileged auth columns — enforced here
-// independent of the SSOT as defense-in-depth.
-const AUTH_USERS_PROTECTED = new Set([
-  'role',
-  'password_hash',
-  'password_salt',
-  'is_active',
-  'business_id',
-  'must_change_password',
-  'deleted_at',
-  'deleted_by_user_id',
-]);
 
 export async function putHandler(
   req: express.Request,
@@ -121,13 +108,15 @@ export async function putHandler(
   }
 
   // The SET list is the same set validateForUpdate accepts (one shared derivation), so a stray
-  // value can never reach the UPDATE — minus the pk and the auth.users defense-in-depth columns.
+  // value can never reach the UPDATE — minus the pk and the target table's write-protected columns,
+  // which no descriptor can declare its way into.
   const updatable = new Set(updatableColumns(tableName));
+  const writeProtected = getWriteProtectedColumns(physicalTable);
   const fieldsToUpdate = getNotDerivableFields(tableName).filter(
     (fieldName) =>
       !pkFields.includes(fieldName) &&
       updatable.has(fieldName) &&
-      !(physicalTable === 'auth.users' && AUTH_USERS_PROTECTED.has(fieldName)),
+      !writeProtected.has(fieldName),
   );
 
   if (fieldsToUpdate.length === 0) {

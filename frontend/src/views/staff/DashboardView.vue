@@ -129,7 +129,7 @@ onMounted(() => {
             <button type="button" class="text-neutral hover:underline disabled:opacity-50" :disabled="conflictBusy[appt.id]" @click="ignoreConflict(appt)">
               {{ t('dashboard.ignore') }}
             </button>
-            <button v-if="appt.state === 'requested'" type="button" class="text-success hover:underline" @click="approveConflict(appt)">
+            <button v-if="appt.state === 'requested'" type="button" class="text-success-strong hover:underline" @click="approveConflict(appt)">
               {{ t('calendar.approve') }}
             </button>
             <button type="button" class="text-accent hover:underline" @click="goReschedule">

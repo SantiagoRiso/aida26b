@@ -37,6 +37,14 @@ const visibleItems = computed(() =>
 function isActive(routeName: string): boolean {
   return route.name === routeName;
 }
+
+// Warming a route on hover is a mouse affordance. Touch has no hover: pointerenter fires on the
+// finger that is already committing to a tap, and on the first contact of a scroll, so honouring it
+// would spend bandwidth on chunks the user never asked for. Keyboard focus still warms the route.
+function prefetchOnHover(event: PointerEvent, name: string): void {
+  if (event.pointerType !== 'mouse') return;
+  prefetchRoute(router, { name });
+}
 </script>
 
 <template>
@@ -45,7 +53,7 @@ function isActive(routeName: string): boolean {
       v-for="item in visibleItems"
       :key="item.name"
       :to="{ name: item.name }"
-      @pointerenter="prefetchRoute(router, { name: item.name })"
+      @pointerenter="prefetchOnHover($event, item.name)"
       @focus="prefetchRoute(router, { name: item.name })"
       class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors"
       :class="

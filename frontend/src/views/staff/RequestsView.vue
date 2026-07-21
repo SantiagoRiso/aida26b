@@ -420,12 +420,12 @@ async function confirmReject() {
           <section class="flex flex-col gap-2">
             <div
               class="flex items-center justify-between rounded-lg border p-3"
-              :class="balancePositive ? 'border-destructive bg-red-50' : 'border-border bg-card'"
+              :class="balancePositive ? 'border-destructive bg-destructive-tint' : 'border-border bg-card'"
             >
               <span class="text-sm font-semibold text-heading">{{ t('requests.balanceDebt') }}</span>
               <span
                 class="text-lg font-semibold tabular-nums"
-                :class="balancePositive ? 'text-destructive' : 'text-success'"
+                :class="balancePositive ? 'text-destructive-strong' : 'text-success-strong'"
               >
                 {{ clientBalance != null ? formatARS(clientBalance) : t('generic.emptyValue') }}
               </span>
@@ -436,9 +436,9 @@ async function confirmReject() {
             <h3 class="text-sm font-semibold text-neutral">{{ t('portal.history') }}</h3>
             <div class="flex flex-wrap gap-2 text-xs">
               <span class="rounded-full bg-surface px-2 py-1">{{ t('requests.statAppointments') }}: {{ clientAppts.length }}</span>
-              <span class="rounded-full bg-green-100 px-2 py-1 text-success">{{ t('requests.statCompleted') }}: {{ completedCount }}</span>
-              <span class="rounded-full bg-red-100 px-2 py-1 text-destructive">{{ t('requests.statCanceled') }}: {{ canceledCount }}</span>
-              <span class="rounded-full bg-yellow-100 px-2 py-1 text-warning">{{ t('requests.statNoShows') }}: {{ noShowCount }}</span>
+              <span class="rounded-full bg-success-tint px-2 py-1 text-success-strong">{{ t('requests.statCompleted') }}: {{ completedCount }}</span>
+              <span class="rounded-full bg-destructive-tint px-2 py-1 text-destructive-strong">{{ t('requests.statCanceled') }}: {{ canceledCount }}</span>
+              <span class="rounded-full bg-warning-tint px-2 py-1 text-warning-strong">{{ t('requests.statNoShows') }}: {{ noShowCount }}</span>
             </div>
 
             <EmptyState

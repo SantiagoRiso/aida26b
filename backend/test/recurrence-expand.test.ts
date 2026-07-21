@@ -150,7 +150,7 @@ describe('isSeriesOccurrenceDate', () => {
   const rule = {
     frequency: 'weekly' as const,
     interval: 1,
-    weekday: 'mon',
+    weekday: 'mon' as const,
     start_date: '2026-07-13',
     end_kind: 'until' as const,
     end_date: '2026-07-27',

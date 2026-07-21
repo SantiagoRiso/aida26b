@@ -44,7 +44,8 @@ export function useBookingOptions(config: BookingOptionsConfig = {}) {
       listRows('professionals', { limit: 200 }),
       listRows('services', { limit: 200 }),
       listRows('professional_services', { limit: 500 }),
-      config.withClients ? listRows('clients', { limit: 200 }) : null,
+      // Staff book turnos for anyone in the business, including a client they have never seen.
+      config.withClients ? listRows('clients', { limit: 200, includeUnrelated: true }) : null,
       // Server-scoped to the calling client's own appointments.
       config.rankByRecency ? listAppointments({ limit: 200 }) : null,
     ]);

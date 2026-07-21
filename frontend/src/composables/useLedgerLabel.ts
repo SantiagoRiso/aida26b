@@ -17,7 +17,8 @@ export function useLedgerLabel() {
       case 'charge': return BADGE_TONE_CLASS.danger;
       case 'payment': return BADGE_TONE_CLASS.success;
       case 'adjustment_credit': return BADGE_TONE_CLASS.info;
-      case 'adjustment_debit': return BADGE_TONE_CLASS.accent;
+      // A debit adjustment raises what the client owes, so it warns without reading as a charge.
+      case 'adjustment_debit': return BADGE_TONE_CLASS.warning;
       default: return BADGE_TONE_CLASS.neutral;
     }
   }

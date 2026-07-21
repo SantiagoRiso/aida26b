@@ -16,7 +16,9 @@ import {
 import { assertCrudAllowed } from "./crud-policy";
 import { requireUser } from "./request-guards";
 import { parseListRequest } from "./list-request";
+import { resolveListRelevance } from "./list-relevance";
 import { isFilterParam, isReservedListParam } from "../../../shared/src/ssot/list-protocol";
+import type { ListRequestSpec } from "../../../shared/src/ssot/list-protocol";
 
 import type { TableKey, TableRecordMap } from "../../../shared/src/ssot/derived";
 import type { SqlParam } from "../db/core";
@@ -46,7 +48,9 @@ export async function getHandler(
 
   // Reads use the (possibly secret-free) read source; writes elsewhere use allowed.sqlTable.
   if (isListRequest(req.query)) {
-    return getListOfTable(pool, res, tableName, req.query, {
+    const spec = parseListRequest(req.query);
+    // Relevance narrows the list only; a single-row read stays reachable by id.
+    return getListOfTable(pool, res, tableName, spec, {
       sqlTable: allowed.sqlReadTable,
       businessWhere: allowed.businessWhere,
       businessParams: allowed.businessParams,
@@ -56,6 +60,7 @@ export async function getHandler(
       grantParams: allowed.grantParams,
       discriminatorWhere: allowed.discriminatorWhere,
       discriminatorParams: allowed.discriminatorParams,
+      ...resolveListRelevance(tableName, user, spec),
     });
   }
 
@@ -88,11 +93,11 @@ async function getListOfTable(
   pool: Pool,
   res: express.Response,
   tableName: TableKey,
-  query: express.Request["query"],
+  spec: ListRequestSpec,
   allowed: ListScope,
 ) {
   const { dataQuery, dataValues, countQuery, countValues, page, limit } =
-    buildListStatement(tableName, parseListRequest(query), allowed);
+    buildListStatement(tableName, spec, allowed);
 
   const pageRows = await runQuery<GenericRow & { __total_count: string }>(pool, dataQuery, dataValues);
   if (pageRows.length === 0) {

@@ -40,11 +40,34 @@ export default defineConfig({
   use: {
     baseURL,
     headless: process.env.E2E_HEADLESS === '0' ? false : true,
-    viewport: { width: 1280, height: 900 },
     // Only capture a trace for a test that's about to be retried — free on the happy path, and
     // gives a debuggable timeline exactly for the runs that need one (paired with retries above).
     trace: 'on-first-retry',
   },
+
+  // Two viewports, deliberately asymmetric. The whole suite runs at desktop width; the phone
+  // project runs only the specs whose subject *is* the narrow layout. Every spec shares one seeded
+  // database and the run is serial, so re-running all ~40 files at 390px would roughly double the
+  // wall clock to re-assert behaviour that has nothing to do with width. The shell, its drawer and
+  // the axe audit are the parts that genuinely differ, so those are what the phone project covers.
+  projects: [
+    {
+      name: 'desktop',
+      use: { viewport: { width: 1280, height: 900 } },
+      testIgnore: /mobile-shell\.spec\.ts/,
+    },
+    {
+      name: 'mobile',
+      use: {
+        viewport: { width: 390, height: 844 },
+        // Real touch emulation, so pointerenter reports pointerType 'touch' and the sidebar's
+        // hover-prefetch is exercised the way a phone actually delivers it.
+        hasTouch: true,
+        isMobile: true,
+      },
+      testMatch: /(mobile-shell|accessibility)\.spec\.ts/,
+    },
+  ],
 
   webServer: reuseServer
     ? undefined

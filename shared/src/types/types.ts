@@ -78,10 +78,6 @@ type ForeignKeyDef = {
   table: string;
   valueField: string;
   labelField: string;
-  dependsOn?: {
-    field: string;
-    foreignField: string;
-  };
 };
 
 type LocalizedText = Record<Language, string>;

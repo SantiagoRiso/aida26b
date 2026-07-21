@@ -62,9 +62,9 @@ describe('SlotPicker', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(es.calendar.outsideBookingWindow);
-    const amber = wrapper.find('.text-amber-700');
-    expect(amber.exists()).toBe(true);
-    expect(amber.text()).toBe(es.calendar.outsideBookingWindow);
+    const warned = wrapper.find('.text-warning-strong');
+    expect(warned.exists()).toBe(true);
+    expect(warned.text()).toBe(es.calendar.outsideBookingWindow);
   });
 
   it('distinguishes a fully-booked working day from a day the professional does not work', async () => {

@@ -15,6 +15,8 @@ export const en: Messages = {
     profile: 'Profile',
     settings: 'Settings',
     logout: 'Log out',
+    menu: 'Menu',
+    openMenu: 'Open the menu',
     myAppointments: 'My appointments',
     myBalance: 'My balance',
     preferences: 'Preferences',

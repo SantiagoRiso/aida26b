@@ -48,7 +48,7 @@ export const logger = {
   error: (fields: LogFields) => emit('error', fields),
 };
 
-type RequestWithId = Request & { reqId?: string };
+export type RequestWithId = Request & { reqId?: string };
 
 // Lets error sites (guardRoute/guardMiddleware, the audit writer) join their log line back to
 // the requestLogger line for the same request. Undefined when requestLogger never ran (e.g. a

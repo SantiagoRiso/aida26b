@@ -9,6 +9,8 @@ import {
   filterParam,
   stripFilterPrefix,
   isReservedListParam,
+  INCLUDE_UNRELATED_PARAM,
+  INCLUDE_UNRELATED_VALUE,
 } from '../../shared/src/ssot/list-protocol';
 
 describe('list-protocol helpers', () => {
@@ -17,8 +19,8 @@ describe('list-protocol helpers', () => {
     expect(stripFilterPrefix(filterParam('name'))).toBe('name');
   });
 
-  test('reserved list params are exactly page/sort/dir/limit', () => {
-    for (const key of ['page', 'sort', 'dir', 'limit']) {
+  test('reserved list params are exactly page/sort/dir/limit/include_unrelated', () => {
+    for (const key of ['page', 'sort', 'dir', 'limit', INCLUDE_UNRELATED_PARAM]) {
       expect(isReservedListParam(key)).toBe(true);
     }
     expect(isReservedListParam('id')).toBe(false);
@@ -35,7 +37,14 @@ describe('parseListRequest', () => {
       dir: 'asc',
       page: 1,
       limit: LIST_DEFAULT_LIMIT,
+      includeUnrelated: false,
     });
+  });
+
+  test('the relevance waiver is opt-in and only in its exact form', () => {
+    expect(parseListRequest({ [INCLUDE_UNRELATED_PARAM]: INCLUDE_UNRELATED_VALUE }).includeUnrelated).toBe(true);
+    expect(parseListRequest({ [INCLUDE_UNRELATED_PARAM]: '0' }).includeUnrelated).toBe(false);
+    expect(parseListRequest({}).includeUnrelated).toBe(false);
   });
 
   test('limit is capped at the shared max and floored at 1', () => {

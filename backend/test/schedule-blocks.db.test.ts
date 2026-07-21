@@ -7,6 +7,9 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountGenericRoutes } from '../src/app';
 import type { AuthUser } from '../src/auth';
+import { makeApiClient, dataOf } from './api_client';
+import type { RequestOptions } from './api_client';
+import type { GenericRow } from '../../shared/src/ssot/query-types';
 
 // The weekly-JSONB set-schedule endpoint was replaced by generic CRUD on schedule_blocks. This
 // exercises the ownership/grant scoping that CRUD gives the new table: a Professional manages only
@@ -28,17 +31,10 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type Envelope = {
-  success?: boolean;
-  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
-  meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
+const request = makeApiClient(() => baseUrl);
 
-async function api(path: string, init?: RequestInit) {
-  const response = await fetch(`${baseUrl}${path}`, init);
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
+function api<T>(path: string, options?: RequestOptions) {
+  return request<T>(path, options);
 }
 
 const asUser = (id: number, role: AuthUser['role']): AuthUser => ({
@@ -111,70 +107,68 @@ afterAll(async () => {
 describe('schedule_blocks generic CRUD scoping', () => {
   test('an Admin sees every block in the business', async () => {
     currentUser = { ...asUser(0, 'Admin'), business_id: bizId };
-    const res = await api('/api/schedule_blocks');
+    const res = await api<GenericRow[]>('/api/schedule_blocks');
     expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(2);
+    expect(dataOf(res)).toHaveLength(2);
   });
 
   test('a Professional sees only their own block', async () => {
     currentUser = asUser(pro1, 'Professional');
-    const res = await api('/api/schedule_blocks');
+    const res = await api<GenericRow[]>('/api/schedule_blocks');
     expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(1);
-    expect(String(res.body.data[0].professional_user_id)).toBe(String(pro1));
+    expect(dataOf(res)).toHaveLength(1);
+    expect(String(dataOf(res)[0].professional_user_id)).toBe(String(pro1));
   });
 
   test('a granted Receptionist sees the granted professional\'s block', async () => {
     currentUser = asUser(recepGranted, 'Receptionist');
-    const res = await api('/api/schedule_blocks');
+    const res = await api<GenericRow[]>('/api/schedule_blocks');
     expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(1);
-    expect(String(res.body.data[0].professional_user_id)).toBe(String(pro1));
+    expect(dataOf(res)).toHaveLength(1);
+    expect(String(dataOf(res)[0].professional_user_id)).toBe(String(pro1));
   });
 
   test('an ungranted Receptionist sees no blocks', async () => {
     currentUser = asUser(recepUngranted, 'Receptionist');
-    const res = await api('/api/schedule_blocks');
+    const res = await api<GenericRow[]>('/api/schedule_blocks');
     expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(0);
+    expect(dataOf(res)).toHaveLength(0);
   });
 
   test('a Professional can create their own block', async () => {
     currentUser = asUser(pro1, 'Professional');
-    const res = await api('/api/schedule_blocks', {
+    const res = await api<GenericRow>('/api/schedule_blocks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         professional_user_id: String(pro1),
         resource_id: null,
         weekday: 'tue',
         start_time: '14:00',
         end_time: '17:00',
-      }),
+      },
     });
     expect(res.status).toBe(201);
-    expect(String(res.body.data.professional_user_id)).toBe(String(pro1));
+    expect(String(dataOf(res).professional_user_id)).toBe(String(pro1));
   });
 
   test('a Professional cannot update a peer\'s block (own-only, 403)', async () => {
     currentUser = asUser(pro2, 'Professional');
-    const res = await api(`/api/schedule_blocks/${pro1Block}`, {
+    const res = await api<GenericRow>(`/api/schedule_blocks/${pro1Block}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         professional_user_id: String(pro1),
         resource_id: null,
         weekday: 'mon',
         start_time: '08:00',
         end_time: '12:00',
-      }),
+      },
     });
     expect(res.status).toBe(403);
   });
 
   test('a Professional cannot delete a peer\'s block (own-only, 403)', async () => {
     currentUser = asUser(pro2, 'Professional');
-    const res = await api(`/api/schedule_blocks/${pro1Block}`, { method: 'DELETE' });
+    const res = await api<GenericRow>(`/api/schedule_blocks/${pro1Block}`, { method: 'DELETE' });
     expect(res.status).toBe(403);
   });
 });

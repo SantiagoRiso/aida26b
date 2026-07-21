@@ -34,7 +34,9 @@ describe('useForeignKeyOptions — shared cache', () => {
     await flushPromises();
 
     expect(mockedListRows).toHaveBeenCalledTimes(1);
-    expect(mockedListRows).toHaveBeenCalledWith('professionals', { limit: 500 });
+    // Waived relevance: an option list resolves ids to names, so it must cover every row the
+    // viewer may read, not just the ones a list screen would consider relevant to them.
+    expect(mockedListRows).toHaveBeenCalledWith('professionals', { limit: 500, includeUnrelated: true });
     expect(FK_OPTIONS_LIMIT).toBe(500);
     // Both consumers share the same reactive options.
     expect(a.labelFor('1')).toBe('Dr. Ana');

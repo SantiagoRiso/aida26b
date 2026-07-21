@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Request } from 'express';
 import type { Pool } from 'pg';
 import { createAuditWriter } from '../src/audit';
+import type { RequestWithId } from '../src/logger';
 
 type LogEntry = Record<string, string | number>;
 
@@ -49,7 +50,7 @@ describe('audit writer — best-effort failure visibility', () => {
 
   it('logs the swallowed failure with the request id, event type and outcome', async () => {
     const audit = createAuditWriter(throwingPool('connection terminated unexpectedly'));
-    const req = { reqId: 'req-audit-1' } as Request;
+    const req = { reqId: 'req-audit-1' } as RequestWithId;
 
     const logs = await captureLogs(() =>
       audit(req, 'appointment_scheduled', 'success', {}, { actorId: 1, businessId: 2 }),

@@ -50,31 +50,32 @@ describe('StatusBadge', () => {
     });
   }
 
-  it('applies blue class for requested state', () => {
+  it('applies the info tint for requested state', () => {
     const i18n = makeI18n();
     const wrapper = mount(StatusBadge, {
       props: { state: 'requested' },
       global: { plugins: [i18n] },
     });
-    expect(wrapper.html()).toContain('text-blue-700');
+    expect(wrapper.html()).toContain('bg-info-tint');
+    expect(wrapper.html()).toContain('text-info-strong');
   });
 
-  it('applies neutral class for canceled state', () => {
+  it('applies the neutral tint for canceled state', () => {
     const i18n = makeI18n();
     const wrapper = mount(StatusBadge, {
       props: { state: 'canceled' },
       global: { plugins: [i18n] },
     });
-    expect(wrapper.html()).toContain('text-neutral');
+    expect(wrapper.html()).toContain('bg-neutral-tint');
   });
 
-  it('applies neutral class for rejected state', () => {
+  it('applies the neutral tint for rejected state', () => {
     const i18n = makeI18n();
     const wrapper = mount(StatusBadge, {
       props: { state: 'rejected' },
       global: { plugins: [i18n] },
     });
-    expect(wrapper.html()).toContain('text-neutral');
+    expect(wrapper.html()).toContain('bg-neutral-tint');
   });
 
   it('applies success class for completed state', () => {
@@ -83,7 +84,8 @@ describe('StatusBadge', () => {
       props: { state: 'completed' },
       global: { plugins: [i18n] },
     });
-    expect(wrapper.html()).toContain('text-success');
+    expect(wrapper.html()).toContain('bg-success-tint');
+    expect(wrapper.html()).toContain('text-success-strong');
   });
 });
 

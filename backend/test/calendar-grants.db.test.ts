@@ -6,65 +6,30 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { hashPassword } from '../src/auth';
 import type { Pool } from 'pg';
-import type { TableRecordMap } from '../../shared/src/ssot/derived';
+import { makeApiClient, dataOf } from './api_client';
+import type {
+  CalendarGrantCreatedRow,
+  CalendarGrantRow,
+  GenericRow,
+  GrantableStaffRow,
+} from '../../shared/src/ssot/query-types';
 
 let testPool: Pool;
 
+// The server module owns a module-level pool; point it at the per-run test database so the
+// routes under test hit real grants instead of the developer's database.
 function installTestProxy() {
-  pool.query = (...args: Parameters<typeof pool.query>) =>
-    // @ts-expect-error — overloaded signature; delegation is safe
-    testPool.query(...args);
-
-  // eslint-disable-next-line no-restricted-syntax -- pg's Pool.connect has an overloaded callback/promise signature a delegating proxy can't match directly
-  pool.connect = () => testPool.connect() as unknown as ReturnType<typeof pool.connect>;
+  pool.query = testPool.query.bind(testPool);
+  pool.connect = testPool.connect.bind(testPool);
 }
 
 let server: http.Server;
 let baseUrl: string;
 
-type CalendarGrantListRow = {
-  professional_user_id: string;
-  grantee_username: string;
-  grantee_role: string;
-  professional_name: string;
-};
-type GrantableStaffListRow = { id: string; username: string; role: string; display_name: string | null };
+// Revoking answers with the deleted grant's id, not the row.
+type RevokedGrantResult = { id: string; revoked: boolean };
 
-type ReqBody = Record<string, string | number | boolean | null>;
-type Envelope = {
-  success?: boolean;
-  data?: Record<string, string | number | boolean | null> | Record<string, string | number | boolean | null>[];
-  meta?: { page: number; limit: number; total: number };
-  error?: { code: string; message: string; fields?: Record<string, string> };
-};
-
-async function request(
-  path: string,
-  {
-    method = 'GET',
-    body,
-    cookie,
-  }: { method?: string; body?: ReqBody; cookie?: string } = {}
-) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: {
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const text = await response.text();
-  let responseBody: Envelope | null = null;
-  try {
-    responseBody = text ? (JSON.parse(text) as Envelope) : null;
-  } catch {
-    responseBody = null;
-  }
-
-  return { status: response.status, body: responseBody };
-}
+const request = makeApiClient(() => baseUrl);
 
 async function login(username: string, password: string) {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
@@ -152,20 +117,20 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => server.close(resolve));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   await testPool.end();
 });
 
 describe('Grant creation (POST /api/calendar-grants)', () => {
   test('P1 creates a grant for Receptionist on P1 own calendar → 201, binary row', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: p1Cookie,
       body: { professional_user_id: p1UserId, grantee_user_id: receptionistUserId },
     });
 
     expect(res.status).toBe(201);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'] }).data;
+    const data = dataOf(res);
     expect(String(data.professional_user_id)).toBe(String(p1UserId));
     expect(String(data.grantee_user_id)).toBe(String(receptionistUserId));
     expect(data).not.toHaveProperty('view');
@@ -181,7 +146,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('P1 attempts to create a grant on P2 calendar → 403', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: p1Cookie,
       body: { professional_user_id: p2UserId, grantee_user_id: receptionistUserId },
@@ -190,7 +155,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Admin creates a grant on P2 calendar → 201', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p2UserId, grantee_user_id: receptionistUserId },
@@ -199,7 +164,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Receptionist attempts to create a grant → 403', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: receptionistCookie,
       body: { professional_user_id: p1UserId, grantee_user_id: receptionistUserId },
@@ -208,7 +173,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Client attempts to create a grant → 403', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: clientCookie,
       body: { professional_user_id: p1UserId, grantee_user_id: receptionistUserId },
@@ -217,7 +182,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Grantee that is a Client → 422 (staff-only grantee)', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p1UserId, grantee_user_id: clientUserId },
@@ -226,7 +191,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Grantee that is a Professional → allowed', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p1UserId, grantee_user_id: p2UserId },
@@ -236,13 +201,13 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Duplicate grant → 409 (UNIQUE constraint)', async () => {
-    await request('/api/calendar-grants', {
+    await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p2UserId, grantee_user_id: p1UserId },
     });
 
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p2UserId, grantee_user_id: p1UserId },
@@ -251,7 +216,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
   });
 
   test('Missing body fields → 400', async () => {
-    const res = await request('/api/calendar-grants', {
+    const res = await request<CalendarGrantCreatedRow>('/api/calendar-grants', {
       method: 'POST',
       cookie: adminCookie,
       body: { professional_user_id: p1UserId },
@@ -289,7 +254,7 @@ describe('Grant revocation (DELETE /api/calendar-grants/:id)', () => {
   });
 
   test('P1 revokes their own grant → 200 and row is gone', async () => {
-    const res = await request(`/api/calendar-grants/${grantIdForP1Recep}`, {
+    const res = await request<RevokedGrantResult>(`/api/calendar-grants/${grantIdForP1Recep}`, {
       method: 'DELETE',
       cookie: p1Cookie,
     });
@@ -303,7 +268,7 @@ describe('Grant revocation (DELETE /api/calendar-grants/:id)', () => {
   });
 
   test('P1 attempts to revoke a grant on P2 calendar → 403', async () => {
-    const res = await request(`/api/calendar-grants/${grantIdForAdminRevoke}`, {
+    const res = await request<RevokedGrantResult>(`/api/calendar-grants/${grantIdForAdminRevoke}`, {
       method: 'DELETE',
       cookie: p1Cookie,
     });
@@ -311,7 +276,7 @@ describe('Grant revocation (DELETE /api/calendar-grants/:id)', () => {
   });
 
   test('Admin revokes any in-business grant → 200 and row is gone', async () => {
-    const res = await request(`/api/calendar-grants/${grantIdForAdminRevoke}`, {
+    const res = await request<RevokedGrantResult>(`/api/calendar-grants/${grantIdForAdminRevoke}`, {
       method: 'DELETE',
       cookie: adminCookie,
     });
@@ -325,7 +290,7 @@ describe('Grant revocation (DELETE /api/calendar-grants/:id)', () => {
   });
 
   test('Revoke non-existent grant → 404', async () => {
-    const res = await request(`/api/calendar-grants/999999`, {
+    const res = await request<RevokedGrantResult>(`/api/calendar-grants/999999`, {
       method: 'DELETE',
       cookie: adminCookie,
     });
@@ -340,7 +305,7 @@ describe('Grant revocation (DELETE /api/calendar-grants/:id)', () => {
     );
     const throwawayId = row.rows[0].id;
 
-    const res = await request(`/api/calendar-grants/${throwawayId}`, {
+    const res = await request<RevokedGrantResult>(`/api/calendar-grants/${throwawayId}`, {
       method: 'DELETE',
       cookie: receptionistCookie,
     });
@@ -374,65 +339,65 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
   });
 
   test('Admin sees all in-business grants (2 rows)', async () => {
-    const res = await request('/api/calendar-grants', { cookie: adminCookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(2);
   });
 
   test('P1 sees only their own calendar grants (1 row)', async () => {
-    const res = await request('/api/calendar-grants', { cookie: p1Cookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: p1Cookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
   });
 
   test('P2 sees only their own calendar grants (1 row)', async () => {
-    const res = await request('/api/calendar-grants', { cookie: p2Cookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: p2Cookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(1);
   });
 
   test('Client cannot list grants → 403 (staff-internal data)', async () => {
-    const res = await request('/api/calendar-grants', { cookie: clientCookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: clientCookie });
     expect(res.status).toBe(403);
   });
 
   test('Cross-business grants are never returned to main-biz admin', async () => {
-    const res = await request('/api/calendar-grants', { cookie: adminCookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     const ids = data.map((g) => String(g.professional_user_id));
     expect(ids).not.toContain(String(otherBizProfUserId));
   });
 
   test('Receptionist can list in-business grants (read allowed)', async () => {
-    const res = await request('/api/calendar-grants', { cookie: receptionistCookie });
+    const res = await request<CalendarGrantRow[]>('/api/calendar-grants', { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(2);
   });
 
   test('Admin can filter by professional_user_id query param', async () => {
-    const res = await request(
+    const res = await request<CalendarGrantRow[]>(
       `/api/calendar-grants?professional_user_id=${p1UserId}`,
       { cookie: adminCookie }
     );
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['calendar_grants'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(1);
     expect(String(data[0].professional_user_id)).toBe(String(p1UserId));
   });
 
   test('Listed grants are enriched with grantee_username, grantee_role, professional_name', async () => {
-    const res = await request(
+    const res = await request<CalendarGrantRow[]>(
       `/api/calendar-grants?professional_user_id=${p1UserId}`,
       { cookie: adminCookie }
     );
     expect(res.status).toBe(200);
-    const data = (res.body as { data: CalendarGrantListRow[] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(1);
     expect(data[0].grantee_username).toBe('recep1');
     expect(data[0].grantee_role).toBe('Receptionist');
@@ -443,9 +408,9 @@ describe('Grant listing (GET /api/calendar-grants)', () => {
 
 describe('Grantable staff listing (GET /api/calendar-grants/grantable-staff)', () => {
   test('Admin sees the business\'s Receptionists + Professionals, not Clients or Admins', async () => {
-    const res = await request('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
+    const res = await request<GrantableStaffRow[]>('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    const data = dataOf(res);
     const ids = data.map((r) => String(r.id));
     expect(ids.sort()).toEqual([String(p1UserId), String(p2UserId), String(receptionistUserId)].sort());
     expect(ids).not.toContain(String(clientUserId));
@@ -453,26 +418,26 @@ describe('Grantable staff listing (GET /api/calendar-grants/grantable-staff)', (
   });
 
   test('Professional sees the same staff set as Admin (own-calendar grant management)', async () => {
-    const res = await request('/api/calendar-grants/grantable-staff', { cookie: p1Cookie });
+    const res = await request<GrantableStaffRow[]>('/api/calendar-grants/grantable-staff', { cookie: p1Cookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(3);
   });
 
   test('Cross-business staff are never returned', async () => {
-    const res = await request('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
+    const res = await request<GrantableStaffRow[]>('/api/calendar-grants/grantable-staff', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: GrantableStaffListRow[] }).data;
+    const data = dataOf(res);
     expect(data.map((r) => String(r.id))).not.toContain(String(otherBizProfUserId));
   });
 
   test('Receptionist → 403', async () => {
-    const res = await request('/api/calendar-grants/grantable-staff', { cookie: receptionistCookie });
+    const res = await request<GrantableStaffRow[]>('/api/calendar-grants/grantable-staff', { cookie: receptionistCookie });
     expect(res.status).toBe(403);
   });
 
   test('Client → 403', async () => {
-    const res = await request('/api/calendar-grants/grantable-staff', { cookie: clientCookie });
+    const res = await request<GrantableStaffRow[]>('/api/calendar-grants/grantable-staff', { cookie: clientCookie });
     expect(res.status).toBe(403);
   });
 });
@@ -490,38 +455,38 @@ describe('Grant scoping of professionals (generic CRUD)', () => {
   });
 
   test('Receptionist lists professionals → only granted (P1)', async () => {
-    const res = await request('/api/professionals', { cookie: receptionistCookie });
+    const res = await request<GenericRow[]>('/api/professionals', { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
+    const data = dataOf(res);
     expect(data).toHaveLength(1);
     expect(String(data[0].id)).toBe(String(p1UserId));
   });
 
   test('Receptionist gets a granted professional by id → 200', async () => {
-    const res = await request(`/api/professionals?id=${p1UserId}`, { cookie: receptionistCookie });
+    const res = await request<GenericRow>(`/api/professionals?id=${p1UserId}`, { cookie: receptionistCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['professionals'] }).data;
+    const data = dataOf(res);
     expect(String(data.id)).toBe(String(p1UserId));
   });
 
   test('Receptionist gets an ungranted professional by id → 404, not 403', async () => {
-    const res = await request(`/api/professionals?id=${p2UserId}`, { cookie: receptionistCookie });
+    const res = await request<GenericRow>(`/api/professionals?id=${p2UserId}`, { cookie: receptionistCookie });
     expect(res.status).toBe(404);
   });
 
   test('Admin lists professionals → all in business (unscoped)', async () => {
-    const res = await request('/api/professionals', { cookie: adminCookie });
+    const res = await request<GenericRow[]>('/api/professionals', { cookie: adminCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
+    const data = dataOf(res);
     const ids = data.map((p) => String(p.id));
     expect(ids).toContain(String(p1UserId));
     expect(ids).toContain(String(p2UserId));
   });
 
   test('Client lists professionals → all in business (portal booking depends on this)', async () => {
-    const res = await request('/api/professionals', { cookie: clientCookie });
+    const res = await request<GenericRow[]>('/api/professionals', { cookie: clientCookie });
     expect(res.status).toBe(200);
-    const data = (res.body as { data: TableRecordMap['professionals'][] }).data;
+    const data = dataOf(res);
     const ids = data.map((p) => String(p.id));
     expect(ids).toContain(String(p1UserId));
     expect(ids).toContain(String(p2UserId));

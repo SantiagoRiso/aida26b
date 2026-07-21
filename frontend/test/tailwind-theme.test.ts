@@ -73,6 +73,52 @@ describe('Tailwind v4 semantic token → utility generation', () => {
     expect(css).toMatch(/--color-accent/);
   });
 
+  it('the root text colour rule survives the build', () => {
+    const cssPath = findBuiltCss();
+    if (!cssPath) {
+      console.warn('SKIP: no dist CSS to inspect.');
+      return;
+    }
+    const css = readFileSync(cssPath, 'utf-8');
+    expect(css).toMatch(/html\s*\{[^}]*color:\s*var\(--color-body\)/);
+    expect(css).toMatch(/--color-body:\s*#334155/i);
+    expect(css).toMatch(/--color-body:\s*#cbd5e1/i);
+  });
+
+  it('the status tint utilities are present in emitted CSS', () => {
+    const cssPath = findBuiltCss();
+    if (!cssPath) {
+      console.warn('SKIP: no dist CSS to inspect.');
+      return;
+    }
+    const css = readFileSync(cssPath, 'utf-8');
+    for (const utility of [
+      'bg-success-tint', 'text-success-strong', 'bg-destructive-tint', 'text-destructive-strong',
+      'bg-warning-tint', 'text-warning-strong', 'bg-info-tint', 'text-info-strong',
+      'bg-neutral-tint', 'border-warning-tint-border',
+    ]) {
+      expect(css, `${utility} generated no rule`).toMatch(new RegExp(`\\.${utility}[\\s,{:]`));
+    }
+  });
+
+  /* The dark theme patched Tailwind's own palette to keep tinted screens in step; the role
+     tokens replaced that, and a returning remap would mean a component slipped back. */
+  it('no longer remaps Tailwind stock palette steps', () => {
+    const cssPath = findBuiltCss();
+    if (!cssPath) {
+      console.warn('SKIP: no dist CSS to inspect.');
+      return;
+    }
+    const css = readFileSync(cssPath, 'utf-8');
+    const darkBlock = css.slice(css.indexOf("[data-theme=dark]"));
+    const remaps = [
+      ...darkBlock.slice(0, darkBlock.indexOf('}')).matchAll(
+        /--color-(slate|gray|zinc|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}/g,
+      ),
+    ].map((m) => m[0]);
+    expect([...new Set(remaps)]).toEqual([]);
+  });
+
   it('text-inverted utility is present in emitted CSS', () => {
     const cssPath = findBuiltCss();
     if (!cssPath) {
@@ -106,12 +152,35 @@ describe('dark theme token coverage', () => {
   const lightTokens = tokensIn(blockAfter('@theme'));
   const darkTokens = tokensIn(blockAfter(":root[data-theme='dark']"));
 
+  const valueOf = (block: string, token: string) =>
+    block.match(new RegExp(`${token}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+
+  // WCAG relative luminance.
+  const lum = (hex: string) =>
+    [1, 3, 5]
+      .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+      .reduce((acc, v, i) => acc + [0.2126, 0.7152, 0.0722][i] * v, 0);
+
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
   it('the light @theme block declares the semantic tokens', () => {
     expect(lightTokens).toContain('--color-surface');
     expect(lightTokens).toContain('--color-inverted');
+    expect(lightTokens).toContain('--color-body');
   });
 
-  it.each(['--color-surface', '--color-card', '--color-border', '--color-accent', '--color-inverted'])(
+  it.each([
+    '--color-surface',
+    '--color-card',
+    '--color-border',
+    '--color-accent',
+    '--color-inverted',
+    '--color-body',
+  ])(
     '%s has a dark value',
     (token) => {
       expect(darkTokens).toContain(token);
@@ -121,6 +190,88 @@ describe('dark theme token coverage', () => {
   it('every light token has a dark counterpart', () => {
     const missing = lightTokens.filter((token) => !darkTokens.includes(token));
     expect(missing).toEqual([]);
+  });
+
+  /*
+   * Without this rule every text node lacking a colour utility inherits the user-agent
+   * default — pure black in light, pure white in dark — which is undesigned, not a palette
+   * value, and leaves no room for a heading step above it.
+   */
+  it('anchors the inherited text colour at the root', () => {
+    expect(sourceCss).toMatch(/^html\s*\{[^}]*\bcolor:\s*var\(--color-body\)\s*;?\s*\}/m);
+  });
+
+  it('keeps the body step between heading and neutral in both themes', () => {
+    const light = blockAfter('@theme');
+    const dark = blockAfter(":root[data-theme='dark']");
+
+    for (const [block, darkTheme] of [
+      [light, false],
+      [dark, true],
+    ] as const) {
+      const heading = lum(valueOf(block, '--color-heading')!);
+      const body = lum(valueOf(block, '--color-body')!);
+      const neutral = lum(valueOf(block, '--color-neutral')!);
+      // On dark the steps run the other way: heading is the lightest, neutral the dimmest.
+      expect(darkTheme ? heading > body && body > neutral : heading < body && body < neutral).toBe(
+        true,
+      );
+    }
+  });
+
+  /*
+   * Status tints only work if the paired text step stays readable on them. The pairing is the
+   * whole reason both tokens exist, so it is asserted rather than left to review.
+   */
+  it('every tint / foreground pair clears 4.5:1 in both themes', () => {
+    const PAIRS: [background: string, foreground: string][] = [
+      ['--color-success-tint', '--color-success-strong'],
+      ['--color-destructive-tint', '--color-destructive-strong'],
+      ['--color-warning-tint', '--color-warning-strong'],
+      ['--color-info-tint', '--color-info-strong'],
+      ['--color-neutral-tint', '--color-body'],
+    ];
+
+    const light = blockAfter('@theme');
+    const dark = blockAfter(":root[data-theme='dark']");
+
+    const failures: string[] = [];
+    for (const [theme, block] of [
+      ['light', light],
+      ['dark', dark],
+    ] as const) {
+      for (const [bg, fg] of PAIRS) {
+        const bgHex = valueOf(block, bg);
+        const fgHex = valueOf(block, fg);
+        expect(bgHex, `${bg} missing from the ${theme} block`).toBeDefined();
+        expect(fgHex, `${fg} missing from the ${theme} block`).toBeDefined();
+        const ratio = contrast(bgHex!, fgHex!);
+        if (ratio < 4.5) failures.push(`${theme}: ${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('the foreground steps also clear 4.5:1 on the card they may sit on', () => {
+    const STEPS = [
+      '--color-success-strong',
+      '--color-destructive-strong',
+      '--color-warning-strong',
+      '--color-info-strong',
+    ];
+
+    const failures: string[] = [];
+    for (const [theme, block] of [
+      ['light', blockAfter('@theme')],
+      ['dark', blockAfter(":root[data-theme='dark']")],
+    ] as const) {
+      const card = valueOf(block, '--color-card')!;
+      for (const step of STEPS) {
+        const ratio = contrast(card, valueOf(block, step)!);
+        if (ratio < 4.5) failures.push(`${theme}: ${step} on the card is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
   });
 
   it('declares color-scheme on both themes so native controls follow', () => {
@@ -242,8 +393,29 @@ describe('semantic colour utilities have a token behind them', () => {
   });
 
   it('never mistakes a stock palette step for a semantic token', () => {
-    expect(usages.map((u) => u.utility)).not.toContain('text-amber-800');
-    expect(usages.map((u) => u.utility)).not.toContain('bg-amber-100');
+    expect(STOCK_STEP.test('amber-800')).toBe(true);
+    expect(STOCK_STEP.test('warning-tint')).toBe(false);
+    // Assembled rather than written out: Tailwind scans this file too, and a literal
+    // utility string here would make the build emit the very rule under test.
+    expect(usages.map((u) => u.utility)).not.toContain(['text', 'amber', '800'].join('-'));
+  });
+
+  /*
+   * A stock step renders from Tailwind's own palette, so it survives review looking fine while
+   * ignoring the theme: the dark override has to patch the framework's variable to keep up.
+   * Status colour belongs to a role token instead.
+   */
+  it('no component reaches past the tokens into the stock palette', () => {
+    const stockUtility = new RegExp(
+      `\\b(${COLOR_PREFIXES.join('|')})-(${STOCK_FAMILIES.join('|')})-\\d{2,3}\\b`,
+      'g',
+    );
+    const offenders = sourceFiles(srcDir).flatMap((path) =>
+      [...readFileSync(path, 'utf-8').matchAll(stockUtility)].map(
+        (m) => `${m[0]} in src/${relative(srcDir, path).replace(/\\/g, '/')}`,
+      ),
+    );
+    expect([...new Set(offenders)]).toEqual([]);
   });
 
   it('every semantic colour utility resolves to a declared @theme token', () => {

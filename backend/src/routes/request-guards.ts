@@ -18,6 +18,11 @@ export function requireUser(req: express.Request, res: HttpResponse): AuthUser |
   return user;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- Narrows an untrusted request-body field.
+export function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
 // Server-stamped (derivable) columns must never be accepted from the request body.
 // Responds 422 and returns true when the body carries any.
 export function rejectServerDerivedFields(

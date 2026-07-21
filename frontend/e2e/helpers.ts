@@ -80,7 +80,16 @@ export async function loginAs(
   await login(page, username, password);
 }
 
+// Below the md breakpoint the staff shell hides its sidebar and serves the same links from a
+// drawer, so a spec has to open it before it can click one. At desktop width the trigger is not
+// rendered and this is a no-op, which keeps every existing spec working in both viewport projects.
+export async function openStaffMenu(page: Page): Promise<void> {
+  const trigger = page.getByRole('button', { name: es.nav.openMenu });
+  if (await trigger.isVisible().catch(() => false)) await trigger.click();
+}
+
 export async function openScreen(page: Page, label: string): Promise<void> {
+  await openStaffMenu(page);
   await page.getByRole('link', { name: label, exact: true }).click();
   await page.waitForLoadState('networkidle');
 }

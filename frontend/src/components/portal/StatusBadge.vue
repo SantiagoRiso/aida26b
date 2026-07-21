@@ -11,17 +11,17 @@ const { stateLabel } = useStateLabel();
 const badgeClass = computed(() => {
   switch (props.state) {
     case 'requested':
-      return 'bg-blue-100 text-blue-700';
+      return 'bg-info-tint text-info-strong';
     case 'scheduled':
       return 'bg-accent/10 text-accent';
     case 'completed':
-      return 'bg-green-100 text-success';
+      return 'bg-success-tint text-success-strong';
     case 'canceled':
     case 'no_show':
     case 'rejected':
-      return 'bg-slate-100 text-neutral';
+      return 'bg-neutral-tint text-body';
     default:
-      return 'bg-slate-100 text-neutral';
+      return 'bg-neutral-tint text-body';
   }
 });
 </script>

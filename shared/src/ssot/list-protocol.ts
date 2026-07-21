@@ -4,7 +4,13 @@
 
 export const FILTER_PREFIX = 'filter_';
 
-export const RESERVED_LIST_PARAMS = ['page', 'sort', 'dir', 'limit'] as const;
+// Waives the viewer relevance narrowing a list may apply (see the clients list: staff see the
+// people they have already worked with). It widens relevance only; what a viewer is allowed to
+// read at all is never a request's decision.
+export const INCLUDE_UNRELATED_PARAM = 'include_unrelated';
+export const INCLUDE_UNRELATED_VALUE = '1';
+
+export const RESERVED_LIST_PARAMS = ['page', 'sort', 'dir', 'limit', INCLUDE_UNRELATED_PARAM] as const;
 
 export type ReservedListParam = (typeof RESERVED_LIST_PARAMS)[number];
 
@@ -39,6 +45,7 @@ export interface ListRequestParams {
   // Per-field filter values: `text` matches, `!text` excludes, `min,max` is a numeric range
   // (either bound may be blank).
   filters?: Record<string, string>;
+  includeUnrelated?: boolean;
 }
 
 export function listParamEntries(params: ListRequestParams): Array<[string, string]> {
@@ -48,6 +55,7 @@ export function listParamEntries(params: ListRequestParams): Array<[string, stri
   if (params.limit) entries.push(['limit', String(params.limit)]);
   if (params.sort) entries.push(['sort', params.sort]);
   if (params.dir) entries.push(['dir', params.dir]);
+  if (params.includeUnrelated) entries.push([INCLUDE_UNRELATED_PARAM, INCLUDE_UNRELATED_VALUE]);
 
   for (const [field, value] of Object.entries(params.filters ?? {})) {
     if (value !== '' && value !== undefined) entries.push([filterParam(field), value]);
@@ -76,4 +84,5 @@ export interface ListRequestSpec {
   dir: 'asc' | 'desc';
   page: number;
   limit: number;
+  includeUnrelated: boolean;
 }

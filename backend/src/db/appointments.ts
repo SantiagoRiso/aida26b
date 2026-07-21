@@ -2,6 +2,7 @@ import { query, queryOne, queryRequired } from './core';
 import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
 import { appointmentInConflictSql } from './scheduling';
+import { reNumberFragment } from './scope';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
 
 // Null when absent or cross-tenant — both surface as 404 to hide existence.
@@ -285,27 +286,42 @@ export async function listAppointments(
   return { rows, total: Number(count[0].n) };
 }
 
-export async function listRelatedClientIds(
-  db: Queryable,
-  opts: { businessId: number; professionalUserId?: number; granteeUserId?: number },
-): Promise<number[]> {
-  const conditions: string[] = ['u.business_id = $1', 'a.client_user_id IS NOT NULL'];
-  const params: SqlParam[] = [opts.businessId];
+export type RelatedClientScope = {
+  businessId: number;
+  professionalUserId?: number;
+  granteeUserId?: number;
+};
 
-  if (opts.professionalUserId != null) {
-    conditions.push('a.professional_user_id = $2');
-    params.push(opts.professionalUserId);
-  } else if (opts.granteeUserId != null) {
-    conditions.push(grantedProfessionalScope('a.professional_user_id', '$2'));
-    params.push(opts.granteeUserId);
+// The single definition of a prior relationship: an appointment links the viewer to the client.
+// A Professional counts their own turnos; a Receptionist counts the calendars they are granted.
+// Emitted with `?` placeholders (reNumberFragment) so it can be read as a list of ids or embedded
+// as a predicate in a larger statement without the two definitions drifting apart.
+export function relatedClientIdsFragment(scope: RelatedClientScope): { sql: string; params: SqlParam[] } {
+  const conditions: string[] = ['u.business_id = ?', 'a.client_user_id IS NOT NULL'];
+  const params: SqlParam[] = [scope.businessId];
+
+  if (scope.professionalUserId != null) {
+    conditions.push('a.professional_user_id = ?');
+    params.push(scope.professionalUserId);
+  } else if (scope.granteeUserId != null) {
+    conditions.push(grantedProfessionalScope('a.professional_user_id', '?'));
+    params.push(scope.granteeUserId);
   }
 
+  return {
+    sql: `SELECT a.client_user_id
+            FROM appointments a
+            JOIN auth.users u ON u.id = a.professional_user_id
+           WHERE ${conditions.join(' AND ')}`,
+    params,
+  };
+}
+
+export async function listRelatedClientIds(db: Queryable, scope: RelatedClientScope): Promise<number[]> {
+  const { sql, params } = relatedClientIdsFragment(scope);
   const rows = await query<{ client_user_id: string }>(
     db,
-    `SELECT DISTINCT a.client_user_id
-       FROM appointments a
-       JOIN auth.users u ON u.id = a.professional_user_id
-      WHERE ${conditions.join(' AND ')}`,
+    `SELECT DISTINCT client_user_id FROM (${reNumberFragment(sql, 1).sql}) AS related`,
     params,
   );
   return rows.map((r) => Number(r.client_user_id));

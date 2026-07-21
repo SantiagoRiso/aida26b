@@ -10,7 +10,8 @@ import { useAuthStore } from '@/stores/auth';
 import { structure } from '@shared/ssot/structure';
 import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import type { ColumnDef } from '@shared/types/types';
-import type { TableKey } from '@shared/ssot/derived';
+import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
 import type { Role } from '@shared/types/roles';
 import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
 import Skeleton from '@/components/shared/Skeleton.vue';
@@ -84,6 +85,19 @@ describe('SSOT metadata for clients', () => {
   });
 });
 
+// Typed against the services descriptor so a column added to (or dropped from) the SSoT fails
+// here rather than letting the suite assert against a shape the API never returns.
+function serviceRow(id = 1, name = 'Corte simple'): Wire<TableRecordMap['services']> {
+  return {
+    id: String(id),
+    business_id: '1',
+    name,
+    description: null,
+    default_duration_minutes: 30,
+    default_price_ars: '500.00',
+  };
+}
+
 // Mock only the network-calling exports; keep buildQuery as the real implementation so the
 // serialization tests above exercise the actual query-string contract, not a copy of it.
 vi.mock('@/api/crud', async (importOriginal) => {
@@ -92,9 +106,7 @@ vi.mock('@/api/crud', async (importOriginal) => {
     ...actual,
     listRows: vi.fn().mockResolvedValue({
       ok: true,
-      data: [
-        { id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' },
-      ],
+      data: [serviceRow()],
       meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     }),
     getRow: vi.fn(),
@@ -229,7 +241,7 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
     (listRows as ReturnType<typeof vi.fn>).mockClear();
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
+      data: [serviceRow()],
       meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
 
@@ -279,7 +291,9 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
 describe('GenericTable — loading skeleton', () => {
   it('shows the row skeleton while the list request is in flight, then the rows once resolved', async () => {
     const { listRows } = await import('@/api/crud');
-    let resolveFetch!: (value: Awaited<ReturnType<typeof listRows>>) => void;
+    // Pinned to 'services' — the table this test actually mounts. Left generic, the parameter
+    // widens to a union over every table and the fixture stops being checked against services.
+    let resolveFetch!: (value: Awaited<ReturnType<typeof listRows<'services'>>>) => void;
     (listRows as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((r) => { resolveFetch = r; }));
 
     const { pinia, router, i18n } = makePlugins();
@@ -294,7 +308,7 @@ describe('GenericTable — loading skeleton', () => {
 
     resolveFetch({
       ok: true,
-      data: [{ id: '1', name: 'Corte simple', description: null, default_duration_minutes: 30, default_price_ars: '500.00' }],
+      data: [serviceRow()],
       meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     });
     await flushPromises();
@@ -431,15 +445,11 @@ describe('GenericTable — create button requires the descriptor role, not just 
 // real page size (LIST_DEFAULT_LIMIT, currently 50) silently won page 2+ — a total that wasn't a
 // multiple of the LOCAL 20 produced a phantom enabled "Siguiente" the server could never fill.
 describe('GenericTable — pagination limit is derived from meta, not a hardcoded local value', () => {
-  function serviceRow(id: number) {
-    return { id: String(id), name: `Servicio ${id}`, description: null, default_duration_minutes: 30, default_price_ars: '500.00' };
-  }
-
   it('a total that is not a multiple of the old hardcoded local limit (20) shows no phantom Next once the real server limit (50) fits it on one page', async () => {
     const { listRows } = await import('@/api/crud');
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      data: [serviceRow(1)],
+      data: [serviceRow(1, 'Servicio 1')],
       meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 33 },
     });
 
@@ -463,12 +473,12 @@ describe('GenericTable — pagination limit is derived from meta, not a hardcode
     (listRows as ReturnType<typeof vi.fn>)
       .mockImplementationOnce(async () => ({
         ok: true,
-        data: Array.from({ length: 20 }, (_, i) => serviceRow(i + 1)),
+        data: Array.from({ length: 20 }, (_, i) => serviceRow(i + 1, `Servicio ${i + 1}`)),
         meta: { page: 1, limit: 20, total: 33 },
       }))
       .mockImplementationOnce(async () => ({
         ok: true,
-        data: Array.from({ length: 13 }, (_, i) => serviceRow(i + 21)),
+        data: Array.from({ length: 13 }, (_, i) => serviceRow(i + 21, `Servicio ${i + 21}`)),
         meta: { page: 2, limit: 20, total: 33 },
       }));
 
@@ -500,7 +510,7 @@ describe('GenericTable — pagination limit is derived from meta, not a hardcode
     (listRows as ReturnType<typeof vi.fn>)
       .mockImplementationOnce(async () => ({
         ok: true,
-        data: [serviceRow(1)],
+        data: [serviceRow(1, 'Servicio 1')],
         meta: { page: 1, limit: 20, total: 33 },
       }))
       .mockImplementationOnce(async () => ({

@@ -14,32 +14,35 @@ jobs:
     services:
       postgres:
         image: postgres:18-alpine
+        # Superuser only. The owner and application roles are created by database/bootstrap.sh in
+        # the step below, exactly as the local stack does — no POSTGRES_DB, because the app database
+        # must be owned by the owner role rather than by the superuser.
         env:
-          POSTGRES_USER: aida26_user
-          POSTGRES_PASSWORD: aida26pass
-          POSTGRES_DB: professional_agenda
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
         ports:
           - 5544:5432
         options: >-
-          --health-cmd "pg_isready -U aida26_user"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      # Backend / test DB connection — single-role (aida26_user is superuser in CI).
+      # Three genuinely distinct roles, mirroring docker-compose.yml: superuser (cluster bootstrap
+      # and the db-test harness), owner (migrations and seeds), app (the server under test). Collapsing
+      # them makes every app-grant assertion vacuous, since a superuser or table owner passes
+      # has_table_privilege unconditionally.
       DB_HOST: localhost
       DB_PORT: 5544
       DB_NAME: professional_agenda
       DB_USER: aida26_user
       DB_PASSWORD: aida26pass
-      # Used by the migration runner when DB_OWNER_* is unset; aida26_user acts as owner in CI.
-      DB_OWNER_USER: aida26_user
-      DB_OWNER_PASSWORD: aida26pass
-      # The db-test harness (backend/test/helpers.ts) connects its superuser pool with these; in the
-      # single-role CI Postgres, aida26_user is the superuser.
-      POSTGRES_SUPERUSER: aida26_user
-      POSTGRES_SUPERPASS: aida26pass
+      DB_OWNER_USER: aida26_owner
+      DB_OWNER_PASSWORD: aida26ownerpass
+      # backend/test/helpers.ts connects its harness pool with these.
+      POSTGRES_SUPERUSER: postgres
+      POSTGRES_SUPERPASS: postgres
       NODE_ENV: test
       # Argentina-only app: run the whole job (Node runner + Chromium's default clock) in the business
       # timezone so times render as they do in production, not the runner's UTC.
@@ -68,6 +71,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
+      # The postgres image runs this from /docker-entrypoint-initdb.d on a fresh volume in the local
+      # stack; a service container gets no such mount, so run the same script by hand. Reusing it
+      # keeps role creation single-sourced instead of a parallel CI-only scheme.
+      - name: Bootstrap DB roles and application database
+        run: |
+          if ! command -v psql > /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+          sh database/bootstrap.sh
+        env:
+          POSTGRES_USER: postgres
+          PGHOST: localhost
+          PGPORT: 5544
+          PGPASSWORD: postgres
+
       - name: Run migrations
         run: npm run migrate --prefix backend
 
@@ -92,14 +110,15 @@ jobs:
         run: npm run build --prefix backend
 
       - name: Backend unit tests
-        run: npm run test --prefix backend
+        run: npm run test:coverage --prefix backend
 
       # Includes migration-seed-fresh.test.ts, which exercises migrations against a fresh schema.
+      # Plain run rather than coverage: the v8 report merge was seen hanging on this suite.
       - name: Backend DB tests
         run: npm run test:db --prefix backend
 
       - name: Frontend unit tests
-        run: npm run test --prefix frontend
+        run: npm run test:coverage --prefix frontend
 
       - name: Start backend server
         run: node backend/dist/backend/src/server.js &

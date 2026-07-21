@@ -7,7 +7,12 @@ import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import { useAuthStore } from '@/stores/auth';
 import { structure } from '@shared/ssot/structure';
-import { LIST_DEFAULT_LIMIT, filterParam } from '@shared/ssot/list-protocol';
+import {
+  LIST_DEFAULT_LIMIT,
+  filterParam,
+  INCLUDE_UNRELATED_PARAM,
+  INCLUDE_UNRELATED_VALUE,
+} from '@shared/ssot/list-protocol';
 import type { Role } from '@shared/types/roles';
 
 // Only the network-calling exports are stubbed; the query vocabulary the URL and the request
@@ -188,22 +193,43 @@ describe('ClientsView — pagination', () => {
 });
 
 describe('ClientsView — prior-relationship scoping', () => {
-  it('hides clients the viewer has no relationship with, and reveals them on request', async () => {
-    relatedIdsMock.mockResolvedValue({ ok: true, data: [9] });
+  async function toggleUnrelated(wrapper: Awaited<ReturnType<typeof mountView>>['wrapper']) {
+    const toggle = wrapper.findAll('label').find((l) => l.text() === es.clients.includeUnrelated);
+    await toggle!.get('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+  }
+
+  it('leaves the narrowing to the server and renders the page verbatim', async () => {
+    listRowsMock.mockResolvedValue(okPage([selma]));
     const { wrapper } = await mountView('/', 'Professional');
 
+    expect(lastRequest().includeUnrelated).toBe(false);
     expect(rowsOf(wrapper)).toHaveLength(1);
     expect(wrapper.text()).toContain(selma.display_name);
-    expect(wrapper.text()).not.toContain(bart.display_name);
+    // Nothing is filtered out in memory, so the pager's total always matches what is on screen.
+    expect(relatedIdsMock).not.toHaveBeenCalled();
+  });
 
-    const includeUnrelated = wrapper
-      .findAll('label')
-      .find((l) => l.text() === es.clients.includeUnrelated);
-    await includeUnrelated!.get('input[type="checkbox"]').setValue(true);
+  it('asking for unrelated clients re-queries the server and lands in the URL', async () => {
+    listRowsMock.mockResolvedValue(okPage([selma]));
+    relatedIdsMock.mockResolvedValue({ ok: true, data: [9] });
+    const { wrapper, router } = await mountView('/', 'Professional');
 
+    listRowsMock.mockResolvedValue(okPage([bart, selma]));
+    await toggleUnrelated(wrapper);
+
+    expect(lastRequest()).toMatchObject({ page: 1, includeUnrelated: true });
+    expect(router.currentRoute.value.query[INCLUDE_UNRELATED_PARAM]).toBe(INCLUDE_UNRELATED_VALUE);
     expect(rowsOf(wrapper)).toHaveLength(2);
-    expect(wrapper.text()).toContain(bart.display_name);
+    // Only now does the view need to know which of the returned rows are new to the viewer.
     expect(wrapper.text()).toContain(es.clients.noRelationship);
+  });
+
+  it('a waiving URL seeds the very first request', async () => {
+    relatedIdsMock.mockResolvedValue({ ok: true, data: [9] });
+    await mountView(`/?${INCLUDE_UNRELATED_PARAM}=${INCLUDE_UNRELATED_VALUE}`, 'Receptionist');
+
+    expect(lastRequest().includeUnrelated).toBe(true);
   });
 
   it('shows an Admin every client, with no relationship toggle and no relatedness lookup', async () => {
@@ -218,6 +244,7 @@ describe('ClientsView — prior-relationship scoping', () => {
     relatedIdsMock.mockResolvedValue({ ok: true, data: [4, 9] });
     listRowsMock.mockResolvedValue(okPage([bart, selma], 120, 50));
     const { wrapper } = await mountView('/', 'Receptionist');
+    await toggleUnrelated(wrapper);
 
     const next = wrapper.findAll('button').find((b) => b.text() === es.generic.next);
     await next!.trigger('click');

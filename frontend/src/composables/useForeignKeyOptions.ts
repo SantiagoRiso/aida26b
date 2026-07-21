@@ -1,6 +1,7 @@
-import { ref, computed, watch } from 'vue';
+import { ref, computed } from 'vue';
 import type { Ref } from 'vue';
 import { listRows } from '@/api/crud';
+import { debounce } from '@/composables/debounce';
 import type { ForeignKeyDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import { isTableKey } from '@shared/utils/utils';
@@ -14,13 +15,21 @@ export interface SelectOption {
 // column is null / the row has not loaded.
 export type ForeignKeyValue = string | number | null | undefined;
 
-// Server list cap — one page covers every FK target table today.
+// First page of a referenced table: enough to resolve the labels of what is already on screen
+// and to fill a dropdown, never a guarantee of completeness.
 export const FK_OPTIONS_LIMIT = 500;
+
+// A typed query answers with matches, not with a roster, so it needs a far smaller page than
+// the unfiltered first page.
+export const FK_SEARCH_LIMIT = 50;
+
+export const FK_SEARCH_DEBOUNCE_MS = 250;
 
 interface FkTableEntry {
   rows: Ref<ReadonlyArray<object>>;
   loading: Ref<boolean>;
   reload: () => Promise<void>;
+  merge: (extra: ReadonlyArray<object>, valueField: string) => void;
 }
 
 const cache = new Map<string, FkTableEntry>();
@@ -56,13 +65,24 @@ function acquire(table: TableKey): FkTableEntry {
     const reload = async () => {
       loading.value = true;
       try {
-        const result = await listRows(table, { limit: FK_OPTIONS_LIMIT });
+        // An id must resolve to a name whatever the viewer's relevance narrowing would hide,
+        // or a referenced row renders blank. Permission scoping still applies.
+        const result = await listRows(table, { limit: FK_OPTIONS_LIMIT, includeUnrelated: true });
         rows.value = result.ok ? result.data : [];
       } finally {
         loading.value = false;
       }
     };
-    entry = { rows, loading, reload };
+    // Rows found by a search join the known set instead of replacing it: a value picked from a
+    // query must keep resolving to its name once the query is cleared.
+    const merge = (extra: ReadonlyArray<object>, valueField: string) => {
+      if (extra.length === 0) return;
+      const byValue = new Map<string, object>();
+      for (const row of rows.value) byValue.set(String(Reflect.get(row, valueField) ?? ''), row);
+      for (const row of extra) byValue.set(String(Reflect.get(row, valueField) ?? ''), row);
+      rows.value = [...byValue.values()];
+    };
+    entry = { rows, loading, reload, merge };
     cache.set(table, entry);
     void entry.reload();
   }
@@ -79,48 +99,49 @@ export function resetFkOptionsCache(): void {
   cache.clear();
 }
 
-export function useForeignKeyOptions(
-  fk: ForeignKeyDef,
-  getParentValue?: () => string | undefined,
-) {
+export interface FkOptionsConfig {
+  // Which column a typed query is matched against, decided per query. Defaults to the label
+  // field; a roster searchable by document number picks the column from the shape of the text.
+  searchField?: (term: string) => string;
+}
+
+export function useForeignKeyOptions(fk: ForeignKeyDef, config: FkOptionsConfig = {}) {
   if (!isTableKey(fk.table)) throw new Error(`Unknown foreign-key table '${fk.table}'`);
   const table = fk.table;
-  const dependency = fk.dependsOn;
+  const entry = acquire(table);
+  const options = computed(() => toOptions(entry.rows.value, fk));
 
-  if (!dependency) {
-    const entry = acquire(table);
-    const options = computed(() => toOptions(entry.rows.value, fk));
-    return { options, loading: entry.loading, labelFor: makeLabelFor(options) };
-  }
+  const searching = ref(false);
+  const searchField = config.searchField ?? (() => fk.labelField);
+  // Only the newest query may publish: a slow earlier request must not overwrite it.
+  let currentQuery = 0;
 
-  // Dependent options are filtered by the parent's value — per-instance, never cached.
-  // Refetched only when the parent value changes, preventing refetch storms in a form.
-  const filterField = dependency.foreignField;
-  const options = ref<SelectOption[]>([]);
-  const loading = ref(false);
-
-  async function load(parentValue?: string) {
-    if (!parentValue) {
-      options.value = [];
+  async function runSearch(term: string): Promise<void> {
+    const q = term.trim();
+    if (q === '') {
+      searching.value = false;
       return;
     }
-    loading.value = true;
+    const mine = ++currentQuery;
+    searching.value = true;
     try {
       const result = await listRows(table, {
-        filters: { [filterField]: parentValue },
-        limit: FK_OPTIONS_LIMIT,
+        filters: { [searchField(q)]: q },
+        limit: FK_SEARCH_LIMIT,
+        includeUnrelated: true,
       });
-      options.value = result.ok ? toOptions(result.data, fk) : [];
+      if (mine !== currentQuery) return;
+      if (result.ok) entry.merge(result.data, fk.valueField);
     } finally {
-      loading.value = false;
+      if (mine === currentQuery) searching.value = false;
     }
   }
 
-  if (getParentValue) {
-    watch(getParentValue, (newVal) => {
-      void load(newVal);
-    }, { immediate: true });
-  }
+  // The option set is a query result, not the first page cut short: what the viewer types goes
+  // to the server, so a value beyond the first page is still reachable.
+  const search = debounce((term: string) => { void runSearch(term); }, FK_SEARCH_DEBOUNCE_MS);
 
-  return { options, loading, labelFor: makeLabelFor(options) };
+  const loading = computed(() => entry.loading.value || searching.value);
+
+  return { options, loading, labelFor: makeLabelFor(options), search };
 }

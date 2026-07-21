@@ -129,25 +129,24 @@ describe('Ledger roleAllowedFor create gate', () => {
 });
 
 describe('AuditView outcome badge class logic', () => {
-  function getOutcomeClass(outcome: string): string {
-    if (outcome === 'success') return 'bg-green-100 text-success';
-    if (outcome === 'denied') return 'bg-red-100 text-destructive';
-    return 'bg-yellow-100 text-warning';
-  }
-
-  it('success maps to green', () => {
-    expect(getOutcomeClass('success')).toBe('bg-green-100 text-success');
+  it('success reads as success', () => {
+    expect(auditOutcomeBadgeClass('success')).toBe(BADGE_TONE_CLASS.success);
   });
 
-  it('denied maps to red (destructive)', () => {
-    expect(getOutcomeClass('denied')).toBe('bg-red-100 text-destructive');
+  it('denied reads as destructive', () => {
+    expect(auditOutcomeBadgeClass('denied')).toBe(BADGE_TONE_CLASS.danger);
   });
 
-  it('failure maps to yellow (warning)', () => {
-    expect(getOutcomeClass('failure')).toBe('bg-yellow-100 text-warning');
+  it('failure reads as a warning, not a denial', () => {
+    expect(auditOutcomeBadgeClass('failure')).toBe(BADGE_TONE_CLASS.warning);
+  });
+
+  it('an unrecognised outcome falls back to the neutral badge', () => {
+    expect(auditOutcomeBadgeClass('something_new')).toBe(BADGE_TONE_CLASS.neutral);
   });
 });
 
+import { auditOutcomeBadgeClass, BADGE_TONE_CLASS } from '@/composables/badgeTone';
 import { getBalance, getLedger, createEntry } from '@/api/ledger';
 import { listAudit } from '@/api/audit';
 import { updateSettings } from '@/api/business';

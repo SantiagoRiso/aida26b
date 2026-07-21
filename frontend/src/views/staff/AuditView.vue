@@ -248,7 +248,9 @@ if (isAdmin.value) {
               v-for="event in events"
               :key="event.id"
               class="virtualized-row hover:bg-surface"
-              :class="{ 'bg-red-50': event.outcome === 'denied' }"
+              :class="{
+                'bg-destructive-tint [&>td]:text-destructive-strong': event.outcome === 'denied',
+              }"
             >
               <td class="px-4 py-3 tabular-nums text-neutral whitespace-nowrap">
                 {{ formatDateTime(event.created_at) }}

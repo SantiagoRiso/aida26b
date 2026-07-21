@@ -1,4 +1,5 @@
 import { structure } from "../ssot/structure";
+import { WRITE_PROTECTED_COLUMNS } from "../ssot/domain/people";
 import type { TableKey } from "../ssot/derived";
 import type {
   ColumnDef,
@@ -81,6 +82,13 @@ export const BUSINESS_ID_COLUMN = 'business_id';
 
 export function isBusinessScoped(tableKey: TableKey): boolean {
   return tableOf(tableKey).businessScoped === true;
+}
+
+// Columns the generic write engine must never target on the given physical table, whatever the
+// descriptor routed there declares editable. Keyed on the physical table so every logical view over
+// it inherits the same protection.
+export function getWriteProtectedColumns(physicalTable: string): ReadonlySet<string> {
+  return new Set(WRITE_PROTECTED_COLUMNS[physicalTable] ?? []);
 }
 
 export function isProtected(tableKey: TableKey): boolean {

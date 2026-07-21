@@ -13,6 +13,8 @@ export const es = {
     profile: 'Perfil',
     settings: 'Configuración',
     logout: 'Salir',
+    menu: 'Menú',
+    openMenu: 'Abrir el menú',
     myAppointments: 'Mis turnos',
     myBalance: 'Mi saldo',
     preferences: 'Preferencias',

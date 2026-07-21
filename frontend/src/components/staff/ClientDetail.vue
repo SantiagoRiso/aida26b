@@ -154,12 +154,12 @@ onMounted(load);
         <div
           v-else
           class="rounded-lg border p-4 flex items-center justify-between"
-          :class="balancePositive ? 'border-destructive bg-red-50' : 'border-border bg-card'"
+          :class="balancePositive ? 'border-destructive bg-destructive-tint' : 'border-border bg-card'"
         >
           <span class="text-sm font-semibold text-heading">{{ t('clients.balance') }}</span>
           <span
             class="text-xl font-semibold tabular-nums"
-            :class="balancePositive ? 'text-destructive' : 'text-success'"
+            :class="balancePositive ? 'text-destructive-strong' : 'text-success-strong'"
           >
             {{ balance != null ? formatARS(balance) : t('generic.emptyValue') }}
           </span>
@@ -219,7 +219,7 @@ onMounted(load);
               </div>
               <button
                 type="button"
-                class="rounded-md px-2 py-1 text-sm text-destructive hover:bg-red-50"
+                class="rounded-md px-2 py-1 text-sm text-destructive hover:bg-destructive-tint hover:text-destructive-strong"
                 :title="t('calendar.cancel')"
                 @click="requestCancel(appt.id)"
               >

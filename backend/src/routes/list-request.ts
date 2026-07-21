@@ -3,6 +3,8 @@ import {
   LIST_DEFAULT_LIMIT,
   LIST_MAX_LIMIT,
   LIST_MAX_PAGE,
+  INCLUDE_UNRELATED_PARAM,
+  INCLUDE_UNRELATED_VALUE,
   isFilterParam,
   stripFilterPrefix,
 } from '../../../shared/src/ssot/list-protocol';
@@ -66,5 +68,7 @@ export function parseListRequest(query: express.Request['query']): ListRequestSp
     ),
   );
 
-  return { filters, sort, dir, page, limit };
+  const includeUnrelated = firstOf(query[INCLUDE_UNRELATED_PARAM]) === INCLUDE_UNRELATED_VALUE;
+
+  return { filters, sort, dir, page, limit, includeUnrelated };
 }

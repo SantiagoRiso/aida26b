@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { guardRoute, guardMiddleware } from '../src/helpers';
 import { DbError } from '../src/db/errors';
 import { httpError } from '../src/errors';
+import type { RequestWithId } from '../src/logger';
 
 type Envelope = { success: boolean; error: { code: string; message: string } };
 type LogEntry = Record<string, string | number>;
@@ -49,7 +50,7 @@ const req = { method: 'GET', path: '/api/audit' } as Request;
 describe('async handler crash net', () => {
   it('a rejecting handler responds 500 with the standard envelope and logs the failure with its reqId', async () => {
     const res = fakeRes();
-    const reqWithId = { method: 'GET', path: '/api/audit', reqId: 'req-abc-123' } as Request;
+    const reqWithId = { method: 'GET', path: '/api/audit', reqId: 'req-abc-123' } as RequestWithId;
     const handler = guardRoute(async () => {
       throw new Error('permission denied for table audit_events');
     });

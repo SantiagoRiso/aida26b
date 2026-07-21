@@ -1,7 +1,7 @@
 import { query, queryOne } from './core';
 import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
-import type { AppointmentSeriesInsert, AppointmentSeriesRow } from '../../../shared/src/ssot/query-types';
+import type { AppointmentRow, AppointmentSeriesInsert, AppointmentSeriesRow } from '../../../shared/src/ssot/query-types';
 import { ACTIVE_SERIES_STATUS, ENDED_SERIES_STATUS, UNTIL_END_KIND } from '../../../shared/src/ssot/domain/recurrence';
 
 // appointment_series carries no business_id column; business is derived via the owning
@@ -185,6 +185,20 @@ export async function getMaterializedOverrides(
       WHERE series_id = ANY($1)
         AND occurrence_date >= $2 AND occurrence_date <= $3`,
     [seriesIds, windowStart, windowEnd],
+  );
+}
+
+// The single materialized row for one occurrence, keyed by the partial unique index
+// (series_id, occurrence_date). Null means the occurrence is still virtual.
+export function getMaterializedOccurrence(
+  db: Queryable,
+  seriesId: string,
+  occurrenceDate: string,
+): Promise<AppointmentRow | null> {
+  return queryOne<AppointmentRow>(
+    db,
+    `SELECT * FROM appointments WHERE series_id = $1 AND occurrence_date = $2`,
+    [seriesId, occurrenceDate],
   );
 }
 

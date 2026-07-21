@@ -81,7 +81,7 @@ function emitFilters() {
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === null
         ? 'bg-accent text-inverted border-accent'
-        : 'bg-surface border-border text-current hover:bg-slate-100'"
+        : 'bg-surface border-border text-current hover:bg-neutral-tint'"
       @click="selectProfessional(null)"
     >
       {{ t('calendar.allProfessionals') }}
@@ -94,7 +94,7 @@ function emitFilters() {
       class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedProfessional === prof.id
         ? 'bg-accent text-inverted border-accent'
-        : 'bg-surface border-border text-current hover:bg-slate-100'"
+        : 'bg-surface border-border text-current hover:bg-neutral-tint'"
       @click="selectProfessional(prof.id)"
     >
       <!-- Same hue the professional's blocks use on the calendar. -->
@@ -114,7 +114,7 @@ function emitFilters() {
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedResource === null
         ? 'bg-accent text-inverted border-accent'
-        : 'bg-surface border-border text-current hover:bg-slate-100'"
+        : 'bg-surface border-border text-current hover:bg-neutral-tint'"
       @click="selectResource(null)"
     >
       {{ t('calendar.allResources') }}
@@ -127,7 +127,7 @@ function emitFilters() {
       class="rounded-full px-3 py-1 text-sm font-semibold border transition-colors"
       :class="selectedResource === res.id
         ? 'bg-accent text-inverted border-accent'
-        : 'bg-surface border-border text-current hover:bg-slate-100'"
+        : 'bg-surface border-border text-current hover:bg-neutral-tint'"
       @click="selectResource(res.id)"
     >
       {{ res.label }}

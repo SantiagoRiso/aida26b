@@ -298,7 +298,7 @@ defineExpose({ rows, save });
 
           <p
             v-if="slotRemainder(row)"
-            class="mt-2 flex items-start gap-1 pl-6 text-xs text-warning"
+            class="mt-2 flex items-start gap-1 pl-6 text-xs text-warning-strong"
             :data-testid="`block-service-warning-${row.serviceId}`"
           >
             <span aria-hidden="true">⚠</span>

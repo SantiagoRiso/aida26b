@@ -119,7 +119,7 @@ function slotDuration(slot: TimeInterval): number {
         {{ t('calendar.slotPickerPrompt') }}
       </p>
 
-      <p v-else-if="outsideWindow" class="text-sm text-amber-700 italic">
+      <p v-else-if="outsideWindow" class="text-sm text-warning-strong italic">
         {{ t('calendar.outsideBookingWindow') }}
       </p>
 
@@ -135,7 +135,7 @@ function slotDuration(slot: TimeInterval): number {
         class="rounded border px-3 py-1.5 text-sm font-semibold transition-colors min-h-[44px]"
         :class="modelValue === slot.start
           ? 'bg-accent text-inverted border-accent'
-          : 'bg-surface border-border text-current hover:bg-slate-100'"
+          : 'bg-surface border-border text-current hover:bg-neutral-tint'"
         :aria-pressed="modelValue === slot.start"
         @click="select(slot)"
       >

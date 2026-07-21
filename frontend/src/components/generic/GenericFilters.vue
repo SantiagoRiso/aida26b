@@ -3,9 +3,10 @@ import { ref, computed } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { structure } from '@shared/ssot/structure';
-import type { ColumnDef } from '@shared/types/types';
+import type { ColumnDef, ForeignKeyDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import AppButton from '@/components/shared/AppButton.vue';
+import ForeignKeySelect from '@/components/shared/ForeignKeySelect.vue';
 
 const props = defineProps<{ tableKey: TableKey; initial?: Record<string, string> }>();
 const emit = defineEmits<{ change: [filters: Record<string, string>] }>();
@@ -57,6 +58,12 @@ function isEnumField(field: string): boolean {
   return (colForField(field)?.options?.length ?? 0) > 0;
 }
 
+// The backend matches a referenced id exactly, so free text on such a column can only ever miss.
+// It is picked from the referenced rows instead, by name.
+function foreignKeyForField(field: string): ForeignKeyDef | undefined {
+  return colForField(field)?.foreignKey;
+}
+
 // Serializes active filters to the filter_ query contract.
 // Negation: prefix with '!'. Numeric range: 'min,max'.
 function serialize(): Record<string, string> {
@@ -104,7 +111,7 @@ function onValueChange() {
     <div class="flex items-center gap-2">
       <select
         v-model="selectedField"
-        class="rounded-md border border-border bg-card px-3 py-2 text-sm"
+        class="min-w-0 flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm sm:flex-none"
         :aria-label="i18n.global.t('generic.selectColumnAria')"
       >
         <option value="">{{ i18n.global.t('generic.addFilterPlaceholder') }}</option>
@@ -165,11 +172,22 @@ function onValueChange() {
         </select>
       </template>
 
+      <template v-else-if="foreignKeyForField(f.field)">
+        <div class="w-56 max-w-full">
+          <ForeignKeySelect
+            :foreign-key="foreignKeyForField(f.field)!"
+            :model-value="f.value || null"
+            :placeholder="i18n.global.t('generic.all')"
+            @update:model-value="f.value = $event ?? ''; onValueChange()"
+          />
+        </div>
+      </template>
+
       <template v-else>
         <input
           v-model="f.value"
           type="text"
-          class="w-40 rounded border border-border px-2 py-1 text-sm"
+          class="w-40 max-w-full rounded border border-border px-2 py-1 text-sm"
           :placeholder="i18n.global.t('generic.filterPlaceholder')"
           @input="onValueChange"
         />

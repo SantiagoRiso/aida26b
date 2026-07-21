@@ -6,7 +6,21 @@ import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import type { ConflictVerdict } from '@shared/ssot/domain/conflict';
-import type { CalendarOptions, EventMountArg } from '@fullcalendar/core';
+import type { CalendarOptions, EventApi } from '@fullcalendar/core';
+
+// FullCalendar hands eventDidMount a live EventImpl (35+ members) that cannot exist outside a
+// mounted calendar. The hook only reads `el` and `event.extendedProps`, so the double supplies
+// exactly that surface; declaring it as a method keeps the parameter bivariant, so the real
+// CalendarOptions.eventDidMount satisfies it without a cast.
+type MountableCalendar = {
+  eventDidMount?(info: { el: HTMLElement; event: Pick<EventApi, 'extendedProps'> }): void;
+};
+
+function mountAppointmentEvent(options: MountableCalendar, appointment: Appointment): HTMLElement {
+  const el = document.createElement('div');
+  options.eventDidMount?.({ el, event: { extendedProps: { appointment } } });
+  return el;
+}
 
 describe('colorForProfessional', () => {
   it('returns a stable color for the same id across calls', () => {
@@ -88,7 +102,7 @@ describe('useAppointmentCalendar editable flag', () => {
   it('editable is false when viewer role is Client', () => {
     const viewer = ref<AuthUser | null>({
       id: 1, username: 'cli', email: null, role: 'Client',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     });
     const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
     expect(calendarOptions.value.editable).toBe(false);
@@ -98,7 +112,7 @@ describe('useAppointmentCalendar editable flag', () => {
   it('editable is true when viewer role is Admin', () => {
     const viewer = ref<AuthUser | null>({
       id: 2, username: 'admin', email: null, role: 'Admin',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     });
     const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
     expect(calendarOptions.value.editable).toBe(true);
@@ -107,7 +121,7 @@ describe('useAppointmentCalendar editable flag', () => {
   it('editable is true when viewer role is Professional', () => {
     const viewer = ref<AuthUser | null>({
       id: 3, username: 'prof', email: null, role: 'Professional',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     });
     const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
     expect(calendarOptions.value.editable).toBe(true);
@@ -148,7 +162,7 @@ describe('useAppointmentCalendar editable flag', () => {
     // Duration is changed only through the reschedule form's input — no drag-resize handles.
     const viewer = ref<AuthUser | null>({
       id: 2, username: 'admin', email: null, role: 'Admin',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     });
     const { calendarOptions } = useAppointmentCalendar(ref<Appointment[]>([]), viewer, handlers);
     expect(calendarOptions.value.editable).toBe(true);
@@ -187,7 +201,7 @@ describe('useAppointmentCalendar locale follows the app language', () => {
 describe('useAppointmentCalendar snap grid', () => {
   const viewer = ref<AuthUser | null>({
     id: 2, username: 'admin', email: null, role: 'Admin',
-    business_id: '1', is_active: true, must_change_password: false,
+    business_id: 1, is_active: true, must_change_password: false,
   });
   const handlers = {
     onSelect: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onSelect'],
@@ -265,12 +279,7 @@ describe('useAppointmentCalendar hides non-events', () => {
       ...handlers,
       onEventPointerDown,
     });
-    const element = document.createElement('div');
-    const eventDidMount = calendarOptions.value.eventDidMount as (info: EventMountArg) => void;
-    eventDidMount({
-      el: element,
-      event: { extendedProps: { appointment: original } },
-    });
+    const element = mountAppointmentEvent(calendarOptions.value, original);
 
     appointments.value = [{ ...original, starts_at: '2026-07-20T14:40:00', ends_at: '2026-07-20T15:30:00' }];
     appointments.value = [{ ...appointments.value[0]!, starts_at: '2026-07-20T15:30:00', ends_at: '2026-07-20T16:20:00' }];
@@ -286,15 +295,16 @@ describe('useAppointmentCalendar hides non-events', () => {
   it('does not expose staff conflict cues to clients', () => {
     const conflicted = { ...appt(1, 'scheduled'), override_conflict: true, in_conflict: true };
     const appointments = ref<Appointment[]>([conflicted]);
-    const clientViewer = ref<AuthUser | null>({ id: 8, role: 'Client', business_id: 1 } as AuthUser);
+    const clientViewer = ref<AuthUser | null>({
+      id: 8, username: 'cli', email: null, role: 'Client',
+      business_id: 1, is_active: true, must_change_password: false,
+    });
     const { calendarOptions } = useAppointmentCalendar(appointments, clientViewer, handlers);
     const event = (calendarOptions.value.events as { classNames?: string[] }[])[0]!;
     expect(event.classNames).not.toContain('appt-sobreturno');
     expect(event.classNames).not.toContain('appt-in-conflict');
 
-    const element = document.createElement('div');
-    const eventDidMount = calendarOptions.value.eventDidMount as (info: EventMountArg) => void;
-    eventDidMount({ el: element, event: { extendedProps: { appointment: conflicted } } });
+    const element = mountAppointmentEvent(calendarOptions.value, conflicted);
     expect(element.hasAttribute('data-in-conflict')).toBe(false);
     expect(element.getAttribute('title') ?? '').not.toContain('conflict');
   });
