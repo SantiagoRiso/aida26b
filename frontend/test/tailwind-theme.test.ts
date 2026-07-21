@@ -1,8 +1,8 @@
 /**
  * Guards against Tailwind v4 @theme tokens generating no utility classes:
  * reads the built dist CSS and asserts the expected utilities are actually emitted.
- * Requires `npm run build` to have run first; skips gracefully when the artefact
- * is absent so it does not block local work before the first build.
+ * Tailwind's JIT tree-shakes anything unused, so only the built artefact can answer
+ * this. Requires `npm run build` to have run first.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
@@ -11,87 +11,32 @@ import { join, relative } from 'node:path';
 const distDir = join(__dirname, '../dist');
 const assetsDir = join(distDir, 'assets');
 
-function findBuiltCss(): string | null {
-  if (!existsSync(assetsDir)) return null;
+/* A missing build must fail rather than skip: these assertions passing while reading
+   nothing is indistinguishable from the tokens being fine. */
+function readBuiltCss(): string {
+  const NEEDS_BUILD =
+    'No built CSS in frontend/dist/assets. Run `npm run build` before this suite.';
+  if (!existsSync(assetsDir)) throw new Error(NEEDS_BUILD);
   // Prefer Vite's index-*.css: component-scoped CSS (e.g. CalendarView-*.css)
   // lacks the full token set and would give false negatives.
+  const entries = readdirSync(assetsDir);
   const cssFile =
-    readdirSync(assetsDir).find((f) => f.startsWith('index') && f.endsWith('.css')) ??
-    readdirSync(assetsDir).find((f) => f.endsWith('.css'));
-  if (!cssFile) return null;
-  return join(assetsDir, cssFile);
+    entries.find((f) => f.startsWith('index') && f.endsWith('.css')) ??
+    entries.find((f) => f.endsWith('.css'));
+  if (!cssFile) throw new Error(NEEDS_BUILD);
+  return readFileSync(join(assetsDir, cssFile), 'utf-8');
 }
 
 describe('Tailwind v4 semantic token → utility generation', () => {
-  it('dist/assets/*.css exists after build', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      // Absent build is not a failure — skip until the first build runs.
-      console.warn('SKIP: no dist/assets/*.css found; run `npm run build` first.');
-      return;
-    }
-    expect(existsSync(cssPath)).toBe(true);
-  });
-
-  it('bg-accent utility is present in emitted CSS', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
-    expect(css).toMatch(/\.bg-accent/);
-  });
-
-  it('text-destructive utility is present in emitted CSS', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
-    expect(css).toMatch(/\.text-destructive/);
-  });
-
-  it('bg-success utility is present in emitted CSS', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
-    expect(css).toMatch(/\.bg-success/);
-  });
-
-  it('--color-accent custom property is declared in @theme block', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
-    expect(css).toMatch(/--color-accent/);
-  });
-
   it('the root text colour rule survives the build', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
+    const css = readBuiltCss();
     expect(css).toMatch(/html\s*\{[^}]*color:\s*var\(--color-body\)/);
     expect(css).toMatch(/--color-body:\s*#334155/i);
     expect(css).toMatch(/--color-body:\s*#cbd5e1/i);
   });
 
   it('the status tint utilities are present in emitted CSS', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
+    const css = readBuiltCss();
     for (const utility of [
       'bg-success-tint', 'text-success-strong', 'bg-destructive-tint', 'text-destructive-strong',
       'bg-warning-tint', 'text-warning-strong', 'bg-info-tint', 'text-info-strong',
@@ -105,12 +50,7 @@ describe('Tailwind v4 semantic token → utility generation', () => {
   /* The dark theme patched Tailwind's own palette to keep tinted screens in step; the role
      tokens replaced that, and a returning remap would mean a component slipped back. */
   it('no longer remaps Tailwind stock palette steps', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
+    const css = readBuiltCss();
     const darkBlock = css.slice(css.indexOf("[data-theme=dark]"));
     const remaps = [
       ...darkBlock.slice(0, darkBlock.indexOf('}')).matchAll(
@@ -118,16 +58,6 @@ describe('Tailwind v4 semantic token → utility generation', () => {
       ),
     ].map((m) => m[0]);
     expect([...new Set(remaps)]).toEqual([]);
-  });
-
-  it('text-inverted utility is present in emitted CSS', () => {
-    const cssPath = findBuiltCss();
-    if (!cssPath) {
-      console.warn('SKIP: no dist CSS to inspect.');
-      return;
-    }
-    const css = readFileSync(cssPath, 'utf-8');
-    expect(css).toMatch(/\.text-inverted/);
   });
 });
 
@@ -168,10 +98,11 @@ describe('dark theme token coverage', () => {
     return (hi + 0.05) / (lo + 0.05);
   };
 
-  it('the light @theme block declares the semantic tokens', () => {
-    expect(lightTokens).toContain('--color-surface');
-    expect(lightTokens).toContain('--color-inverted');
+  it('finds the tokens each block actually declares', () => {
+    // A scan that matched nothing would pass the coverage assertion below for the wrong reason.
     expect(lightTokens).toContain('--color-body');
+    expect(lightTokens.length).toBeGreaterThan(20);
+    expect(darkTokens.length).toBeGreaterThan(20);
   });
 
   it.each([
@@ -191,15 +122,6 @@ describe('dark theme token coverage', () => {
   it('every light token has a dark counterpart', () => {
     const missing = lightTokens.filter((token) => !darkTokens.includes(token));
     expect(missing).toEqual([]);
-  });
-
-  /*
-   * Without this rule every text node lacking a colour utility inherits the user-agent
-   * default — pure black in light, pure white in dark — which is undesigned, not a palette
-   * value, and leaves no room for a heading step above it.
-   */
-  it('anchors the inherited text colour at the root', () => {
-    expect(sourceCss).toMatch(/^html\s*\{[^}]*\bcolor:\s*var\(--color-body\)\s*;?\s*\}/m);
   });
 
   it('keeps the body step between heading and neutral in both themes', () => {

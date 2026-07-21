@@ -8,6 +8,10 @@ export default defineConfig({
     include: ['test/**/*.db.test.ts'],
     pool: 'forks',
     fileParallelism: false,
+    // DROP DATABASE blocks while other backends hold the database rather than failing fast, so a
+    // reset behind a competing run waits seconds before it can proceed. The default 10s left no
+    // room for that wait plus the migrations that share the same hook.
+    hookTimeout: 30_000,
     // Drops the run's database (TEST_DB_NAME, default professional_agenda_test) once every file
     // has finished, so a uniquely-named concurrent run doesn't leave an orphan behind.
     globalSetup: ['./test/global-setup.ts'],

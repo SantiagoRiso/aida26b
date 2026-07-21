@@ -7,6 +7,22 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountAppointmentRoutes } from '../src/routes/appointments';
 import type { AuthUser } from '../src/auth';
+import { makeApiClient, dataOf, errorOf, metaOf } from './api_client';
+import type { JsonBody } from './api_client';
+import type {
+  AppointmentResponse,
+  AppointmentRow,
+  AppointmentSeriesRow,
+  ListAppointment,
+  Wire,
+} from '../../shared/src/ssot/query-types';
+import type {
+  EndSeriesResult,
+  MaterializedOccurrenceResult,
+  ScheduleSeriesResult,
+  SeriesResult,
+  SplitSeriesResult,
+} from '../../shared/src/ssot/contracts/appointments';
 
 let pool: Pool;
 let server: http.Server;
@@ -18,26 +34,13 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
   next();
 };
 
-type ReqValue = string | number | boolean | null | undefined;
-type ReqBody = Record<string, ReqValue | Record<string, ReqValue>>;
-type Envelope = {
-  success?: boolean;
-  data?: object;
-  meta?: { page: number; limit: number; total: number };
-  error?: {
-    code: string;
-    message: string;
-    fields?: Record<string, string>;
-    fieldDetails?: Record<string, { key: string; params?: Record<string, string | number> }>;
-  };
-};
+type Series = Wire<AppointmentSeriesRow>;
+type ListRow = Wire<ListAppointment>;
 
-async function seriesReq(method: 'GET' | 'POST' | 'PUT', path: string, body?: ReqBody) {
-  const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const response = await fetch(`${baseUrl}${path}`, opts);
-  const text = await response.text();
-  return { status: response.status, body: text ? (JSON.parse(text) as Envelope) : null };
+const request = makeApiClient(() => baseUrl);
+
+function seriesReq<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: JsonBody) {
+  return request<T>(path, { method, body });
 }
 
 let bizId: number;
@@ -51,7 +54,6 @@ let recepNoGrantId: number;
 let recepWithGrantId: number;
 
 const BA_TZ = 'America/Argentina/Buenos_Aires';
-void BA_TZ;
 
 // Anchor the series to the next Monday from now — matches the professional's only available
 // block — so the suite never rots against a frozen calendar date.
@@ -93,7 +95,7 @@ function asUser(id: number, role: AuthUser['role'], businessId = bizId): AuthUse
   };
 }
 
-function seriesBody(overrides: ReqBody = {}): ReqBody {
+function seriesBody(overrides: JsonBody = {}): JsonBody {
   return {
     client_user_id: clientId,
     professional_user_id: proId,
@@ -107,6 +109,18 @@ function seriesBody(overrides: ReqBody = {}): ReqBody {
     end_kind: 'open',
     ...overrides,
   };
+}
+
+function createSeries(overrides: JsonBody = {}) {
+  return seriesReq<ScheduleSeriesResult<Series>>('POST', '/api/appointments/series', seriesBody(overrides));
+}
+
+function materialize(seriesId: string, occurrenceDate: string) {
+  return seriesReq<MaterializedOccurrenceResult<Wire<AppointmentRow>>>(
+    'POST',
+    `/api/appointments/series/${seriesId}/materialize`,
+    { occurrence_date: occurrenceDate },
+  );
 }
 
 beforeAll(async () => {
@@ -187,44 +201,42 @@ describe('POST /api/appointments/series — create + preview', () => {
     );
 
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody());
+    const res = await createSeries();
     expect(res.status).toBe(201);
-    const data = res.body!.data as { series: { id: string; status: string }; preview: { skipped: { date: string }[] } };
+    const data = dataOf(res);
     expect(data.series.status).toBe('active');
     expect(data.preview.skipped.some((s) => s.date === SECOND_MONDAY)).toBe(true);
 
     await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [data.series.id]);
-    await pool.query(`DELETE FROM appointments WHERE id = $1`, [Number(blocker.rows[0].id)]);
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [blocker.rows[0].id]);
   });
 });
 
 describe('POST /api/appointments/series — authz', () => {
   test('a Professional creating for themselves succeeds', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 63) }));
+    const res = await createSeries({ start_date: addDaysISO(MONDAY, 63) });
     expect(res.status).toBe(201);
-    const data = res.body!.data as { series: { id: string } };
-    await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [data.series.id]);
+    await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [dataOf(res).series.id]);
   });
 
   test('a Professional creating for another professional is denied (403)', async () => {
     currentUser = asUser(pro2Id, 'Professional');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody());
+    const res = await createSeries();
     expect(res.status).toBe(403);
   });
 
   test('an ungranted Receptionist is denied (403)', async () => {
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody());
+    const res = await createSeries();
     expect(res.status).toBe(403);
   });
 
   test('a granted Receptionist succeeds (201)', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 70) }));
+    const res = await createSeries({ start_date: addDaysISO(MONDAY, 70) });
     expect(res.status).toBe(201);
-    const data = res.body!.data as { series: { id: string } };
-    await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [data.series.id]);
+    await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [dataOf(res).series.id]);
   });
 });
 
@@ -233,21 +245,22 @@ describe('POST /api/appointments/series — rule-shape validation', () => {
     currentUser = asUser(proId, 'Professional');
     const body = seriesBody({ start_date: addDaysISO(MONDAY, 77) });
     delete body.weekday;
-    const res = await seriesReq('POST', '/api/appointments/series', body);
+    const res = await seriesReq<ScheduleSeriesResult<Series>>('POST', '/api/appointments/series', body);
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fields!.weekday).toBeTruthy();
+    expect(errorOf(res).fields?.weekday).toBeTruthy();
   });
 
   test('monthly_dom with day_of_month=32 → 422', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody({
+    const body = seriesBody({
       start_date: addDaysISO(MONDAY, 84),
       frequency: 'monthly_dom',
-      weekday: undefined,
       day_of_month: 32,
-    }));
+    });
+    delete body.weekday;
+    const res = await seriesReq<ScheduleSeriesResult<Series>>('POST', '/api/appointments/series', body);
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fields!.day_of_month).toBeTruthy();
+    expect(errorOf(res).fields?.day_of_month).toBeTruthy();
   });
 });
 
@@ -256,9 +269,9 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
 
   beforeAll(async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 91) }));
+    const res = await createSeries({ start_date: addDaysISO(MONDAY, 91) });
     expect(res.status).toBe(201);
-    seriesId = (res.body!.data as { series: { id: string } }).series.id;
+    seriesId = dataOf(res).series.id;
   });
 
   afterAll(async () => {
@@ -269,15 +282,16 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
   test('materialize returns a scheduled appointment; a second call is idempotent', async () => {
     const occurrenceDate = addDaysISO(MONDAY, 91);
     currentUser = asUser(proId, 'Professional');
-    const first = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: occurrenceDate });
+    const first = await materialize(seriesId, occurrenceDate);
     expect(first.status).toBe(200);
-    const firstAppt = (first.body!.data as { appointment: { id: string; state: string } }).appointment;
+    const firstAppt = dataOf(first).appointment;
     expect(firstAppt.state).toBe('scheduled');
+    expect(firstAppt.series_id).toBe(seriesId);
+    expect(firstAppt.occurrence_date).toBe(occurrenceDate);
 
-    const second = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: occurrenceDate });
+    const second = await materialize(seriesId, occurrenceDate);
     expect(second.status).toBe(200);
-    const secondAppt = (second.body!.data as { appointment: { id: string } }).appointment;
-    expect(secondAppt.id).toBe(firstAppt.id);
+    expect(dataOf(second).appointment.id).toBe(firstAppt.id);
   });
 
   test.each([
@@ -285,41 +299,39 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
     ['off the recurrence pattern', addDaysISO(MONDAY, 92)],
   ])('rejects a date %s', async (_case, occurrenceDate) => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: occurrenceDate });
+    const res = await materialize(seriesId, occurrenceDate);
 
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fieldDetails!.occurrence_date.key).toBe('notInSeries');
+    expect(errorOf(res).fieldDetails?.occurrence_date.key).toBe('notInSeries');
   });
 
   test('rejects a date after the series end', async () => {
     currentUser = asUser(proId, 'Professional');
     const startDate = addDaysISO(MONDAY, 161);
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({
+    const created = await createSeries({
       start_date: startDate,
       end_kind: 'until',
       end_date: startDate,
-    }));
-    expect(created.status).toBe(201);
-    const boundedSeriesId = (created.body!.data as { series: { id: string } }).series.id;
-
-    const res = await seriesReq('POST', `/api/appointments/series/${boundedSeriesId}/materialize`, {
-      occurrence_date: addDaysISO(startDate, 7),
     });
+    expect(created.status).toBe(201);
+    const boundedSeriesId = dataOf(created).series.id;
+
+    const res = await materialize(boundedSeriesId, addDaysISO(startDate, 7));
 
     expect(res.status).toBe(422);
-    expect(res.body!.error!.fieldDetails!.occurrence_date.key).toBe('notInSeries');
+    expect(errorOf(res).fieldDetails?.occurrence_date.key).toBe('notInSeries');
     await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [boundedSeriesId]);
   });
 
   test('cross-tenant id → 404 (never leak existence)', async () => {
     currentUser = asUser(pro3Id, 'Professional', biz2Id);
-    const res = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: addDaysISO(MONDAY, 91) });
+    const res = await materialize(seriesId, addDaysISO(MONDAY, 91));
     expect(res.status).toBe(404);
   });
 
   test('unknown id → 404', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('POST', `/api/appointments/series/999999999/materialize`, { occurrence_date: addDaysISO(MONDAY, 91) });
+    const res = await materialize('999999999', addDaysISO(MONDAY, 91));
     expect(res.status).toBe(404);
   });
 });
@@ -327,26 +339,28 @@ describe('series lifecycle: materialize, PUT, future, end', () => {
 describe('PUT /api/appointments/series/:id — whole-series rule edit', () => {
   test('patches a rule field and leaves price/duration frozen', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 112) }));
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 112) });
     expect(created.status).toBe(201);
-    const before = (created.body!.data as { series: { id: string; interval: number; price_ars: string } }).series;
+    const before = dataOf(created).series;
 
-    const res = await seriesReq('PUT', `/api/appointments/series/${before.id}`, { interval: 2 });
+    const res = await seriesReq<SeriesResult<Series>>('PUT', `/api/appointments/series/${before.id}`, { interval: 2 });
     expect(res.status).toBe(200);
-    const after = (res.body!.data as { series: { interval: number; price_ars: string } }).series;
+    const after = dataOf(res).series;
     expect(after.interval).toBe(2);
     expect(after.price_ars).toBe(before.price_ars);
+    expect(after.duration_minutes).toBe(before.duration_minutes);
 
     await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [before.id]);
   });
 
   test('cross-tenant id → 404', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 119) }));
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 119) });
+    expect(created.status).toBe(201);
+    const seriesId = dataOf(created).series.id;
 
     currentUser = asUser(pro3Id, 'Professional', biz2Id);
-    const res = await seriesReq('PUT', `/api/appointments/series/${seriesId}`, { interval: 3 });
+    const res = await seriesReq<SeriesResult<Series>>('PUT', `/api/appointments/series/${seriesId}`, { interval: 3 });
     expect(res.status).toBe(404);
 
     await pool.query(`DELETE FROM appointment_series WHERE id = $1`, [seriesId]);
@@ -356,14 +370,14 @@ describe('PUT /api/appointments/series/:id — whole-series rule edit', () => {
 describe('GET /api/appointments/series/:id — read one series', () => {
   test('a granted Receptionist reads the series rule', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 133) }));
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 133) });
     expect(created.status).toBe(201);
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const seriesId = dataOf(created).series.id;
 
     currentUser = asUser(recepWithGrantId, 'Receptionist');
-    const res = await seriesReq('GET', `/api/appointments/series/${seriesId}`);
+    const res = await seriesReq<Series>('GET', `/api/appointments/series/${seriesId}`);
     expect(res.status).toBe(200);
-    const data = res.body!.data as { id: string; frequency: string; weekday: string };
+    const data = dataOf(res);
     expect(data.id).toBe(seriesId);
     expect(data.frequency).toBe('weekly');
     expect(data.weekday).toBe('mon');
@@ -374,11 +388,12 @@ describe('GET /api/appointments/series/:id — read one series', () => {
 
   test('an ungranted Receptionist is denied (403)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 147) }));
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 147) });
+    expect(created.status).toBe(201);
+    const seriesId = dataOf(created).series.id;
 
     currentUser = asUser(recepNoGrantId, 'Receptionist');
-    const res = await seriesReq('GET', `/api/appointments/series/${seriesId}`);
+    const res = await seriesReq<Series>('GET', `/api/appointments/series/${seriesId}`);
     expect(res.status).toBe(403);
 
     currentUser = asUser(proId, 'Professional');
@@ -387,11 +402,12 @@ describe('GET /api/appointments/series/:id — read one series', () => {
 
   test('cross-tenant id → 404 (never leak existence)', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 154) }));
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 154) });
+    expect(created.status).toBe(201);
+    const seriesId = dataOf(created).series.id;
 
     currentUser = asUser(pro3Id, 'Professional', biz2Id);
-    const res = await seriesReq('GET', `/api/appointments/series/${seriesId}`);
+    const res = await seriesReq<Series>('GET', `/api/appointments/series/${seriesId}`);
     expect(res.status).toBe(404);
 
     currentUser = asUser(proId, 'Professional');
@@ -400,7 +416,7 @@ describe('GET /api/appointments/series/:id — read one series', () => {
 
   test('unknown id → 404', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq('GET', `/api/appointments/series/999999999`);
+    const res = await seriesReq<Series>('GET', `/api/appointments/series/999999999`);
     expect(res.status).toBe(404);
   });
 });
@@ -408,25 +424,23 @@ describe('GET /api/appointments/series/:id — read one series', () => {
 describe('POST /api/appointments/series/:id/future — this-and-future split', () => {
   test('ends the old rule the day before from_date and opens a new series on from_date', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 126) }));
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 126) });
     expect(created.status).toBe(201);
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const seriesId = dataOf(created).series.id;
 
     const fromDate = addDaysISO(MONDAY, 140);
-    const res = await seriesReq('POST', `/api/appointments/series/${seriesId}/future`, {
+    const res = await seriesReq<SplitSeriesResult<Series>>('POST', `/api/appointments/series/${seriesId}/future`, {
       from_date: fromDate,
       patch: { interval: 2 },
     });
     expect(res.status).toBe(201);
-    const data = res.body!.data as {
-      ended: { id: string; status: string; end_date: string };
-      created: { id: string; interval: number; start_date: string };
-    };
+    const data = dataOf(res);
     expect(data.ended.id).toBe(seriesId);
     expect(data.ended.status).toBe('ended');
     expect(data.ended.end_date).toBe(addDaysISO(fromDate, -1));
     expect(data.created.interval).toBe(2);
     expect(data.created.start_date).toBe(fromDate);
+    expect(data.created.price_ars).toBe(data.ended.price_ars);
 
     await pool.query(`DELETE FROM appointment_series WHERE id = ANY($1)`, [[seriesId, data.created.id]]);
   });
@@ -435,18 +449,20 @@ describe('POST /api/appointments/series/:id/future — this-and-future split', (
 describe('POST /api/appointments/series/:id/end', () => {
   test('ends the series and cancels a future materialized occurrence', async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: addDaysISO(MONDAY, 98) }));
+    const created = await createSeries({ start_date: addDaysISO(MONDAY, 98) });
     expect(created.status).toBe(201);
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const seriesId = dataOf(created).series.id;
 
     const occurrenceDate = addDaysISO(MONDAY, 105);
-    const materialized = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: occurrenceDate });
+    const materialized = await materialize(seriesId, occurrenceDate);
     expect(materialized.status).toBe(200);
-    const apptId = (materialized.body!.data as { appointment: { id: string } }).appointment.id;
+    const apptId = dataOf(materialized).appointment.id;
 
-    const ended = await seriesReq('POST', `/api/appointments/series/${seriesId}/end`, { from_date: occurrenceDate });
+    const ended = await seriesReq<EndSeriesResult<Series>>('POST', `/api/appointments/series/${seriesId}/end`, {
+      from_date: occurrenceDate,
+    });
     expect(ended.status).toBe(200);
-    const data = ended.body!.data as { ended: { status: string }; canceled: string[] };
+    const data = dataOf(ended);
     expect(data.ended.status).toBe('ended');
     expect(data.canceled).toContain(apptId);
 
@@ -468,21 +484,26 @@ describe('series route lifecycle: create → materialize → complete charges on
     // later date-range list test in this file.
     const pastDate = addDaysISO(MONDAY, -70);
 
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({
+    const created = await createSeries({
       start_date: pastDate,
       end_kind: 'until',
       end_date: pastDate,
-    }));
+    });
     expect(created.status).toBe(201);
-    const seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    const seriesId = dataOf(created).series.id;
 
-    const materialized = await seriesReq('POST', `/api/appointments/series/${seriesId}/materialize`, { occurrence_date: pastDate });
+    const materialized = await materialize(seriesId, pastDate);
     expect(materialized.status).toBe(200);
-    const appt = (materialized.body!.data as { appointment: { id: string; state: string; price: string } }).appointment;
+    const appt = dataOf(materialized).appointment;
     expect(appt.state).toBe('scheduled');
 
-    const transitioned = await seriesReq('POST', `/api/appointments/${appt.id}/transition`, { to: 'completed' });
+    const transitioned = await seriesReq<AppointmentResponse>(
+      'POST',
+      `/api/appointments/${appt.id}/transition`,
+      { to: 'completed' },
+    );
     expect(transitioned.status).toBe(200);
+    expect(dataOf(transitioned).state).toBe('completed');
 
     const charges = await pool.query<{ amount_ars: string }>(
       `SELECT amount_ars FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'`,
@@ -498,8 +519,6 @@ describe('series route lifecycle: create → materialize → complete charges on
 });
 
 describe('GET /api/appointments — virtual-aware pagination over a date range', () => {
-  type ListRow = { id: string | null; series_id?: string; occurrence_date?: string };
-
   // A dedicated weekly-Monday window, far from every other fixture's date, spanning 5 Mondays —
   // one active series yields 5 virtual occurrences here (none materialized, none conflicting).
   const windowSeriesStart = addDaysISO(MONDAY, 294); // 294 = 42 * 7, so this Monday stays a Monday
@@ -515,9 +534,9 @@ describe('GET /api/appointments — virtual-aware pagination over a date range',
 
   beforeAll(async () => {
     currentUser = asUser(proId, 'Professional');
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({ start_date: windowSeriesStart }));
+    const created = await createSeries({ start_date: windowSeriesStart });
     expect(created.status).toBe(201);
-    paginationSeriesId = (created.body!.data as { series: { id: string } }).series.id;
+    paginationSeriesId = dataOf(created).series.id;
 
     // 3 real, one-off Tuesday appointments inside the same window — never on-pattern for the
     // Monday series, so they can never collide with a virtual occurrence date.
@@ -551,13 +570,13 @@ describe('GET /api/appointments — virtual-aware pagination over a date range',
     let reportedTotal: number | undefined;
     let page = 1;
     for (;;) {
-      const res = await seriesReq(
+      const res = await seriesReq<ListRow[]>(
         'GET',
         `/api/appointments?date_from=${windowStart}&date_to=${windowEnd}&limit=${limit}&page=${page}`,
       );
       expect(res.status).toBe(200);
-      const rows = res.body!.data as ListRow[];
-      reportedTotal = res.body!.meta!.total;
+      const rows = dataOf(res);
+      reportedTotal = metaOf(res).total;
       expect(reportedTotal).toBe(expectedTotal);
       if (rows.length === 0) break;
       for (const r of rows) {
@@ -582,22 +601,18 @@ describe('GET /api/appointments — virtual-aware pagination over a date range',
     currentUser = asUser(proId, 'Professional');
     const occurrenceDate = addDaysISO(windowSeriesStart, 7); // the 2nd Monday in the window
 
-    const materialized = await seriesReq(
-      'POST',
-      `/api/appointments/series/${paginationSeriesId}/materialize`,
-      { occurrence_date: occurrenceDate },
-    );
+    const materialized = await materialize(paginationSeriesId, occurrenceDate);
     expect(materialized.status).toBe(200);
-    const materializedId = (materialized.body!.data as { appointment: { id: string } }).appointment.id;
+    const materializedId = dataOf(materialized).appointment.id;
     realApptIds.push(materializedId); // include in afterAll cleanup
 
-    const res = await seriesReq(
+    const res = await seriesReq<ListRow[]>(
       'GET',
       `/api/appointments?date_from=${windowStart}&date_to=${windowEnd}&limit=50&page=1`,
     );
     expect(res.status).toBe(200);
-    const rows = res.body!.data as ListRow[];
-    expect(res.body!.meta!.total).toBe(realDates.length + 5); // unchanged: one virtual became one real row
+    const rows = dataOf(res);
+    expect(metaOf(res).total).toBe(realDates.length + 5); // unchanged: one virtual became one real row
 
     const matches = rows.filter(
       (r) => (r.id === materializedId) || (r.series_id === paginationSeriesId && r.occurrence_date === occurrenceDate),
@@ -608,8 +623,6 @@ describe('GET /api/appointments — virtual-aware pagination over a date range',
 });
 
 describe('GET /api/appointments — a series occurrence over an existing turno flags both sides', () => {
-  type ListRow = { id: string | null; series_id?: string; occurrence_date?: string; in_conflict?: boolean };
-
   // A Monday far from every other fixture (231 = 33 * 7, so it stays a Monday and matches proId's
   // only block). The series is bounded to this single occurrence so it never pollutes other windows.
   const targetMonday = addDaysISO(MONDAY, 231);
@@ -628,13 +641,13 @@ describe('GET /api/appointments — a series occurrence over an existing turno f
     );
     realId = r.rows[0].id;
 
-    const created = await seriesReq('POST', '/api/appointments/series', seriesBody({
+    const created = await createSeries({
       start_date: targetMonday,
       end_kind: 'until',
       end_date: targetMonday,
-    }));
+    });
     expect(created.status).toBe(201);
-    seriesId = (created.body!.data as { series: { id: string } }).series.id;
+    seriesId = dataOf(created).series.id;
   });
 
   afterAll(async () => {
@@ -644,30 +657,30 @@ describe('GET /api/appointments — a series occurrence over an existing turno f
 
   test('the real turno and the virtual occurrence both come back in_conflict', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq(
+    const res = await seriesReq<ListRow[]>(
       'GET',
       `/api/appointments?date_from=${addDaysISO(targetMonday, -1)}&date_to=${addDaysISO(targetMonday, 1)}&limit=50&page=1`,
     );
     expect(res.status).toBe(200);
-    const rows = res.body!.data as ListRow[];
+    const rows = dataOf(res);
 
     const realRow = rows.find((r) => r.id === realId);
-    expect(realRow).toBeDefined();
-    expect(realRow!.in_conflict).toBe(true);
+    expect(realRow, 'the real turno row').toBeDefined();
+    expect(realRow?.in_conflict).toBe(true);
 
     const virtualRow = rows.find((r) => r.id === null && r.series_id === seriesId && r.occurrence_date === targetMonday);
-    expect(virtualRow).toBeDefined();
-    expect(virtualRow!.in_conflict).toBe(true);
+    expect(virtualRow, 'the virtual occurrence row').toBeDefined();
+    expect(virtualRow?.in_conflict).toBe(true);
   });
 
   test('the conflicting filter over the same window returns both', async () => {
     currentUser = asUser(proId, 'Professional');
-    const res = await seriesReq(
+    const res = await seriesReq<ListRow[]>(
       'GET',
       `/api/appointments?date_from=${addDaysISO(targetMonday, -1)}&date_to=${addDaysISO(targetMonday, 1)}&conflicting=true&limit=50&page=1`,
     );
     expect(res.status).toBe(200);
-    const rows = res.body!.data as ListRow[];
+    const rows = dataOf(res);
     expect(rows.some((r) => r.id === realId)).toBe(true);
     expect(rows.some((r) => r.id === null && r.series_id === seriesId && r.occurrence_date === targetMonday)).toBe(true);
     expect(rows.every((r) => r.in_conflict === true)).toBe(true);

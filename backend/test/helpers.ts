@@ -47,27 +47,86 @@ async function terminateConnections(admin: Pool): Promise<void> {
   );
 }
 
-export async function resetTestDb(): Promise<void> {
-  const admin = new Pool({ ...envSuper(), database: 'postgres' });
-  try {
+// DROP/CREATE DATABASE take exclusive locks on the shared catalog, so concurrent suite runs — even
+// on distinct database names — can lose that race and report a failure that says nothing about the
+// code under test. Only states that a later attempt can plausibly win are retried: a bad password,
+// a missing role, an unreachable host or a syntax error is a real failure and must surface on the
+// first attempt rather than after a minute of pointless backoff.
+const TRANSIENT_SQLSTATES = new Set([
+  '55006', // object_in_use — "database is being accessed by other users"
+  '55P03', // lock_not_available
+  '57014', // query_canceled — a statement/lock timeout fired
+  '57P01', // admin_shutdown — "terminating connection due to administrator command"
+  '57P03', // cannot_connect_now — server still coming up
+  '40001', // serialization_failure
+  '40P01', // deadlock_detected
+  '53300', // too_many_connections
+]);
+
+// Socket-level failures the driver reports without a SQLSTATE. ECONNREFUSED/ENOTFOUND are absent on
+// purpose: those mean wrong host/port or a server that isn't running, which retrying cannot fix.
+const TRANSIENT_SOCKET_CODES = new Set(['ECONNRESET', 'EPIPE', 'ETIMEDOUT']);
+
+// pg reports a backend that vanished mid-statement as a plain Error with no code at all.
+const TRANSIENT_MESSAGES = [
+  /connection terminated/i,
+  /connection error/i,
+  /server closed the connection/i,
+  /timeout exceeded when trying to connect/i,
+];
+
+const RESET_ATTEMPTS = 6;
+const RESET_BASE_DELAY_MS = 120;
+
+function isTransientCatalogError(
+  // eslint-disable-next-line no-restricted-syntax -- catch-boundary: the pg driver throws an unverified error shape
+  error: unknown,
+): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: string }).code;
+  if (typeof code === 'string') {
+    return TRANSIENT_SQLSTATES.has(code) || TRANSIENT_SOCKET_CODES.has(code);
+  }
+  return TRANSIENT_MESSAGES.some((pattern) => pattern.test(error.message));
+}
+
+// Each attempt reruns the whole terminate/drop/create unit on a fresh admin pool: the sequence is
+// idempotent (DROP IF EXISTS), and a pool whose backend was terminated cannot be reused.
+async function withCatalogRetry(step: (admin: Pool) => Promise<void>): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    const admin = new Pool({ ...envSuper(), database: 'postgres' });
+    // An idle client killed by a competing pg_terminate_backend emits on the pool; unhandled, that
+    // aborts the run instead of surfacing as the retryable error the next query already reports.
+    admin.on('error', () => {});
+    try {
+      await step(admin);
+      return;
+    } catch (error) {
+      if (attempt >= RESET_ATTEMPTS || !isTransientCatalogError(error)) throw error;
+      const backoff = RESET_BASE_DELAY_MS * 2 ** (attempt - 1);
+      await new Promise((resolve) => setTimeout(resolve, backoff + Math.random() * RESET_BASE_DELAY_MS));
+    } finally {
+      // Never let a teardown hiccup replace the error that actually explains the failure.
+      await admin.end().catch(() => {});
+    }
+  }
+}
+
+export function resetTestDb(): Promise<void> {
+  return withCatalogRetry(async (admin) => {
     await terminateConnections(admin);
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME}`);
     await admin.query(`CREATE DATABASE ${TEST_DB_NAME}`);
-  } finally {
-    await admin.end();
-  }
+  });
 }
 
 // Drops the run's database once the whole suite finishes (see test/global-setup.ts), so a
 // uniquely-named run (TEST_DB_NAME override) doesn't linger as an orphan on the Postgres instance.
-export async function dropTestDb(): Promise<void> {
-  const admin = new Pool({ ...envSuper(), database: 'postgres' });
-  try {
+export function dropTestDb(): Promise<void> {
+  return withCatalogRetry(async (admin) => {
     await terminateConnections(admin);
     await admin.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME}`);
-  } finally {
-    await admin.end();
-  }
+  });
 }
 
 // Harness pool (superuser): schema setup, migrations, fixture seeding, and direct assertions.

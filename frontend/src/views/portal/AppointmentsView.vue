@@ -226,9 +226,10 @@ const past = computed(() =>
               <div class="flex-1 space-y-1">
                 <div class="flex items-center gap-2 flex-wrap">
                   <StatusBadge :state="appt.state" />
+                  <!-- Neutral, not accent: it sits beside the status badge and recurrence is not a status. -->
                   <span
                     v-if="appt.is_virtual"
-                    class="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent"
+                    class="inline-flex items-center gap-1 rounded-full bg-neutral-tint px-2 py-0.5 text-xs font-semibold text-body"
                     :title="t('calendar.recurringTooltip')"
                   >
                     <MaterialIcon name="repeat" class="h-3.5 w-3.5" />
@@ -333,7 +334,7 @@ const past = computed(() =>
         <StatusBadge :state="selectedAppt.state" />
         <span
           v-if="selectedAppt.is_virtual"
-          class="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent"
+          class="inline-flex items-center gap-1 rounded-full bg-neutral-tint px-2 py-0.5 text-xs font-semibold text-body"
           :title="t('calendar.recurringTooltip')"
         >
           <MaterialIcon name="repeat" class="h-3.5 w-3.5" />
