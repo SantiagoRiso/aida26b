@@ -89,11 +89,13 @@ test.describe('Users CRUD (admin) — reset password, deactivate, isSelf, create
 
     // Deactivation is a soft delete (is_active=false + deleted_at stamped), so the user drops out of
     // the generic users read entirely — its absence is the durable proof, both in the API and in the
-    // remounted (reloadKey) table after re-applying the filter.
+    // table, which remounts and refetches on deactivate while keeping the filter (it lives in the
+    // URL). The still-applied filter is what makes the empty list meaningful rather than a row that
+    // merely fell off page 1.
     const after = await (await page.request.get(`/api/users?filter_username=${target.username}`)).json();
     expect((after.data ?? []).length).toBe(0);
 
-    await filterUsersByUsername(page, target.username);
+    await expect(page.getByPlaceholder(es.generic.filterPlaceholder)).toHaveValue(target.username);
     await expect(page.locator('tr').filter({ hasText: target.username })).toHaveCount(0, { timeout: 10_000 });
   });
 

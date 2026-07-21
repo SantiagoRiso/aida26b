@@ -12,6 +12,8 @@ import { DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/src/dev-fixtures
  * is when this spec runs.
  */
 test.describe('Staff schedule — conflict override (sobreturno)', () => {
+  let forcedAppointmentId: number;
+
   test('appointment form shows conflict override dialog on scheduling overlap', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
 
@@ -40,6 +42,10 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     // label and auto-selects it — no interaction needed.
     await expect(page.locator('#appt-service')).toContainText(DEMO_SERVICE_NAMES.sesion, { timeout: 10_000 });
 
+    // A client is required to save: without one the backend answers the conflict verdict but
+    // refuses the forced write, so the sobreturno this spec is about would never be created.
+    await selectFromCombobox(page, 'appt-client', 'Ruth Powers');
+
     // A fresh "Nuevo turno" opens in slot-picker mode; check "Sobreturno" to enter the manual
     // hora/duración needed to book the exact off-slot instant that collides with the seed.
     await page.getByRole('checkbox', { name: es.calendar.fineMode }).check();
@@ -66,7 +72,15 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     await expect(overrideButton).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('text=Este horario se superpone con un turno existente')).toBeVisible();
 
+    // The forced save is the subject of the next test, which finds its audit row by this id.
+    // 201 is the created appointment; the same endpoint answers 200 with a conflict verdict.
+    const forcedResponse = page.waitForResponse(
+      (r) => r.url().includes('/appointments/schedule') && r.request().method() === 'POST' && r.status() === 201,
+      { timeout: 15_000 },
+    );
     await overrideButton.click();
+    forcedAppointmentId = Number((await (await forcedResponse).json()).data.id);
+    expect(forcedAppointmentId).toBeGreaterThan(0);
     await expect(overrideButton).not.toBeVisible({ timeout: 10_000 });
   });
 
@@ -78,9 +92,9 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
       page.getByRole('link', { name: es.nav.audit }).click(),
     ]);
 
-    // Every forced save emits conflict_override alongside its lifecycle event, so the newest row
-    // here is the sobreturno the previous test forced through the UI — not the seeded example.
-    // The list is ordered by created_at DESC and the event-type filter matches exactly.
+    // Every forced save emits conflict_override alongside its lifecycle event, and any spec that
+    // seeds a fixture with override on writes one too — so the count is not a fixed number. What
+    // proves the live UI path audits is that the newest row is this appointment's own override.
     await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 
     await page.getByPlaceholder(es.audit.eventTypePlaceholder).fill('conflict_override');
@@ -89,7 +103,8 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
     await expect(rows.first()).toContainText('conflict_override');
-    // Two entries: the seeded example plus the one just forced. Proves the live path audits.
-    await expect(rows).toHaveCount(2);
+    // The entity id has its own element; matching it there rather than in the row's concatenated
+    // text keeps the actor id in the next cell from running into it.
+    await expect(rows.first().getByText(`#${forcedAppointmentId}`, { exact: true })).toBeVisible();
   });
 });

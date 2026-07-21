@@ -42,6 +42,12 @@ async function scheduleAt(page: Page, hoursFromNow: number, name: string): Promi
   // achievable from an arbitrary runner locale anyway. The 3h/72h deltas chosen by callers
   // are far enough from the 24h cutoff boundary to absorb any reasonable timezone skew.
   const startAt = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000);
+  // An appointment may not run past midnight, so a start whose duration would spill into the next
+  // day is pushed forward to that day's 00:00 instead. Only the distance from now matters to the
+  // cutoff, and the push is under an hour, so both fixtures stay on their intended side of the 24h
+  // boundary — which keeps the spec deterministic in the late evening, not just during the day.
+  const endsAt = new Date(startAt.getTime() + svc.default_duration_minutes * 60 * 1000);
+  if (endsAt.getDate() !== startAt.getDate()) startAt.setHours(24, 0, 0, 0);
   const date = `${startAt.getFullYear()}-${String(startAt.getMonth() + 1).padStart(2, '0')}-${String(startAt.getDate()).padStart(2, '0')}`;
   const start = `${String(startAt.getHours()).padStart(2, '0')}:${String(startAt.getMinutes()).padStart(2, '0')}`;
 

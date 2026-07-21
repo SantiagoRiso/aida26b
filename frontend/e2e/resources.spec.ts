@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, openScreen, es } from './helpers';
+import { login, DEMO_ACCOUNTS, openScreen, clientSearchBox, es } from './helpers';
 
 /**
  * ResourcesSection (Salas) — add, inline edit, delete via the row-level "Eliminar" testid button,
@@ -101,7 +101,7 @@ test.describe('Resources (Salas) — add, inline edit, delete, Horario', () => {
 
     // Durable: remount the section (navigate away and back) and confirm it stays gone (soft delete).
     await page.getByRole('link', { name: es.nav.clients }).click();
-    await expect(page.getByPlaceholder(es.clients.searchPlaceholder)).toBeVisible({ timeout: 15_000 });
+    await expect(clientSearchBox(page)).toBeVisible({ timeout: 15_000 });
     await openScreen(page, es.nav.business);
     await expect(page.getByTestId(`room-row-${roomId}`)).toHaveCount(0);
   });

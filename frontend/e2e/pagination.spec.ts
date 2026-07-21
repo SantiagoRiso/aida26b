@@ -17,6 +17,18 @@ import { structure } from '../../shared/src/ssot/structure';
  */
 const CLIENTS_PAGED_URL = '/staff/clients?limit=10';
 
+// /api/clients is also read by the foreign-key label resolver, which deliberately fetches a wide
+// roster to name ids already on screen. Only the Clientes screen's own list request is this spec's
+// subject, and it is the one carrying the view's default sort.
+function clientsListResponse(page: import('@playwright/test').Page) {
+  return page.waitForResponse(
+    (r) => r.request().method() === 'GET'
+      && new URL(r.url()).pathname.endsWith('/api/clients')
+      && new URL(r.url()).searchParams.get('sort') === 'display_name',
+    { timeout: 15_000 },
+  );
+}
+
 async function openClientsPaged(page: import('@playwright/test').Page) {
   await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
   await page.goto(CLIENTS_PAGED_URL);
@@ -77,10 +89,7 @@ test.describe('Pagination', () => {
   test('backend meta envelope is correct for paginated response', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
 
-    const responsePromise = page.waitForResponse(
-      (r) => r.url().includes('/api/clients') && r.request().method() === 'GET',
-      { timeout: 15_000 },
-    );
+    const responsePromise = clientsListResponse(page);
     await page.getByRole('link', { name: es.nav.clients }).click();
     const response = await responsePromise;
 
@@ -101,10 +110,7 @@ test.describe('Pagination', () => {
   test('the list requests only one page, never the whole table', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
 
-    const responsePromise = page.waitForResponse(
-      (r) => r.url().includes('/api/clients') && r.request().method() === 'GET',
-      { timeout: 15_000 },
-    );
+    const responsePromise = clientsListResponse(page);
     await page.getByRole('link', { name: es.nav.clients }).click();
     const response = await responsePromise;
 

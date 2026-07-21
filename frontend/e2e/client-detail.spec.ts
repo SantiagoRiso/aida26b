@@ -7,6 +7,8 @@ import {
   findServiceId,
   scheduleViaApi,
   isoDaysFromNow,
+  clientSearchBox,
+  searchClientsByName,
   es,
 } from './helpers';
 import { DEMO_SERVICE_NAMES } from '../../shared/src/dev-fixtures';
@@ -37,10 +39,9 @@ async function openClientByName(page: Page, name: string, opts: { unrelated?: bo
   // Escape first: a still-open detail panel overlays the sidebar and would swallow the nav click.
   await page.keyboard.press('Escape');
   await page.getByRole('link', { name: es.nav.clients }).click();
-  const search = page.getByPlaceholder(es.clients.searchPlaceholder);
-  await expect(search).toBeVisible({ timeout: 15_000 });
+  await expect(clientSearchBox(page)).toBeVisible({ timeout: 15_000 });
   if (opts.unrelated) await page.getByText(es.clients.includeUnrelated).click();
-  await search.fill(name);
+  await searchClientsByName(page, name);
   await page.getByText(name).first().click();
   await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10_000 });
 }

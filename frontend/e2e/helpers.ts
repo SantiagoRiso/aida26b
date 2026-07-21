@@ -8,6 +8,7 @@ import { APPOINTMENT_STATES } from '../../shared/src/ssot/domain/appointment-lif
 // point; specs do `import { es } from './helpers'`.
 import { es } from '../src/i18n/es';
 export { es };
+import { structure } from '../../shared/src/ssot/structure';
 
 // State labels come straight from the SSoT (value → localized label), never a copied map.
 const STATE_LABELS_ES: Record<string, string> = Object.fromEntries(
@@ -31,6 +32,30 @@ export function isoDaysFromNow(days: number): string {
   d.setDate(d.getDate() + days);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Clientes searches server-side over name and DNI as two separate boxes: filter_ params AND
+// together, so one box matching either field is not expressible. Both are labelled from the column
+// descriptors, so the locator follows a renamed label instead of pinning a copied literal.
+const clientColumns = structure.tables.clients.columns;
+
+export function clientSearchBox(page: Page, field: 'display_name' | 'dni' = 'display_name'): Locator {
+  return page.getByRole('searchbox', { name: clientColumns[field].label.es, exact: true });
+}
+
+// Types into the name box and waits for the request it triggers. The search is debounced and
+// server-side, so until that response lands the rows on screen still belong to the previous query.
+export async function searchClientsByName(page: Page, name: string): Promise<void> {
+  const box = clientSearchBox(page);
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  const listed = page.waitForResponse((r) => {
+    const url = new URL(r.url());
+    return r.request().method() === 'GET'
+      && url.pathname.endsWith('/api/clients')
+      && url.searchParams.get('filter_display_name') === name;
+  }, { timeout: 15_000 });
+  await box.fill(name);
+  await listed;
 }
 
 // Demo/local-only credentials, shared with the demo seed script (backend/src/seed-demo.ts) via

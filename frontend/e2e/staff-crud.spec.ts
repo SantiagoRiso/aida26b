@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, es } from './helpers';
+import { login, DEMO_ACCOUNTS, clientSearchBox, searchClientsByName, es } from './helpers';
 
 test.describe('Staff CRUD — services, clients, resources, users (real GenericForm/GenericTable UI)', () => {
   test('admin creates a new service through the real form', async ({ page }) => {
@@ -36,11 +36,9 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await page.getByRole('link', { name: es.nav.clients }).click();
 
-    // Clientes is a bespoke list with a name/DNI search box (no generic column filter).
-    const search = page.getByPlaceholder(es.clients.searchPlaceholder);
-    await expect(search).toBeVisible({ timeout: 15_000 });
+    // Clientes is a bespoke list with a name and a DNI search box (no generic column filter).
     // Bleeding Gums Murphy (demo_client30) is not referenced by any other spec.
-    await search.fill('Bleeding Gums Murphy');
+    await searchClientsByName(page, 'Bleeding Gums Murphy');
     const row = page.getByText('Bleeding Gums Murphy').first();
     await expect(row).toBeVisible({ timeout: 10_000 });
     await row.click();
@@ -66,9 +64,7 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
     // server (and dismisses the open detail panel), then reopen the row + edit form and confirm the
     // note came back from the DB.
     await page.reload();
-    const search2 = page.getByPlaceholder(es.clients.searchPlaceholder);
-    await expect(search2).toBeVisible({ timeout: 15_000 });
-    await search2.fill('Bleeding Gums Murphy');
+    await searchClientsByName(page, 'Bleeding Gums Murphy');
     await page.getByText('Bleeding Gums Murphy').first().click();
     await page.getByRole('button', { name: es.users.editProfile }).click();
     await expect(page.locator('#notes')).toHaveValue(noteText, { timeout: 10_000 });
@@ -98,7 +94,7 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
 
     // Re-read persists: remount the section (navigate away and back) and confirm it stays gone.
     await page.getByRole('link', { name: es.nav.clients }).click();
-    await expect(page.getByPlaceholder(es.clients.searchPlaceholder)).toBeVisible({ timeout: 15_000 });
+    await expect(clientSearchBox(page)).toBeVisible({ timeout: 15_000 });
     await page.getByRole('link', { name: es.nav.business }).click();
     await expect(page.locator('li', { hasText: 'Consultorio 4' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Consultorio 5')).toHaveCount(0);

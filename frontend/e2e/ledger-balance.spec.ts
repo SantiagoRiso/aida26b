@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, es } from './helpers';
+import { login, DEMO_ACCOUNTS, searchClientsByName, es } from './helpers';
 
 /**
  * Staff ledger management lives inside ClientDetail now (Clientes → open a client), not a standalone
@@ -21,9 +21,7 @@ const entryTypeSelect = (page: Page) =>
 async function openClientDetail(page: Page, name: string): Promise<void> {
   await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
   await page.getByRole('link', { name: es.nav.clients }).click();
-  const search = page.getByPlaceholder(es.clients.searchPlaceholder);
-  await expect(search).toBeVisible({ timeout: 15_000 });
-  await search.fill(name);
+  await searchClientsByName(page, name);
   await page.getByText(name).first().click();
   await expect(page.getByRole('heading', { name: es.clients.ledgerHeading })).toBeVisible({ timeout: 10_000 });
 }

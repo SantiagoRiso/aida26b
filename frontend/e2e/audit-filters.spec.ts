@@ -24,6 +24,9 @@ import { login, DEMO_ACCOUNTS, openScreen, findProfessionalId, isoDaysFromNow, e
 
 const DENIED_COUNT = 55;
 
+// What an element that paints no background of its own computes to.
+const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+
 function fromDiv(page: Page): Locator {
   return page.locator('label[for="audit-date-from"]').locator('..');
 }
@@ -143,9 +146,14 @@ test.describe('Audit log (admin) — access, filters, denied styling, pagination
     const body = await (await resp).json();
     expect(body.meta.total).toBe(DENIED_COUNT);
 
-    // Every seeded row is denied — the first rendered row carries the ⛔ badge and red tint.
+    // Every seeded row is denied — the first rendered row carries the ⛔ badge and the denied tint.
+    // The tint is asserted as rendered colour, not as a utility-class name: an ordinary row declares
+    // no background of its own and inherits the table's, so this still fails if the tint is dropped,
+    // while a rename of the underlying design token does not make it a false negative.
     const firstRow = page.locator('tbody tr').first();
-    await expect(firstRow).toHaveClass(/bg-red-50/);
+    await expect
+      .poll(() => firstRow.evaluate((el) => getComputedStyle(el).backgroundColor), { timeout: 10_000 })
+      .not.toBe(TRANSPARENT);
     await expect(firstRow.getByText('⛔')).toBeVisible();
 
     // Pagination: limit is a fixed 50, total 55 → two pages.

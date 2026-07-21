@@ -39,8 +39,12 @@ test.describe('Client request → staff approve', () => {
 
     // Match on the leading HH:MM text, not an anchored/exact match (button also shows duration).
     const slotButton = page.locator('button').filter({ hasText: /^\d{2}:\d{2}/ }).first();
+    // Slots are painted from an availability round-trip, so the check has to wait for the render
+    // rather than sample the DOM the instant the date is typed — an instant sample reports "no
+    // slots" for a day that has them.
+    const hasSlot = () => slotButton.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true).catch(() => false);
 
-    let slotVisible = await slotButton.isVisible({ timeout: 8_000 }).catch(() => false);
+    let slotVisible = await hasSlot();
     // Fall through successive Mondays (all past the dense-seed window, within the 60-day booking
     // window) until one has a free slot; wait on the availability round-trip each time rather than a
     // blind timeout.
@@ -51,7 +55,7 @@ test.describe('Client request → staff approve', () => {
         .catch(() => null);
       await fillDate(page, nextDate);
       await avail;
-      slotVisible = await slotButton.isVisible({ timeout: 8_000 }).catch(() => false);
+      slotVisible = await hasSlot();
     }
     expect(slotVisible, 'Expected at least one free slot for demo_pro').toBe(true);
     await slotButton.click();
