@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
 import type { Request, RequestHandler } from 'express';
 
 // LOG_LEVEL is read per call so it stays configurable; 'silent' suppresses everything (used by tests).
@@ -13,12 +15,23 @@ const LEVELS: Record<Level, number> = {
   silent: 100,
 };
 
+// VERSION wins when set (the deployed image tag); otherwise the version comes from
+// backend/package.json. The manifest is found by walking up rather than by a fixed relative
+// path: the compiled tree nests a level deeper than the sources (tsc mirrors the repo root
+// because the backend imports shared/), so no single literal path holds in both layouts.
 function resolveVersion(): string {
   if (process.env.VERSION) return process.env.VERSION;
-  try {
-    return require('../package.json').version ?? 'unknown';
-  } catch {
-    return 'unknown';
+  let dir = __dirname;
+  for (;;) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { version?: string };
+      if (typeof pkg.version === 'string' && pkg.version.length > 0) return pkg.version;
+    } catch {
+      // no manifest at this level, keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return 'unknown';
+    dir = parent;
   }
 }
 
@@ -33,7 +46,7 @@ function isLevel(value: string | undefined): value is Level {
   return value !== undefined && Object.prototype.hasOwnProperty.call(LEVELS, value);
 }
 
-type LogFields = Record<string, string | number>;
+type LogFields = Record<string, string | number | boolean>;
 
 function emit(level: Exclude<Level, 'silent'>, fields: LogFields) {
   if (LEVELS[level] < LEVELS[currentLevel()]) return;
@@ -64,7 +77,10 @@ export function requestLogger(): RequestHandler {
     (req as RequestWithId).reqId = reqId;
     const start = process.hrtime.bigint();
 
-    res.on('finish', () => {
+    // 'close' fires for every request, 'finish' only for responses that were fully sent. A client
+    // that navigates away mid-response would otherwise leave no trace at all. Listening on 'close'
+    // alone keeps it at exactly one line per request.
+    res.on('close', () => {
       const ms = Math.round(Number(process.hrtime.bigint() - start) / 1e6);
       logger.info({
         reqId,
@@ -72,6 +88,7 @@ export function requestLogger(): RequestHandler {
         url: req.url,
         status: res.statusCode,
         ms,
+        ...(res.writableEnded ? {} : { aborted: true }),
       });
     });
 

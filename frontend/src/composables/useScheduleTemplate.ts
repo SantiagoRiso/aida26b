@@ -8,7 +8,17 @@ import esLocale from '@fullcalendar/core/locales/es';
 import { useI18n } from 'vue-i18n';
 import { TEMPLATE_BASE_MONDAY, blockToEvent, type TemplateBlock } from './scheduleTemplateGrid';
 import { DAY_MIN_MINUTES, DAY_MAX_MINUTES } from './templateBlockPlacement';
+import { useNarrowViewport } from './useViewport';
 import { toHHMM } from '@shared/ssot/domain';
+
+// The template is one synthetic week. Navigation is fenced to it so a block created on the phone's
+// single-day view can never land on a date the weekday↔date mapping renders somewhere else.
+const TEMPLATE_WEEK_END = (() => {
+  const [y, m, d] = TEMPLATE_BASE_MONDAY.split('-').map(Number);
+  const end = new Date(Date.UTC(y, m - 1, d + 7));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${end.getUTCFullYear()}-${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`;
+})();
 
 export interface TemplateHandlers {
   onSelect: (arg: DateSelectArg) => void;
@@ -21,13 +31,19 @@ export interface TemplateHandlers {
 export function useScheduleTemplate(
   blocks: Ref<TemplateBlock[]>,
   handlers: TemplateHandlers,
-): { calendarOptions: Ref<CalendarOptions> } {
+): { calendarOptions: Ref<CalendarOptions>; narrowViewport: Ref<boolean> } {
   const { locale } = useI18n();
+  // A phone shows one weekday at a time, with prev/next as the only way between them — the seven
+  // columns are unusable at that width and this grid has no toolbar to switch views from.
+  const narrowViewport = useNarrowViewport();
   const calendarOptions = computed<CalendarOptions>(() => ({
     plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
-    initialView: 'timeGridWeek',
+    initialView: narrowViewport.value ? 'timeGridDay' : 'timeGridWeek',
     initialDate: TEMPLATE_BASE_MONDAY,
-    headerToolbar: false,
+    validRange: { start: TEMPLATE_BASE_MONDAY, end: TEMPLATE_WEEK_END },
+    headerToolbar: narrowViewport.value ? { left: 'prev', center: 'title', right: 'next' } : false,
+    // The anchor week's dates are an implementation detail; only the weekday means anything.
+    titleFormat: { weekday: 'long' },
     dayHeaderFormat: { weekday: 'long' },
     locale: locale.value === 'en' ? 'en' : esLocale,
     firstDay: 1,
@@ -58,5 +74,5 @@ export function useScheduleTemplate(
     eventDrop: handlers.onEventDrop,
     eventResize: handlers.onEventResize,
   }));
-  return { calendarOptions };
+  return { calendarOptions, narrowViewport };
 }

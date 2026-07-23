@@ -25,6 +25,11 @@ export interface ApiFetchOptions {
   successStatuses?: readonly number[];
 }
 
+// A response must arrive within this bound; past it the request is abandoned and reported as a
+// failure, so a hung socket can never leave a view stuck in `loading` forever. Generous enough
+// that a slow-but-live request still completes.
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function performRawApiFetch(
   path: string,
   options: RequestInit = {},
@@ -35,18 +40,35 @@ async function performRawApiFetch(
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
+  // Own the abort so a slow request can be timed out; chain the caller's signal in so a caller
+  // replacing its own request still cancels the fetch. `timedOut` distinguishes our timeout (a
+  // reportable failure) from a caller abort (rethrown, since the caller discards it itself).
+  const callerSignal = options.signal ?? undefined;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal?.aborted) controller.abort();
+  else callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+
   // API responses carry live data and must never be served from the HTTP cache. A cached stale
   // response (e.g. an index.html served during a dev-proxy hiccup) otherwise poisons GETs.
   let response: Response;
   try {
-    response = await fetch(`${API_PREFIX}${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
+    response = await fetch(`${API_PREFIX}${path}`, { ...options, headers, signal: controller.signal, credentials: 'same-origin', cache: 'no-store' });
   } catch (error) {
+    // No response within the bound: surface like any other unreachable-server failure so the
+    // caller stops loading instead of awaiting forever.
+    if (timedOut) return { ok: false, status: 0, code: 'network_error', message: 'Request timed out' };
     // An abort is the caller replacing its own request, not a failure — callers that pass a signal
     // discard the rejection themselves, and turning it into a result would look like a real error.
     if ((error instanceof DOMException || error instanceof Error) && error.name === 'AbortError') throw error;
     // Offline, DNS failure, TLS refusal, server unreachable: no response ever existed, so there is
     // no HTTP status to report. Callers read this like any other failure instead of a rejection.
     return { ok: false, status: 0, code: 'network_error', message: 'Network request failed' };
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
   }
 
   if (response.status === 401) {
@@ -94,6 +116,14 @@ async function performRawApiFetch(
 }
 
 const inFlightGets = new Map<string, Promise<RawApiResult>>();
+
+// Test seam only: drop any coalescing keys still held by requests that a test left in flight,
+// so one test's pending GET can't be shared into the next. Production never calls this — a live
+// coalesced request already removes its own key on settle (identity-checked), and clearing an
+// entry the owning request no longer matches is a no-op there.
+export function resetApiClientState(): void {
+  inFlightGets.clear();
+}
 
 export async function apiFetchDecoded<T>(
   decoder: Decoder<T>,

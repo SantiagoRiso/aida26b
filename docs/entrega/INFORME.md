@@ -29,6 +29,7 @@ Correspondencia entre los puntos de `TODO.md` y las secciones de este informe.
 | Queries sin inyección SQL | §12.5 Construcción segura de consultas |
 | Validaciones: quién las conoce y quién las fuerza | §12.1 Validación compartida |
 | Errores y logging: qué se registra, dónde, qué se muestra | §15 Errores, registro y observabilidad |
+| ¿Los errores del frontend se deberían enviar al backend? | §15.1 Errores del navegador enviados al servidor |
 | Testing: end to end, backend, interacción del usuario | §16 Pruebas e integración continua |
 
 ---
@@ -745,6 +746,55 @@ nivel configurable, e incluye identificador de pedido, método, dirección, esta
 versión; el cuerpo del pedido nunca se registra. Hay un endpoint de salud sin autenticación
 que ejecuta una consulta real contra la base.
 
+### 15.1 Errores del navegador enviados al servidor
+
+**Cómo funciona.** El navegador envía al servidor tres clases de falla, y solamente esas
+tres, a un endpoint de ingesta (`POST /api/telemetry/browser-error`):
+
+1. una excepción que escapó del renderizado de un componente, es decir la pantalla quedó rota;
+2. una promesa rechazada que nadie atrapó, es decir hubo trabajo abandonado sin avisarle a
+   nadie;
+3. una respuesta que no pasó su decodificador, es decir el cliente y el servidor dejaron de
+   estar de acuerdo sobre la forma de los datos.
+
+La tercera es la más valiosa de las tres y es la única que ningún registro del servidor puede
+detectar por su cuenta: desde el servidor la respuesta fue un 200 correcto, y el desacuerdo
+solo se ve del lado del que la consume. El servidor registra cada reporte como una línea de
+nivel `warn` en el mismo flujo estructurado que el resto, con el identificador de pedido que
+la une a su línea de acceso.
+
+**Qué no se envía, y por qué.** No se envían las respuestas 4xx comunes: un 403, un 404 o un
+400 de validación son el servidor contestando bien y el usuario siendo informado de algo
+normal. El servidor ya las registró, varias ya quedaron en la auditoría, y reenviarlas
+duplicaría un registro que ya existe además de convertir cada formulario rechazado en una
+escritura sobre un endpoint público. Tampoco se envían las fallas de red del propio cliente:
+si no hay conexión, tampoco hay a quién reportarle. La regla de fondo es que se reporta lo
+que indica un defecto, no lo que indica una interacción.
+
+**Dónde quedan y por qué no en la auditoría.** Los reportes van al registro operativo y a
+ningún otro lado. La tabla de auditoría es de solo agregado, está acotada por negocio y tiene
+columnas obligatorias que un reporte anónimo no puede completar; conectar un endpoint sin
+autenticación a una tabla de la que la aplicación no puede borrar le daría a cualquiera que
+pueda cargar la página una escritura ilimitada e irreversible. Tampoco se creó una tabla
+nueva: son diagnósticos sin significado de dominio y sin ningún lector dentro del producto.
+
+**Abuso y contenido hostil.** El endpoint es alcanzable por cualquiera que pueda cargar la
+página, así que está acotado por tres lados. Por tamaño: la ruta monta su propio analizador de
+cuerpo con un límite de 4 KB, por delante del analizador general de la API, de modo que un
+cuerpo enorme se rechaza con 413 antes de ser aceptado; cada campo además se recorta a 500
+caracteres. Por frecuencia: reutiliza el mismo limitador de ventana deslizante que ya protege
+el login, con un presupuesto por cliente, y el navegador impone su propio tope por carga de
+página y colapsa reportes idénticos, porque un componente que falla en cada cuadro no debe
+gastar el presupuesto entero en un solo defecto. Por contenido: el texto que llega es
+controlado por quien lo envía, así que nunca se interpola en ninguna parte; viaja como valor
+de un campo del registro JSON, que lo escapa, de modo que no puede partir la línea ni inventar
+campos. Y no toca la base de datos en ningún momento, así que no hay superficie de inyección.
+
+**Sin sesión, a propósito.** El endpoint acepta reportes anónimos. Exigir sesión dejaría
+ciega justamente a la falla que más se quiere ver: una pantalla de login que se rompe le
+ocurre a alguien que todavía no tiene sesión. El costo de aceptarlos es el que acotan el
+límite de tamaño y el limitador de frecuencia.
+
 **Decisiones a desarrollar.**
 - Respuesta directa al enunciado: qué se registra en el servidor y dónde, qué se le muestra
   al usuario y cómo (errores por campo en línea, errores generales en avisos emergentes).
@@ -752,7 +802,17 @@ que ejecuta una consulta real contra la base.
   en cada ruta.
 - Por qué existe una red de contención para código asíncrono: una promesa rechazada mataría
   el proceso.
-- Pendiente: no hay envío de errores del navegador al servidor. Corresponde declararlo.
+- Por qué los reportes del navegador se envían a través de un punto de reporte intercambiable
+  en lugar de llamar a `fetch` desde el manejador de errores: es lo que permite probar el
+  envío sin un navegador.
+- Correlación: se descartó devolver el identificador de pedido al navegador en un encabezado
+  para que el reporte lo cite. Habría exigido plomería en el registrador, en el cliente de la
+  API y en cada llamada, mientras que un reporte de contrato ya viaja con la dirección y el
+  estado de la respuesta que falló, que es suficiente para encontrarla en el registro de
+  accesos. Se dejó afuera por no pagar más máquina que la que vale la unión.
+- Qué se le muestra al usuario cuando algo se reporta: nada. Un error que escapó es un
+  defecto, no una condición sobre la que el usuario pueda actuar; las operaciones que la
+  persona sí inició informan su propio fracaso por el resultado que estaba esperando.
 
 ---
 

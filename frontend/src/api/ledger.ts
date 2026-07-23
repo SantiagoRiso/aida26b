@@ -28,14 +28,25 @@ export function getBalance(clientUserId: number | string): Promise<ApiResult<Bal
   return apiFetchDecoded(balanceResult, ledgerPaths.clientBalance(clientUserId));
 }
 
+// Ordering is server-side and allowlisted there; an unknown column falls back to the default order.
+export interface LedgerSort {
+  sort?: string;
+  dir?: 'asc' | 'desc';
+}
+
 export function getLedger(
   clientUserId: number | string,
   page = 1,
   limit = 50,
+  order: LedgerSort = {},
 ): Promise<ApiResult<LedgerEntry[]>> {
   const params = new URLSearchParams();
   if (page > 1) params.set('page', String(page));
   params.set('limit', String(limit));
+  if (order.sort) {
+    params.set('sort', order.sort);
+    params.set('dir', order.dir ?? 'asc');
+  }
   const qs = params.toString();
   return apiFetchDecoded(arrayOf(ledgerEntry), `${ledgerPaths.clientLedger(clientUserId)}${qs ? `?${qs}` : ''}`);
 }

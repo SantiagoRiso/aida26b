@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useStateLabel } from '@/composables/useStateLabel';
 import { useCurrency } from '@/composables/useCurrency';
@@ -13,9 +13,11 @@ import { listAppointments, approveAppointment, transitionAppointment } from '@/a
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence, toDisplayAppointment } from '@/composables/seriesOccurrence';
 import { toMinutes } from '@shared/ssot/domain/availability';
+import { APPOINTMENT_SORT_FIELDS } from '@shared/ssot/list-sort';
 import { structure } from '@shared/ssot/structure';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { useLabel } from '@/composables/useLabel';
+import { useListQuerySync } from '@/composables/useListQuerySync';
 import { useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { fetchProfessionalBlocks } from '@/composables/useProfessionalBlocks';
 import type { ProfessionalBlock } from '@/composables/useProfessionalBlocks';
@@ -30,6 +32,7 @@ import CalendarView from '@/components/calendar/CalendarView.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
 import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
+import SortableHeader from '@/components/shared/SortableHeader.vue';
 
 // The server scopes /appointments by role (Admin: all, Professional: own,
 // Receptionist: granted), so the requested rows returned here already respect
@@ -45,36 +48,81 @@ const requests = ref<Appointment[]>([]);
 const loading = ref(false);
 const acting = ref(false);
 
+// Requests span the whole future rather than a page's worth, so the screen asks for the backlog in
+// one go and narrows it in place. The bound keeps a runaway backlog from being fetched whole; this
+// is not a paginated list.
+const REQUEST_FETCH_LIMIT = 200;
+
+const BLANK_FILTERS = { professional_user_id: '', q: '' };
+
+// The triage view is shareable: which professional, which order, and the text narrowing all live in
+// the URL, so a reload or a pasted link lands on the same list.
+const listQuery = useListQuerySync({
+  onChange: load,
+  sortableFields: () => APPOINTMENT_SORT_FIELDS,
+  filterableFields: () => Object.keys(BLANK_FILTERS),
+  defaultFilters: () => ({ ...BLANK_FILTERS }),
+});
+const { filters, sort, dir } = listQuery;
+
 async function load() {
   loading.value = true;
-  const res = await listAppointments({ state: 'requested', limit: 200 });
+  const res = await listAppointments({
+    state: 'requested',
+    professional_user_id: filters.value.professional_user_id || undefined,
+    sort: sort.value || undefined,
+    dir: dir.value,
+    limit: REQUEST_FETCH_LIMIT,
+  });
   loading.value = false;
   if (res.ok) {
     // A virtual occurrence is always 'scheduled' (never 'requested'), so this filter is defensive
     // typing rather than an expected runtime case — approve/reject here call transitionAppointment/
     // approveAppointment directly on appt.id, with no materialize-on-action wiring.
-    requests.value = res.data
-      .filter((a): a is Appointment => !isVirtualOccurrence(a))
-      .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+    requests.value = res.data.filter((a): a is Appointment => !isVirtualOccurrence(a));
   }
 }
-onMounted(load);
+load();
 
-// Filter the already-loaded (role-scoped) list by professional, client-side — no refetch. The
-// picker self-hides unless more than one professional is in scope, so a Professional / single-grant
-// Receptionist never sees it and keeps their full list (which is already only their requests).
-const selectedProfessionalId = ref<number | null>(null);
-const clientQuery = ref('');
+// A new column starts ascending; clicking the active one reverses it. Ordering is the server's, so
+// the rows arrive sorted and nothing re-sorts them here.
+function toggleSort(field: string) {
+  if (sort.value === field) {
+    dir.value = dir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sort.value = field;
+    dir.value = 'asc';
+  }
+  listQuery.commit();
+}
+
+// The picker self-hides unless more than one professional is in scope, so a Professional /
+// single-grant Receptionist never sees it and keeps their full list (already only their requests).
+const selectedProfessionalId = computed<number | null>({
+  get: () => (filters.value.professional_user_id ? Number(filters.value.professional_user_id) : null),
+  set: (value) => {
+    filters.value = { ...filters.value, professional_user_id: value == null ? '' : String(value) };
+    listQuery.commit();
+  },
+});
+
+// Client name and DNI are foreign-key labels the appointments endpoint does not join, so this one
+// narrows the fetched backlog in place. Committing it keeps the URL shareable; the refetch that
+// commit triggers returns the same backlog.
+const clientQuery = computed<string>({
+  get: () => filters.value.q ?? '',
+  set: (value) => {
+    filters.value = { ...filters.value, q: value };
+    listQuery.commitDebounced();
+  },
+});
+
 const filteredRequests = computed(() => {
-  const sel = selectedProfessionalId.value;
   const query = clientQuery.value.trim().toLocaleLowerCase(locale.value);
-  // Wire rows serialize ids as strings, so compare as strings (a strict number === always misses).
-  return requests.value.filter((a) => {
-    if (sel != null && String(a.professional_user_id) !== String(sel)) return false;
-    if (!query) return true;
-    return clientName(a).toLocaleLowerCase(locale.value).includes(query)
-      || (clientDniFor(a.client_user_id) ?? '').toLocaleLowerCase(locale.value).includes(query);
-  });
+  if (!query) return requests.value;
+  return requests.value.filter((a) =>
+    clientName(a).toLocaleLowerCase(locale.value).includes(query)
+    || (clientDniFor(a.client_user_id) ?? '').toLocaleLowerCase(locale.value).includes(query));
 });
 
 const { labelFor: clientLabelFor } = useForeignKeyOptions({ table: 'clients', valueField: 'id', labelField: 'display_name' });
@@ -335,39 +383,51 @@ async function confirmReject() {
       :body="t('requests.emptyBody')"
     />
 
-    <ul v-else class="space-y-3">
-      <li
-        v-for="appt in filteredRequests"
-        :key="appt.id"
-        class="cursor-pointer rounded-lg border border-border bg-card p-4 transition-colors hover:border-accent/50 hover:bg-accent/5"
-        role="button"
-        tabindex="0"
-        @click="openDetail(appt)"
-        @keydown.enter="openDetail(appt)"
-      >
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div class="flex-1 space-y-1">
-            <p class="text-sm font-semibold text-heading">{{ clientName(appt) }}</p>
-            <p class="text-sm text-neutral">
+    <div v-else class="overflow-x-auto rounded-lg border border-border">
+      <table class="w-full text-sm" :aria-label="t('nav.requests')">
+        <thead class="border-b border-border bg-surface text-heading">
+          <tr>
+            <th scope="col" class="whitespace-nowrap px-4 py-3 text-left font-semibold">{{ t('calendar.clientLabel') }}</th>
+            <SortableHeader field="starts_at" :label="t('calendar.dateLabel')" :active="sort" :dir="dir" @sort="toggleSort" />
+            <th scope="col" class="whitespace-nowrap px-4 py-3 text-left font-semibold">{{ t('calendar.professionalLabel') }}</th>
+            <th scope="col" class="whitespace-nowrap px-4 py-3 text-left font-semibold">{{ t('calendar.serviceLabel') }}</th>
+            <SortableHeader field="price" :label="t('calendar.priceLabel')" :active="sort" :dir="dir" @sort="toggleSort" />
+            <th scope="col" class="px-4 py-3 text-right font-semibold">{{ t('generic.actionsColumn') }}</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border">
+          <tr
+            v-for="appt in filteredRequests"
+            :key="appt.id"
+            class="virtualized-row cursor-pointer bg-card transition-colors hover:bg-accent/5"
+            role="button"
+            tabindex="0"
+            @click="openDetail(appt)"
+            @keydown.enter="openDetail(appt)"
+          >
+            <td class="px-4 py-3 font-semibold text-heading">{{ clientName(appt) }}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-neutral">
               {{ formatDateTime(appt.starts_at) }} · {{ appt.duration_minutes }} min
-            </p>
-            <p class="text-sm text-neutral">
-              {{ professionalName(appt) }}<span v-if="resourceName(appt)"> · {{ resourceName(appt) }}</span> · {{ serviceName(appt) }}
-            </p>
-            <p class="text-xs text-neutral">{{ formatARS(appt.price) }}</p>
-          </div>
-
-          <div class="flex flex-shrink-0 gap-2">
-            <AppButton variant="primary" :loading="acting" @click.stop="approve(appt)">
-              {{ t('calendar.approve') }}
-            </AppButton>
-            <AppButton variant="destructive" :disabled="acting" @click.stop="rejectTarget = appt">
-              {{ t('calendar.reject') }}
-            </AppButton>
-          </div>
-        </div>
-      </li>
-    </ul>
+            </td>
+            <td class="px-4 py-3 text-neutral">
+              {{ professionalName(appt) }}<span v-if="resourceName(appt)"> · {{ resourceName(appt) }}</span>
+            </td>
+            <td class="px-4 py-3 text-neutral">{{ serviceName(appt) }}</td>
+            <td class="px-4 py-3 tabular-nums text-neutral">{{ formatARS(appt.price) }}</td>
+            <td class="px-4 py-3">
+              <div class="flex justify-end gap-2">
+                <AppButton variant="primary" :loading="acting" @click.stop="approve(appt)">
+                  {{ t('calendar.approve') }}
+                </AppButton>
+                <AppButton variant="destructive" :disabled="acting" @click.stop="rejectTarget = appt">
+                  {{ t('calendar.reject') }}
+                </AppButton>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <DetailPanel
       :open="detailOpen"

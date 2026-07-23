@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { sendError, type HttpResponse } from '../src/status_messages';
 
 // A minimal stand-in for Express's res: records what sendError actually wrote.
-function fakeRes(): HttpResponse & { statusCode?: number; body?: unknown } {
-  const res = {} as HttpResponse & { statusCode?: number; body?: unknown };
+function fakeRes(): HttpResponse & { statusCode?: number; body?: object } {
+  const res = {} as HttpResponse & { statusCode?: number; body?: object };
   res.status = (code: number) => {
     res.statusCode = code;
     return res;
   };
-  res.json = (payload: unknown) => {
+  res.json = (payload: object) => {
     res.body = payload;
     return res;
   };

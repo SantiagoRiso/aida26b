@@ -22,11 +22,11 @@ const mountOpts = () => ({ global: { plugins: [makeI18n()], stubs: { ScheduleBlo
 describe('ScheduleEditorView', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    vi.mocked(listRows).mockImplementation(async (table: string) => {
+    vi.mocked(listRows).mockImplementation(async (table) => {
       if (table === 'professionals') {
         return { ok: true, data: [
-          { id: '1', display_name: 'Dr. Ana' },
-          { id: '2', display_name: 'Dr. Bruno' },
+          { id: '1', display_name: 'Dr. Ana', bio: null },
+          { id: '2', display_name: 'Dr. Bruno', bio: null },
         ] };
       }
       return { ok: true, data: [] };

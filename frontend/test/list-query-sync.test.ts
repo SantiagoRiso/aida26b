@@ -37,6 +37,7 @@ import GenericTable from '@/components/generic/GenericTable.vue';
 import AuditView from '@/views/staff/AuditView.vue';
 // The real serializer: if the URL and the request ever stop agreeing, this suite fails.
 import { listRows, buildQuery } from '@/api/crud';
+import type { ListParams } from '@/api/crud';
 import { listAudit } from '@/api/audit';
 
 const listRowsMock = listRows as ReturnType<typeof vi.fn>;
@@ -92,11 +93,11 @@ function mountTable(
 
 // FK label lookups hit listRows for other tables, so the assertions look at the last request
 // for the table under test.
-function requestsFor(table: string): Record<string, unknown>[] {
+function requestsFor(table: string): ListParams[] {
   return listRowsMock.mock.calls.filter((call) => call[0] === table).map((call) => call[1]);
 }
 
-function lastRequest(table = 'services'): Record<string, unknown> {
+function lastRequest(table = 'services'): ListParams {
   const calls = requestsFor(table);
   expect(calls.length).toBeGreaterThan(0);
   return calls[calls.length - 1];
@@ -166,14 +167,14 @@ describe('GenericTable — state changes are written back to the URL', () => {
     await flushPromises();
 
     const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
 
     expect(plugins.router.currentRoute.value.query).toMatchObject({ sort: 'name', dir: 'asc' });
     expect(replace).toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
 
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
     expect(plugins.router.currentRoute.value.query).toMatchObject({ sort: 'name', dir: 'desc' });
   });
@@ -243,7 +244,7 @@ describe('GenericTable — state changes are written back to the URL', () => {
     await flushPromises();
 
     const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
 
     expect(plugins.router.currentRoute.value.query).toMatchObject({ tab: 'historial', sort: 'name' });
@@ -335,7 +336,7 @@ describe('GenericTable — browser navigation re-reads the URL', () => {
     await flushPromises();
 
     const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
     expect(lastRequest()).toMatchObject({ sort: 'name' });
 
@@ -363,6 +364,7 @@ describe('AuditView — its own list state is URL-bound too', () => {
       expect.objectContaining({ outcome: 'denied', entity_type: 'appointments' }),
       2,
       LIST_DEFAULT_LIMIT,
+      { sort: undefined, dir: 'asc' },
     );
   });
 
@@ -384,6 +386,7 @@ describe('AuditView — its own list state is URL-bound too', () => {
       expect.objectContaining({ outcome: 'denied' }),
       1,
       LIST_DEFAULT_LIMIT,
+      { sort: undefined, dir: 'asc' },
     );
   });
 
@@ -408,6 +411,7 @@ describe('AuditView — its own list state is URL-bound too', () => {
       expect.objectContaining({ actor_user_id: undefined }),
       1,
       LIST_DEFAULT_LIMIT,
+      { sort: undefined, dir: 'asc' },
     );
     expect(wrapper.text()).toContain(es.audit.title);
   });
@@ -420,12 +424,84 @@ describe('list URL vocabulary is the shared one', () => {
     await flushPromises();
 
     const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
 
     const written = plugins.router.currentRoute.value.query as Record<string, string>;
     expect(`?${new URLSearchParams(written).toString()}`).toBe(
       buildQuery({ sort: 'name', dir: 'asc' }),
     );
+  });
+});
+
+describe('AuditView — column ordering is server-side and URL-bound', () => {
+  function mountAudit(plugins: Awaited<ReturnType<typeof makePlugins>>) {
+    const { pinia, router, i18n } = plugins;
+    return mount(AuditView, { global: { plugins: [pinia, router, i18n] } });
+  }
+
+  // The table only renders once there is a row to put in it, so the headers only exist then.
+  beforeEach(() => {
+    listAuditMock.mockResolvedValue({
+      ok: true,
+      data: [{
+        id: '1', actor_user_id: '7', event_type: 'appointment_requested',
+        entity_type: 'appointments', entity_id: '3', outcome: 'success',
+        ip: null, details: null, created_at: '2026-01-01T12:00:00.000Z',
+      }],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
+    });
+  });
+
+  function header(wrapper: ReturnType<typeof mountAudit>, label: string) {
+    const th = wrapper.findAll('th').find((cell) => cell.text().startsWith(label));
+    expect(th, `no header for ${label}`).toBeTruthy();
+    return th!;
+  }
+
+  it('clicking a header asks the API for that order and reverses on a second click', async () => {
+    const plugins = await makePlugins();
+    const wrapper = mountAudit(plugins);
+    await flushPromises();
+
+    await header(wrapper, es.audit.colEvent).get('button').trigger('click');
+    await flushPromises();
+    expect(listAuditMock.mock.calls.at(-1)?.[3]).toEqual({ sort: 'event_type', dir: 'asc' });
+    expect(plugins.router.currentRoute.value.query).toMatchObject({ sort: 'event_type', dir: 'asc' });
+
+    await header(wrapper, es.audit.colEvent).get('button').trigger('click');
+    await flushPromises();
+    expect(listAuditMock.mock.calls.at(-1)?.[3]).toEqual({ sort: 'event_type', dir: 'desc' });
+  });
+
+  it('reports the active column through aria-sort', async () => {
+    const plugins = await makePlugins();
+    const wrapper = mountAudit(plugins);
+    await flushPromises();
+
+    expect(header(wrapper, es.audit.outcome).attributes('aria-sort')).toBe('none');
+    await header(wrapper, es.audit.outcome).get('button').trigger('click');
+    await flushPromises();
+    expect(header(wrapper, es.audit.outcome).attributes('aria-sort')).toBe('ascending');
+  });
+
+  it('re-sorting returns to page 1', async () => {
+    const plugins = await makePlugins('/?page=4');
+    const wrapper = mountAudit(plugins);
+    await flushPromises();
+
+    await header(wrapper, es.audit.colActor).get('button').trigger('click');
+    await flushPromises();
+
+    expect(listAuditMock.mock.calls.at(-1)?.[1]).toBe(1);
+    expect(plugins.router.currentRoute.value.query.page).toBeUndefined();
+  });
+
+  it('a column the audit endpoint does not sort by is dropped rather than forwarded', async () => {
+    const plugins = await makePlugins('/?sort=ip&dir=desc');
+    mountAudit(plugins);
+    await flushPromises();
+
+    expect(listAuditMock.mock.calls.at(-1)?.[3]).toEqual({ sort: undefined, dir: 'desc' });
   });
 });

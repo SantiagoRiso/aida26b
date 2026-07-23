@@ -7,13 +7,18 @@ import TimeField from '@/components/shared/TimeField.vue';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
 import { toMinutes } from '@shared/ssot/domain';
+import type { Weekday } from '@shared/ssot/domain';
+import { structure } from '@shared/ssot/structure';
+import { useLabel } from '@/composables/useLabel';
 
 const props = withDefaults(defineProps<{
   open: boolean;
+  // Null while creating: the same dialog adds a block and edits one, so both reach the weekday and
+  // the times by keyboard.
   block: TemplateBlock | null;
-  // Validates + persists the block window; resolves true on success. The modal orchestrates the
-  // full submit (times then services) so Guardar commits everything and Cancelar discards.
-  submitTimes: (times: { startTime: string; endTime: string }) => Promise<boolean>;
+  // Validates + persists the block; resolves true on success. The modal orchestrates the full
+  // submit (block then services) so Guardar commits everything and Cancelar discards.
+  submit: (times: { weekday: Weekday; startTime: string; endTime: string }) => Promise<boolean>;
   // Resource-owned blocks have no services to attach; default true (professional blocks).
   showServices?: boolean;
 }>(), { showServices: true });
@@ -23,17 +28,26 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { label } = useLabel();
 const servicesRef = ref<InstanceType<typeof BlockServicesPanel> | null>(null);
 const submitting = ref(false);
 
+const weekdayColumn = structure.tables.schedule_blocks.columns.weekday;
+const weekdayOptions = computed(() =>
+  weekdayColumn.options.map((option) => ({ value: option.value, label: label(option.label) })));
+
 async function onSubmit() {
-  if (submitting.value || !props.block) return;
+  if (submitting.value) return;
   submitting.value = true;
   try {
-    // Times first (they can reject on overlap), then the pending service changes; close only when
+    // The block first (it can reject on overlap), then the pending service changes; close only when
     // both commit. A failure leaves the modal open so the user can fix and retry.
-    const okTimes = await props.submitTimes({ startTime: startTime.value, endTime: endTime.value });
-    if (!okTimes) return;
+    const okBlock = await props.submit({
+      weekday: weekday.value,
+      startTime: startTime.value,
+      endTime: endTime.value,
+    });
+    if (!okBlock) return;
     const okServices = servicesRef.value ? await servicesRef.value.save() : true;
     if (okServices) emit('close');
   } finally {
@@ -41,17 +55,23 @@ async function onSubmit() {
   }
 }
 
-// Local, unsaved edits of the block window. Reset from the block whenever the modal (re)opens or a
-// different block is selected, so a stale edit never leaks across blocks.
+// A new block opens on the first working day of a typical week rather than empty, so the dialog is
+// one confirm away from a usable block.
+const CREATE_DEFAULTS = { weekday: 'mon' as Weekday, start_time: '09:00', end_time: '13:00' };
+
+// Local, unsaved edits. Reset whenever the modal (re)opens or a different block is selected, so a
+// stale edit never leaks across blocks.
+const weekday = ref<Weekday>(CREATE_DEFAULTS.weekday);
 const startTime = ref('');
 const endTime = ref('');
 watch(
   () => [props.open, props.block?.id] as const,
   () => {
-    if (props.open && props.block) {
-      startTime.value = props.block.start_time;
-      endTime.value = props.block.end_time;
-    }
+    if (!props.open) return;
+    const source = props.block ?? CREATE_DEFAULTS;
+    weekday.value = source.weekday;
+    startTime.value = source.start_time;
+    endTime.value = source.end_time;
   },
   { immediate: true },
 );
@@ -81,9 +101,23 @@ const liveMinutes = computed(() => {
           leave="ease-in duration-150" leave-from="opacity-100 scale-100" leave-to="opacity-0 scale-95"
         >
           <DialogPanel class="w-full max-w-md rounded-xl bg-card p-6 shadow-xl" data-testid="block-editor-modal">
-            <DialogTitle class="text-lg font-semibold">{{ t('schedule.editBlock') }}</DialogTitle>
+            <DialogTitle class="text-lg font-semibold">
+              {{ block ? t('schedule.editBlock') : t('schedule.newBlock') }}
+            </DialogTitle>
 
-            <div v-if="block" class="mt-4 flex flex-wrap gap-4">
+            <div class="mt-4 flex flex-wrap gap-4">
+              <label class="flex flex-col gap-1 text-sm">
+                {{ label(weekdayColumn.label) }}
+                <select
+                  v-model="weekday"
+                  data-testid="block-edit-weekday"
+                  class="min-h-[44px] rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option v-for="option in weekdayOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
               <label class="flex flex-col gap-1 text-sm">
                 {{ t('schedule.startLabel') }}
                 <TimeField v-model="startTime" />
@@ -103,9 +137,10 @@ const liveMinutes = computed(() => {
             />
 
             <div class="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
-              <AppButton variant="destructive" data-testid="block-edit-delete" @click="emit('delete')">
+              <AppButton v-if="block" variant="destructive" data-testid="block-edit-delete" @click="emit('delete')">
                 {{ t('schedule.deleteBlock') }}
               </AppButton>
+              <span v-else />
               <div class="flex gap-3">
                 <button
                   type="button"

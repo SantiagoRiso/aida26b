@@ -68,7 +68,7 @@ describe('CalendarView — visible range bounds', () => {
     });
     await flushPromises();
 
-    const filters = mockedList.mock.calls[0][0];
+    const filters = mockedList.mock.calls[0][0]!;
     expect(filters.date_from).toBe(dayISO(new Date(), 0));
     expect(filters.date_to).toBe(dayISO(new Date(), 6));
   });

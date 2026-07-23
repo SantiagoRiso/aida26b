@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { deleteRow } from '@/api/crud';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { invalidateFkOptions } from '@/composables/useForeignKeyOptions';
 import { useToast } from '@/composables/useToast';
 import { useAuthStore } from '@/stores/auth';
@@ -87,7 +88,9 @@ async function confirmDelete() {
     reloadKey.value++;
     invalidateFkOptions(props.tableKey);
   } else {
-    toast('error', 'genericError');
+    // A blocked delete carries a translatable code (e.g. an FK still references the row → conflict);
+    // show it rather than the opaque generic toast.
+    toast('error', apiErrorMessage(result, 'toast.genericError'));
   }
   pendingDeleteId.value = null;
 }

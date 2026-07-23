@@ -45,7 +45,9 @@ async function submit() {
 
 <template>
   <!-- No language switch on this screen; renders in the default/last-saved language. -->
-  <div class="flex min-h-screen items-center justify-center bg-surface px-4">
+  <!-- The auth screens render outside both shells, so the landmark lives here: without it the
+       whole page sits outside any region and a screen reader has nothing to jump to. -->
+  <main class="flex min-h-screen items-center justify-center bg-surface px-4">
     <div class="w-full max-w-sm rounded-xl bg-card p-8 shadow-sm border border-border">
       <h1 class="mb-6 text-2xl font-semibold text-center">AIDA</h1>
 
@@ -90,5 +92,5 @@ async function submit() {
         </AppButton>
       </form>
     </div>
-  </div>
+  </main>
 </template>

@@ -2,12 +2,16 @@ import { query } from './core';
 import type { Queryable, SqlParam } from './core';
 import type { AuditEventRow } from '../../../shared/src/ssot/query-types';
 import { dateBoundConditions } from './date-bounds';
+import { orderByClause } from './sort';
+import type { ListSort, SortColumns } from './sort';
+import type { AuditSortField } from '../../../shared/src/ssot/list-sort';
 
-// ip is null for in-transaction writes (auditInTx) that don't carry a request.
+// ip is null for in-transaction writes (auditInTx) that don't carry a request. businessId is null
+// only for events that belong to no tenant — a login attempt on a username nobody holds.
 export async function insertAuditEvent(
   db: Queryable,
   e: {
-    businessId: number;
+    businessId: number | null;
     actorId: number | null;
     eventType: string;
     entityType: string | null;
@@ -26,47 +30,96 @@ export async function insertAuditEvent(
   );
 }
 
+// A tenant Admin is confined to their own business; a super-admin (Admin with no business) reads
+// every tenant plus the tenantless rows, which belong to no business and so satisfy no equality.
+// Spelled as a union rather than a nullable id so widening scope has to be asked for, not defaulted.
+export type AuditScope =
+  | { kind: 'tenant'; businessId: number }
+  | { kind: 'all' };
+
+// SQL for each sortable column the shared declaration names. Every other value falls back to the
+// default order.
+export const AUDIT_SORT_COLUMNS: SortColumns<AuditSortField> = {
+  created_at: 'a.created_at',
+  event_type: 'a.event_type',
+  entity_type: 'a.entity_type',
+  actor_user_id: 'a.actor_user_id',
+  outcome: 'a.outcome',
+};
+
+// Newest first: the audit log is read as a record of what just happened.
+export const AUDIT_DEFAULT_SORT: ListSort<AuditSortField> = { column: 'created_at', dir: 'desc' };
+
+// The endpoint's own filter allowlist. Audit is bespoke, so the field names a filter may name come
+// from here rather than an SSoT descriptor; anything else the route drops. `created_at` reads the
+// shared `min,max` range grammar; the rest are exact-match identity fields.
+export const AUDIT_FILTER_FIELDS = ['entity_type', 'actor_user_id', 'event_type', 'outcome', 'created_at'] as const;
+export type AuditFilterField = (typeof AUDIT_FILTER_FIELDS)[number];
+
+// An exact-match filter carries its `!` negation so the endpoint can honor the shared grammar
+// instead of silently applying the inverse. Negation compiles to IS DISTINCT FROM, so on a nullable
+// column (entity_type) "not X" keeps the NULL rows rather than dropping them.
+export type AuditEqFilter<T = string> = { value: T; negated: boolean };
+
 export type AuditListFilter = {
-  businessId: number;
-  entityType?: string;
-  actorUserId?: number;
-  eventType?: string;
-  outcome?: string;
+  scope: AuditScope;
+  sort: ListSort<AuditSortField>;
+  entityType?: AuditEqFilter;
+  actorUserId?: AuditEqFilter<number>;
+  eventType?: AuditEqFilter;
+  outcome?: AuditEqFilter;
   dateFrom?: string;
   dateTo?: string;
   limit: number;
   offset: number;
 };
 
+// `= $n` matches nothing for a NULL column, and `<> $n` would drop NULL rows from a negated filter;
+// IS DISTINCT FROM makes the negated set the exact complement of the positive one.
+function matchOp(negated: boolean): string {
+  return negated ? 'IS DISTINCT FROM' : '=';
+}
+
 // Only code-controlled column names are interpolated; every filter value is a bound $N param.
+// Events written in one transaction share created_at, so the id closes the sort — without a unique
+// tiebreaker two pages of the same list can repeat one event and never show another.
 export async function listAuditEvents(
   db: Queryable,
   f: AuditListFilter,
 ): Promise<{ rows: AuditEventRow[]; total: number }> {
-  const conditions: string[] = ['a.business_id = $1'];
-  const params: SqlParam[] = [f.businessId];
-  let p = 2;
+  const conditions: string[] = [];
+  const params: SqlParam[] = [];
+  let p = 1;
 
-  if (f.entityType != null) { conditions.push(`a.entity_type = $${p++}`); params.push(f.entityType); }
-  if (f.actorUserId != null) { conditions.push(`a.actor_user_id = $${p++}`); params.push(f.actorUserId); }
-  if (f.eventType != null) { conditions.push(`a.event_type = $${p++}`); params.push(f.eventType); }
-  if (f.outcome != null) { conditions.push(`a.outcome = $${p++}`); params.push(f.outcome); }
+  if (f.scope.kind === 'tenant') {
+    conditions.push(`a.business_id = $${p++}`);
+    params.push(f.scope.businessId);
+  }
+
+  if (f.entityType != null) { conditions.push(`a.entity_type ${matchOp(f.entityType.negated)} $${p++}`); params.push(f.entityType.value); }
+  if (f.actorUserId != null) { conditions.push(`a.actor_user_id ${matchOp(f.actorUserId.negated)} $${p++}`); params.push(f.actorUserId.value); }
+  if (f.eventType != null) { conditions.push(`a.event_type ${matchOp(f.eventType.negated)} $${p++}`); params.push(f.eventType.value); }
+  if (f.outcome != null) { conditions.push(`a.outcome ${matchOp(f.outcome.negated)} $${p++}`); params.push(f.outcome.value); }
 
   const dates = dateBoundConditions('a.created_at', { from: f.dateFrom, to: f.dateTo }, p);
   conditions.push(...dates.conditions);
   params.push(...dates.params);
   p = dates.nextIndex;
 
-  const where = conditions.join(' AND ');
+  const where = conditions.length > 0 ? conditions.join(' AND ') : 'true';
+
+  // The tenant column is for the super-admin's cross-tenant read only; a tenant Admin sees one
+  // business and gets the same projection they always did.
+  const businessCol = f.scope.kind === 'all' ? 'a.business_id, ' : '';
 
   const pageRows = await query<AuditEventRow & { total_count: string }>(
     db,
-    `SELECT a.id, a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
+    `SELECT a.id, ${businessCol}a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
             a.outcome, a.ip, a.details, a.created_at,
             count(*) OVER()::text AS total_count
        FROM audit_events a
       WHERE ${where}
-      ORDER BY a.created_at DESC
+      ORDER BY ${orderByClause(AUDIT_SORT_COLUMNS, f.sort, 'a.id')}
       LIMIT $${p} OFFSET $${p + 1}`,
     [...params, f.limit, f.offset],
   );

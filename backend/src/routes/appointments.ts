@@ -16,6 +16,7 @@ import {
   DEFAULT_CANCELLATION_CUTOFF_HOURS,
 } from '../../../shared/src/ssot/domain';
 import { BUSINESS_TZ, toBusinessDate } from '../time';
+import { MAX_LIST_WINDOW_DAYS } from '../../../shared/src/ssot/domain/recurrence-expand';
 import { httpError } from '../errors';
 import { assertAppointmentActionAllowed, auditInTx, auditConflictOverrideInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
@@ -32,8 +33,12 @@ import {
   setAppointmentConflictIgnored,
   listAppointments,
   listRelatedClientIds,
+  APPOINTMENT_SORT_COLUMNS,
+  APPOINTMENT_DEFAULT_SORT,
   type AppointmentRoleScope,
 } from '../db/appointments';
+import type { ListSort } from '../db/sort';
+import type { AppointmentSortField } from '../../../shared/src/ssot/list-sort';
 import { resolveAndLoadService, runConflictDryRun, saveWithConflictRecheck } from '../services/booking';
 import { insertSessionChargeIfAbsent } from '../db/ledger';
 import { getCancellationCutoffHours } from '../db/businesses';
@@ -47,8 +52,33 @@ import {
 } from './request-guards';
 import type { AppointmentRow, ListAppointment } from '../../../shared/src/ssot/query-types';
 import type { RelatedClientIdsResult } from '../../../shared/src/ssot/contracts/appointments';
-import { parsePagination } from './pagination';
+import { parsePagination, parseListSort } from './pagination';
 import { APPOINTMENT_PATTERNS } from '../../../shared/src/ssot/api-paths';
+
+// A date-range list unions stored rows with un-materialized recurring occurrences, so the order the
+// SQL produced has to be reproduced over the union in memory. Same column set, same direction.
+function appointmentSortValue(r: ListAppointment, column: AppointmentSortField): string | number {
+  if (column === 'starts_at') return r.id === null ? new Date(r.starts_at).getTime() : r.starts_at.getTime();
+  if (column === 'duration_minutes') return r.duration_minutes;
+  if (column === 'price') return Number(r.price);
+  return r.state;
+}
+
+// Unique per entry, so a tie on the sort column can't make paging repeat one turno and drop
+// another. A virtual occurrence has no row id yet, so its series and date stand in.
+function appointmentTiebreak(r: ListAppointment): string {
+  return r.id === null ? `v:${r.series_id}:${r.occurrence_date}` : `r:${String(r.id).padStart(20, '0')}`;
+}
+
+function compareAppointments(a: ListAppointment, b: ListAppointment, sort: ListSort<AppointmentSortField>): number {
+  const left = appointmentSortValue(a, sort.column);
+  const right = appointmentSortValue(b, sort.column);
+  let cmp = 0;
+  if (typeof left === 'number' && typeof right === 'number') cmp = left - right;
+  else cmp = String(left).localeCompare(String(right));
+  if (cmp === 0) cmp = appointmentTiebreak(a).localeCompare(appointmentTiebreak(b));
+  return sort.dir === 'asc' ? cmp : -cmp;
+}
 
 function stripStaffFields(row: AppointmentRow): Omit<AppointmentRow, 'staff_note' | 'override_actor_id'> {
   const { staff_note: _staffNote, override_actor_id: _overrideActorId, ...safe } = row;
@@ -433,6 +463,7 @@ export function mountAppointmentRoutes(
           return sendError(
             res, 422, 'outside_cutoff',
             `Cancellation is only allowed at least ${cutoffHours} hour(s) before the appointment`,
+            { detail: { key: 'cancelCutoff', params: { hours: cutoffHours } } },
           );
         }
       }
@@ -449,6 +480,7 @@ export function mountAppointmentRoutes(
         return sendError(
           res, 422, 'too_early',
           `Cannot mark '${to}' before the appointment's start time`,
+          { detail: { key: 'completeTooEarly' } },
         );
       }
     }
@@ -458,6 +490,7 @@ export function mountAppointmentRoutes(
         return sendError(
           res, 422, 'too_early',
           `Cannot mark 'no_show' more than ${cutoffHours} hour(s) before the appointment`,
+          { detail: { key: 'noShowTooEarly', params: { hours: cutoffHours } } },
         );
       }
     }
@@ -634,6 +667,7 @@ export function mountAppointmentRoutes(
     if (businessId == null) return;
 
     const { limit, page, offset } = parsePagination(req.query);
+    const sort = parseListSort(req.query, APPOINTMENT_SORT_COLUMNS, APPOINTMENT_DEFAULT_SORT);
 
     const query = requireRequestFields(res, LIST_QUERY, req.query, 'Invalid appointment list query');
     if (!query) return;
@@ -656,6 +690,19 @@ export function mountAppointmentRoutes(
 
     const conflicting = query.conflicting === true;
 
+    // Date-range mode fetches real rows unpaginated and expands every series across the window, so
+    // the span is what bounds the work — reject a window no screen legitimately needs before doing
+    // either. A single day counts as a 0-day span, so the bound is inclusive.
+    if (dateFrom != null && dateTo != null) {
+      const spanDays = Math.round(
+        (Date.parse(toBusinessDate(dateTo)) - Date.parse(toBusinessDate(dateFrom))) / 86_400_000,
+      );
+      if (spanDays > MAX_LIST_WINDOW_DAYS) {
+        return sendError(res, 422, 'invalid_request',
+          `Date range too wide (max ${MAX_LIST_WINDOW_DAYS} days)`);
+      }
+    }
+
     // Un-materialized recurring occurrences only expand over a bounded window — every current
     // caller that wants 'scheduled' turnos already supplies both bounds (a date-unbounded request
     // filters to state='requested', which a virtual can never match anyway). Date-range mode unions
@@ -670,6 +717,7 @@ export function mountAppointmentRoutes(
     const { rows, total: realTotal } = await listAppointments(pool, {
       businessId,
       roleScope,
+      sort,
       tz: BUSINESS_TZ,
       dateFrom,
       dateTo,
@@ -698,8 +746,7 @@ export function mountAppointmentRoutes(
       flagRealConflictsWithVirtuals(rows, virtuals, Date.now());
     }
 
-    const startsAtMs = (r: ListAppointment): number => (r.id === null ? new Date(r.starts_at).getTime() : r.starts_at.getTime());
-    let combined: ListAppointment[] = [...rows, ...virtuals].sort((a, b) => startsAtMs(a) - startsAtMs(b));
+    let combined: ListAppointment[] = [...rows, ...virtuals].sort((a, b) => compareAppointments(a, b, sort));
 
     // Reconciliation may flag a real row (or a virtual) the SQL pre-filter never saw, so the
     // conflicting narrowing runs here over the combined set in date-range mode.

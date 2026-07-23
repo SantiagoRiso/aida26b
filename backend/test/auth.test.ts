@@ -100,7 +100,7 @@ class FakeDb {
       );
       return { rows: [{ count: String(matching.length) }] };
     }
-    if (/SELECT base\.\*, COUNT\(\*\) OVER\(\).*FROM \(SELECT \* FROM auth\.users/i.test(sql)) {
+    if (/SELECT base\..*COUNT\(\*\) OVER\(\).*FROM \(SELECT \* FROM auth\.users/i.test(sql)) {
       const role = params[0];
       const bizId = params[1] !== undefined ? params[1] : null;
       const matching = this.users.filter(

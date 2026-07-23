@@ -46,12 +46,18 @@ export default [
       '**/*.d.ts',
       '**/.lancedb/**',
       '**/scratch/**',
+      // Generated reporter output — not source, and its vendored JS trips the suppression rules.
+      '**/coverage/**',
+      '**/coverage-db/**',
+      '**/playwright-report/**',
+      '**/test-results/**',
     ],
   },
   {
     files: [
       'frontend/src/**/*.ts',
       'frontend/test/**/*.ts',
+      'frontend/e2e/**/*.ts',
       'backend/src/**/*.ts',
       'backend/test/**/*.ts',
       'shared/src/**/*.ts',

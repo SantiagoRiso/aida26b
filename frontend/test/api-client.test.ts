@@ -368,6 +368,43 @@ describe('transport failure', () => {
 
     await expect(apiFetch('/appointments', { signal: controller.signal })).rejects.toThrow(/aborted/);
   });
+
+  // A hung request must resolve to a failure, never leave the caller awaiting forever. The mocked
+  // fetch honours the client's own abort signal, so advancing time past the timeout rejects it.
+  it('times out a hung request into a network_error result', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      })));
+      const { apiFetch } = await importFresh();
+
+      const pending = apiFetch('/appointments');
+      await vi.advanceTimersByTimeAsync(20_000);
+      const result = await pending;
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('network_error');
+        expect(result.status).toBe(0);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The timeout must not swallow a genuine caller abort: that still rethrows, unlike the timeout.
+  it('rethrows a caller abort even with the timeout wired in', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+    })));
+    const { apiFetch } = await importFresh();
+    const controller = new AbortController();
+
+    const pending = apiFetch('/appointments', { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow(/aborted/);
+  });
 });
 
 describe('cache policy', () => {

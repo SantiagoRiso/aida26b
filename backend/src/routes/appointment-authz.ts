@@ -28,6 +28,10 @@ export async function auditInTx(
   entityType = 'appointments',
   details: Record<string, ColumnValue | string[]> = {},
 ): Promise<void> {
+  // Tenantless actors never reach here: this records only successful lifecycle events, and every
+  // caller's authz guard rejects a null-business actor before the write. Kept as a floor so a
+  // tenantless success can't slip an in-tx row past the guard on this uncatchable path. Tenantless
+  // *denials* are recorded by the pool-based writer instead (see createAuditWriter).
   if (user.business_id == null) return;
   await insertAuditEvent(client, {
     businessId: user.business_id,
@@ -51,7 +55,7 @@ export async function auditConflictOverrideInTx(
   client: TransactionClient,
   user: AuthUser,
   appointmentId: number,
-  operation: 'schedule' | 'approve' | 'reschedule',
+  operation: 'schedule' | 'approve' | 'reschedule' | 'materialize',
 ): Promise<void> {
   await auditInTx(client, user, CONFLICT_OVERRIDE_EVENT, 'success', appointmentId, 'appointments', {
     operation,

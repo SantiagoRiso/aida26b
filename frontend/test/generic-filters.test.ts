@@ -22,7 +22,7 @@ function mountFilters(tableKey: TableKey) {
 }
 
 const columnSelect = (wrapper: ReturnType<typeof mountFilters>) =>
-  wrapper.get(`select[aria-label="${es.generic.selectColumnAria}"]`);
+  wrapper.get<HTMLSelectElement>(`select[aria-label="${es.generic.selectColumnAria}"]`);
 
 async function addFilter(wrapper: ReturnType<typeof mountFilters>, field: string) {
   await columnSelect(wrapper).setValue(field);
@@ -131,6 +131,44 @@ describe('GenericFilters — enum select', () => {
 
     expect(lastChange(wrapper)).toEqual({ role: 'Client' });
     expect(roleSelect.text()).toContain('Cliente');
+  });
+});
+
+// A free-text box on a boolean or date column offers a control the server can only ignore.
+describe('GenericFilters — boolean select', () => {
+  it('offers yes/no instead of a text box, and serializes the wire value', async () => {
+    const wrapper = mountFilters('users' as TableKey);
+    await addFilter(wrapper, 'is_active');
+
+    expect(wrapper.find(`input[placeholder="${es.generic.filterPlaceholder}"]`).exists()).toBe(false);
+
+    const activeSelect = wrapper.findAll('select')[1];
+    expect(activeSelect.text()).toContain(es.generic.yes);
+    expect(activeSelect.text()).toContain(es.generic.no);
+
+    await activeSelect.setValue('false');
+    expect(lastChange(wrapper)).toEqual({ is_active: 'false' });
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(lastChange(wrapper)).toEqual({ is_active: '!false' });
+  });
+});
+
+describe('GenericFilters — date range', () => {
+  it('offers two date inputs and serializes them as "from,to"', async () => {
+    const wrapper = mountFilters('sessions' as TableKey);
+    await addFilter(wrapper, 'expires_at');
+
+    expect(wrapper.find(`input[placeholder="${es.generic.filterPlaceholder}"]`).exists()).toBe(false);
+
+    const from = wrapper.get(`input[type="date"][aria-label="${es.generic.from}"]`);
+    const to = wrapper.get(`input[type="date"][aria-label="${es.generic.to}"]`);
+
+    await from.setValue('2026-07-01');
+    expect(lastChange(wrapper)).toEqual({ expires_at: '2026-07-01,' });
+
+    await to.setValue('2026-07-31');
+    expect(lastChange(wrapper)).toEqual({ expires_at: '2026-07-01,2026-07-31' });
   });
 });
 

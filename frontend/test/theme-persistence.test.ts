@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete (window as { matchMedia?: unknown }).matchMedia;
+  delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia;
 });
 
 function mountToggle() {

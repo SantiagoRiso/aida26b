@@ -83,6 +83,9 @@ export interface AppointmentListFilters {
   conflicting?: boolean;
   page?: number;
   limit?: number;
+  // Ordering is server-side and allowlisted there; an unknown column falls back to the default order.
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }
 
 export type ScheduleResult =
@@ -110,6 +113,10 @@ export async function listAppointments(
   if (filters.conflicting) params.set('conflicting', 'true');
   if (filters.page && filters.page > 1) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
+  if (filters.sort) {
+    params.set('sort', filters.sort);
+    params.set('dir', filters.dir ?? 'asc');
+  }
   const qs = params.toString();
   return apiFetchDecoded(arrayOf(listAppointment), `${appointmentPaths.list()}${qs ? `?${qs}` : ''}`, { signal: options.signal });
 }

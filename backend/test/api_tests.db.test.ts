@@ -3,7 +3,7 @@ import * as fixtures from './test_objects';
 import { createApp } from '../src/app';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
-import { resetTestDb, makeTestPool } from './helpers';
+import { resetTestDb, makeTestPool, makeAppPool } from './helpers';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, test, expect } from 'vitest';
 import type { AuthUser } from '../src/auth';
@@ -14,7 +14,10 @@ import type { Server } from 'node:http';
 export let API_BASE = '';
 
 let server: Server;
+// Fixtures and assertions run as the harness superuser; the server under test runs on the
+// least-privilege app role, so a missing GRANT surfaces as a failing request instead of hiding.
 let testsPool: Pool;
+let appPool: Pool;
 let businessId: string;
 let clientUserId: string;
 let professionalUserId: string;
@@ -58,7 +61,8 @@ beforeAll(async () => {
   );
   professionalUserId = professionalUser.rows[0].id;
 
-  const app = createApp(testsPool, { defaultUser });
+  appPool = makeAppPool();
+  const app = createApp(appPool, { defaultUser });
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);
@@ -85,6 +89,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  await appPool.end();
   await testsPool.end();
   server.close();
 });

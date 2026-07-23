@@ -7,6 +7,7 @@ import { isCurrent, canSettle as canSettleAt, transitionFor, showsCurrentCard } 
 import type { SettleAction } from '@/views/staff/dashboard-current';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
+import { apiErrorMessage } from '@/i18n/api-errors';
 
 // Cards never expire, so recently-forgotten unresolved sessions must surface too.
 // 7 days back is the product knob for "recent"; anything older is stale noise.
@@ -69,7 +70,9 @@ export function useSettleCard() {
     try {
       const res = await transitionAppointment(appt.id, transitionFor(action));
       if (!res.ok) {
-        toast.error(res.code === 'too_early' ? 'completeTooEarly' : 'genericError');
+        // 'completed' vs 'no_show' too-early differ (the latter names the cutoff hours); the
+        // server's detail carries the right one, so resolve it rather than hardcode one message.
+        toast.error(apiErrorMessage(res, 'toast.genericError'));
         return;
       }
 

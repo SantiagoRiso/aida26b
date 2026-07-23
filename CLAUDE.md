@@ -127,8 +127,11 @@ Roles: **Admin** (business-bounded; null business = super-admin, all tenants) ·
 Two-role least-privilege (`database/bootstrap.sql`, fresh volume only): `aida26_owner` owns objects
 + runs migrations/seeds; `aida26_user` gets per-table grants only (DELETE withheld on soft-delete
 tables; INSERT+SELECT only on append-only). Migrations (`migrate.ts`): forward-only, checksummed (a
-changed applied file throws), advisory-locked, each in its own tx; cutover creates tables
-dependency-ordered with inline FKs. Seeds are owner-pool, idempotent, not migrations.
+changed applied file throws over line-ending-normalized bytes), advisory-locked, each in its own tx;
+cutover creates tables dependency-ordered with inline FKs. **The runner owns the transaction:**
+migration files must not manage their own, so `readMigration` strips top-level transaction control
+and the runner aborts if a file ends its transaction anyway (the file and its `schema_migrations`
+row commit together or not at all). Seeds are owner-pool, idempotent, not migrations.
 
 **SSoT ↔ SQL drift:** where a value lives in both TS and SQL, prefer deriving over duplicating —
 `db/auth.ts` binds `SESSION_DAYS` into the session INSERT (`make_interval`), so the 7-day expiry has

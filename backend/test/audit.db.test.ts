@@ -213,7 +213,7 @@ describe('GET /api/audit — admin-only gate', () => {
 describe('GET /api/audit filters (parameterized values)', () => {
   test('?entity_type=appointments returns only appointment events', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?entity_type=appointments');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_entity_type=appointments');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -224,7 +224,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('?entity_type=ledger_entries returns only ledger events', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?entity_type=ledger_entries');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_entity_type=ledger_entries');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -235,7 +235,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('?event_type=appointment_canceled returns only that event type', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?event_type=appointment_canceled');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=appointment_canceled');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -246,7 +246,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('?actor_user_id=N returns only events by that actor', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', `/api/audit?actor_user_id=${proId}`);
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_actor_user_id=${proId}`);
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -255,12 +255,13 @@ describe('GET /api/audit filters (parameterized values)', () => {
     }
   });
 
-  test('?date_from / ?date_to narrows results to the given window', async () => {
+  test('?filter_created_at range narrows results to the given window', async () => {
     currentUser = asUser(adminId, 'Admin');
     // Use a window anchored near now that covers the seeded rows (which were just inserted).
     const dateFrom = new Date(Date.now() - 60 * 1000).toISOString();
     const dateTo = new Date(Date.now() + 60 * 1000).toISOString();
-    const res = await auditReq<AuditRow[]>('GET', `/api/audit?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
+    const range = `${encodeURIComponent(dateFrom)},${encodeURIComponent(dateTo)}`;
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_created_at=${range}`);
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -273,7 +274,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('combining entity_type + event_type narrows to the intersection', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?entity_type=appointments&event_type=appointment_scheduled');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_entity_type=appointments&filter_event_type=appointment_scheduled');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -285,7 +286,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('filter that matches nothing returns empty data with total=0', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?event_type=event_that_does_not_exist_xyz');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=event_that_does_not_exist_xyz');
     expect(res.status).toBe(200);
     expect(dataOf(res)).toHaveLength(0);
     expect(metaOf(res).total).toBe(0);
@@ -293,7 +294,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('?outcome=denied returns only denied events, and meta.total matches the filtered set', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?outcome=denied');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_outcome=denied');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -304,7 +305,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('?outcome=success excludes the denied event', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?outcome=success');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_outcome=success');
     expect(res.status).toBe(200);
     const rows = dataOf(res);
     expect(rows.length).toBeGreaterThan(0);
@@ -313,7 +314,55 @@ describe('GET /api/audit filters (parameterized values)', () => {
 
   test('unknown outcome value → 422 (validated against the SSOT enum)', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?outcome=bogus');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_outcome=bogus');
+    expect(res.status).toBe(422);
+    expect(errorOf(res).code).toBe('invalid_request');
+  });
+});
+
+describe('GET /api/audit — negation honors the shared grammar instead of inverting it', () => {
+  beforeAll(async () => {
+    // A system-shaped event with no entity_type, to prove `!x` keeps NULL rows.
+    await pool.query(
+      `INSERT INTO audit_events
+         (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+       VALUES ($1, $2, 'null_entity_probe', NULL, NULL, 'success', '{}')`,
+      [bizId, adminId],
+    );
+  });
+
+  test('filter_outcome=!success returns non-success events, not the inverse (the denied one)', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_outcome=!success&limit=500');
+    expect(res.status).toBe(200);
+    const rows = dataOf(res);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.outcome).not.toBe('success');
+    expect(rows.some((r) => r.outcome === 'denied')).toBe(true);
+  });
+
+  test('a negated filter on a nullable column keeps its NULL rows (IS DISTINCT FROM)', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_entity_type=!appointments&limit=500');
+    expect(res.status).toBe(200);
+    const rows = dataOf(res);
+    for (const row of rows) expect(row.entity_type).not.toBe('appointments');
+    // `<> 'appointments'` would have dropped this NULL-entity_type row; IS DISTINCT FROM keeps it.
+    expect(rows.some((r) => r.event_type === 'null_entity_probe')).toBe(true);
+    expect(rows.some((r) => r.entity_type === 'ledger_entries')).toBe(true);
+  });
+
+  test('a set / repeated value is rejected, not silently narrowed to the first', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_outcome=success&filter_outcome=denied');
+    expect(res.status).toBe(422);
+    expect(errorOf(res).code).toBe('invalid_request');
+  });
+
+  test('negation on the date range is rejected rather than silently ignored', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const iso = new Date(Date.now() - 60 * 1000).toISOString();
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_created_at=!${encodeURIComponent(iso)}`);
     expect(res.status).toBe(422);
     expect(errorOf(res).code).toBe('invalid_request');
   });
@@ -512,6 +561,8 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff', () => {
       cancellation_cutoff_hours: 24, min_booking_days: 10, max_booking_days: 5,
     });
     expect(res.status).toBe(422);
+    // The specific field reason travels as a localizable key, not English prose.
+    expect(errorOf(res).fieldDetails?.max_booking_days).toEqual({ key: 'maxBookingBelowMin' });
   });
 
   test('negative min_booking_days → 422', async () => {
@@ -520,6 +571,7 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff', () => {
       cancellation_cutoff_hours: 24, min_booking_days: -1,
     });
     expect(res.status).toBe(422);
+    expect(errorOf(res).fieldDetails?.min_booking_days).toEqual({ key: 'nonNegativeInteger' });
   });
 
   test('cutoff-only PATCH leaves the window unchanged', async () => {
@@ -542,24 +594,24 @@ describe('PATCH /api/businesses/:id/settings — admin-only cutoff', () => {
 });
 
 describe('GET /api/audit — malformed date filters (WR-04)', () => {
-  test('malformed date_from returns 422 invalid_request', async () => {
+  test('malformed created_at lower bound returns 422 invalid_request', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?date_from=notadate');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_created_at=notadate');
     expect(res.status).toBe(422);
     expect(errorOf(res).code).toBe('invalid_request');
   });
 
-  test('malformed date_to returns 422 invalid_request', async () => {
+  test('malformed created_at upper bound returns 422 invalid_request', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const res = await auditReq<AuditRow[]>('GET', '/api/audit?date_to=01/01/2024');
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_created_at=,${encodeURIComponent('01/01/2024')}`);
     expect(res.status).toBe(422);
     expect(errorOf(res).code).toBe('invalid_request');
   });
 
-  test('valid ISO timestamp date_from still returns 200', async () => {
+  test('valid ISO timestamp created_at lower bound still returns 200', async () => {
     currentUser = asUser(adminId, 'Admin');
     const iso = new Date(Date.now() - 60 * 1000).toISOString();
-    const res = await auditReq<AuditRow[]>('GET', `/api/audit?date_from=${encodeURIComponent(iso)}`);
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_created_at=${encodeURIComponent(iso)},`);
     expect(res.status).toBe(200);
   });
 });
@@ -595,7 +647,7 @@ describe('GET /api/audit — a date-only filter means that day in the business t
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq<AuditRow[]>(
       'GET',
-      `/api/audit?date_from=${probeDay}&date_to=${probeDay}&limit=500`,
+      `/api/audit?filter_created_at=${probeDay},${probeDay}&limit=500`,
     );
     expect(res.status).toBe(200);
     return { types: dataOf(res).map((r) => r.event_type), total: metaOf(res).total };

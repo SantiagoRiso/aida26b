@@ -44,6 +44,7 @@ const clients = ref<Wire<TableRecordMap['clients']>[]>([]);
 // narrowing itself is the server's. Keyed by string id — the API serializes ids as strings.
 const relatedIds = ref<Set<string>>(new Set());
 const loading = ref(true);
+const loadFailed = ref(false);
 const total = ref(0);
 // The server owns the page size; this only seeds the render before the first response lands.
 const limit = ref(LIST_DEFAULT_LIMIT);
@@ -60,6 +61,11 @@ const listQuery = useListQuerySync({
 const { page, sort, dir, filters, includeUnrelated } = listQuery;
 
 const activeSort = computed(() => sort.value || DEFAULT_SORT);
+
+function ariaSort(field: string): 'ascending' | 'descending' | 'none' {
+  if (activeSort.value !== field) return 'none';
+  return dir.value === 'asc' ? 'ascending' : 'descending';
+}
 
 function toggleSort(field: string) {
   if (activeSort.value === field) {
@@ -88,20 +94,29 @@ function onIncludeUnrelatedChange() {
 
 async function loadClients() {
   loading.value = true;
-  const result = await listRows('clients', {
-    page: page.value,
-    limit: listQuery.limit.value,
-    sort: activeSort.value,
-    dir: dir.value,
-    filters: filters.value,
-    includeUnrelated: includeUnrelated.value,
-  });
-  if (result.ok) {
-    clients.value = result.data;
-    total.value = result.meta?.total ?? result.data.length;
-    limit.value = result.meta?.limit ?? LIST_DEFAULT_LIMIT;
+  loadFailed.value = false;
+  try {
+    const result = await listRows('clients', {
+      page: page.value,
+      limit: listQuery.limit.value,
+      sort: activeSort.value,
+      dir: dir.value,
+      filters: filters.value,
+      includeUnrelated: includeUnrelated.value,
+    });
+    if (result.ok) {
+      clients.value = result.data;
+      total.value = result.meta?.total ?? result.data.length;
+      limit.value = result.meta?.limit ?? LIST_DEFAULT_LIMIT;
+    } else {
+      // A failed load must not read as "no clients" — the viewer would conclude the list is empty.
+      clients.value = [];
+      total.value = 0;
+      loadFailed.value = true;
+    }
+  } finally {
+    loading.value = false;
   }
-  loading.value = false;
 }
 
 // Relatedness is a property of the viewer, not of the page — fetched once, not per page. Only
@@ -182,6 +197,13 @@ onMounted(load);
       <Skeleton variant="row" :rows="6" />
     </div>
 
+    <div v-else-if="loadFailed">
+      <EmptyState
+        :heading="t('emptyState.loadErrorHeading')"
+        :body="t('emptyState.loadErrorBody')"
+      />
+    </div>
+
     <div v-else-if="clients.length === 0">
       <EmptyState
         :heading="t('clients.emptyHeading')"
@@ -192,20 +214,29 @@ onMounted(load);
     </div>
 
     <div v-else class="overflow-x-auto rounded-lg border border-border">
-      <table class="w-full text-sm">
+      <table class="w-full text-sm" :aria-label="t('clients.tableLabel')">
         <thead class="bg-surface text-left">
           <tr>
             <th
               v-for="field in LIST_COLUMNS"
               :key="field"
-              class="px-4 py-3 font-semibold"
-              :class="clientColumns[field].sortable ? 'cursor-pointer select-none hover:bg-border' : ''"
-              @click="clientColumns[field].sortable ? toggleSort(field) : undefined"
+              scope="col"
+              class="font-semibold"
+              :class="clientColumns[field].sortable ? '' : 'px-4 py-3'"
+              :aria-sort="clientColumns[field].sortable ? ariaSort(field) : undefined"
             >
-              {{ label(clientColumns[field].label) }}
-              <span v-if="clientColumns[field].sortable && activeSort === field" class="ml-1 text-xs text-neutral">
-                {{ dir === 'asc' ? '↑' : '↓' }}
-              </span>
+              <button
+                v-if="clientColumns[field].sortable"
+                type="button"
+                class="flex w-full select-none items-center px-4 py-3 text-left font-semibold hover:bg-border focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                @click="toggleSort(field)"
+              >
+                {{ label(clientColumns[field].label) }}
+                <span v-if="activeSort === field" class="ml-1 text-xs text-neutral" aria-hidden="true">
+                  {{ dir === 'asc' ? '↑' : '↓' }}
+                </span>
+              </button>
+              <template v-else>{{ label(clientColumns[field].label) }}</template>
             </th>
           </tr>
         </thead>
@@ -219,7 +250,13 @@ onMounted(load);
             @click="openClient(Number(c.id))"
           >
             <td class="px-4 py-3 font-medium">
-              {{ c.display_name }}
+              <button
+                type="button"
+                class="text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                @click.stop="openClient(Number(c.id))"
+              >
+                {{ c.display_name }}
+              </button>
               <span
                 v-if="showsRelationship && !relatedIds.has(String(c.id))"
                 class="ml-2 rounded-full bg-border px-2 py-0.5 text-xs font-normal text-neutral"

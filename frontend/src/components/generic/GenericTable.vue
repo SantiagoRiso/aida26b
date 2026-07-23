@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="K extends TableKey">
-import { ref, computed, watch, useSlots } from 'vue';
+import { ref, computed, watch, useSlots, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import type { Ref } from 'vue';
+import { findScrollParent, measureTableScrollHeight } from '@/composables/tableScrollHeight';
 import { useAuthStore } from '@/stores/auth';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
@@ -98,6 +99,12 @@ function toggleSort(field: string) {
   listQuery.commit();
 }
 
+function ariaSort(field: string, sortable?: boolean): 'ascending' | 'descending' | 'none' | undefined {
+  if (!sortable) return undefined;
+  if (sortField.value !== field) return 'none';
+  return sortDir.value === 'asc' ? 'ascending' : 'descending';
+}
+
 const rows = ref([]) as Ref<Wire<TableRecordMap[K]>[]>;
 const total = ref(0);
 // The server is the sole authority on page size; this only seeds the pre-first-response render.
@@ -123,6 +130,9 @@ async function reload() {
       total.value = result.meta?.total ?? rows.value.length;
       limit.value = result.meta?.limit ?? LIST_DEFAULT_LIMIT;
     } else {
+      // A failed load must not read as "no rows" — that reports data the server never confirmed.
+      rows.value = [];
+      total.value = 0;
       loadError.value = true;
     }
   } finally {
@@ -144,16 +154,23 @@ function onPageChange(p: number) {
 
 // FK columns render the referenced row's label, not its id. Lookups come from the shared
 // useForeignKeyOptions cache (one fetch per referenced table app-wide); the resolvers read
-// reactive options, so labels fill in whether rows or options arrive first.
-const fkLabelFns = ref<Record<string, (id: ForeignKeyValue) => string | null>>({});
+// reactive options, so labels fill in whether rows or options arrive first. A target past the
+// cached page is fetched by id on demand.
+interface FkResolver {
+  labelFor: (id: ForeignKeyValue) => string | null;
+  isUnresolved: (id: ForeignKeyValue) => boolean;
+}
+const fkResolvers = ref<Record<string, FkResolver>>({});
 
 function bindFkResolvers() {
   const cols = tableSpec.value.columns as Record<string, ColumnDef>;
-  const fns: Record<string, (id: ForeignKeyValue) => string | null> = {};
+  const resolvers: Record<string, FkResolver> = {};
   for (const col of Object.values(cols)) {
-    if (col.foreignKey) fns[col.foreignKey.table] = useForeignKeyOptions(col.foreignKey).labelFor;
+    if (!col.foreignKey) continue;
+    const { labelFor, isUnresolved } = useForeignKeyOptions(col.foreignKey);
+    resolvers[col.foreignKey.table] = { labelFor, isUnresolved };
   }
-  fkLabelFns.value = fns;
+  fkResolvers.value = resolvers;
 }
 
 // First run keeps whatever the URL restored; only a genuine table switch clears list state.
@@ -194,13 +211,48 @@ function cellValue(row: Wire<TableRecordMap[K]>, key: string): ColumnValue | und
   return (row as Partial<Record<string, ColumnValue>>)[key];
 }
 
-// FK cells show the referenced row's label; a read-restricted or missing target falls
-// back to the raw id rather than hiding the value entirely.
+// The wrapper scrolls horizontally, which also makes it the scrollport the header sticks to. It is
+// capped to the room left below it so a long list scrolls under the header instead of carrying it
+// off the page; the cap is measured from the layout rather than assumed.
+const scrollBox = ref<HTMLElement | null>(null);
+const maxScrollHeight = ref<string | null>(null);
+
+function measure() {
+  maxScrollHeight.value = scrollBox.value ? measureTableScrollHeight(scrollBox.value) : null;
+}
+
+let scrollerResize: ResizeObserver | null = null;
+onMounted(() => {
+  measure();
+  window.addEventListener('resize', measure);
+  // The scrolling ancestor, not the table's own container: observing a container whose height
+  // follows the table would re-measure on its own result.
+  const scroller = scrollBox.value ? findScrollParent(scrollBox.value) : null;
+  if (scroller && typeof ResizeObserver !== 'undefined') {
+    scrollerResize = new ResizeObserver(measure);
+    scrollerResize.observe(scroller);
+  }
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', measure);
+  scrollerResize?.disconnect();
+});
+
+// Filters collapse and expand above the table, moving where it starts.
+watch(filters, () => { void nextTick(measure); }, { deep: true });
+
+// FK cells show the referenced row's label. A target the viewer may not read (archived, another
+// tenant's, or gone) reads as unavailable rather than as an id, which would say nothing to an
+// operator and would assert the row exists.
 function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef): string {
   if (col.foreignKey) {
     const v = cellValue(row, key);
     if (v == null || v === '') return props.emptyValue ?? i18n.global.t('generic.emptyValue');
-    return fkLabelFns.value[col.foreignKey.table]?.(String(v)) || `#${v}`;
+    const resolver = fkResolvers.value[col.foreignKey.table];
+    const label = resolver?.labelFor(String(v));
+    if (label) return label;
+    if (resolver?.isUnresolved(String(v))) return i18n.global.t('generic.unresolvedReference');
+    return `#${v}`;
   }
   return formatCell(cellValue(row, key));
 }
@@ -231,23 +283,41 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
       @change="onFiltersChange"
     />
 
-    <div class="overflow-x-auto rounded-lg border border-border">
-      <table class="w-full text-sm">
-        <thead class="sticky top-0 z-10 bg-surface text-left">
+    <div
+      ref="scrollBox"
+      data-testid="table-scroll"
+      class="overflow-auto rounded-lg border border-border"
+      :style="maxScrollHeight ? { maxHeight: maxScrollHeight } : undefined"
+    >
+      <table class="w-full text-sm" :aria-label="tableTitle">
+        <thead class="text-left">
           <tr>
             <th
               v-for="{ key, col } in visibleColumns"
               :key="key"
-              class="px-4 py-3 font-semibold"
-              :class="col.sortable ? 'cursor-pointer select-none hover:bg-border' : ''"
-              @click="col.sortable ? toggleSort(key) : undefined"
+              scope="col"
+              class="sticky top-0 z-10 bg-surface font-semibold"
+              :class="col.sortable ? '' : 'px-4 py-3'"
+              :aria-sort="ariaSort(key, col.sortable)"
             >
-              {{ label(col.label) }}
-              <span v-if="col.sortable && sortField === key" class="ml-1 text-xs text-neutral">
-                {{ sortDir === 'asc' ? '↑' : '↓' }}
-              </span>
+              <button
+                v-if="col.sortable"
+                type="button"
+                class="flex w-full select-none items-center px-4 py-3 text-left font-semibold hover:bg-border focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                @click="toggleSort(key)"
+              >
+                {{ label(col.label) }}
+                <span v-if="sortField === key" class="ml-1 text-xs text-neutral" aria-hidden="true">
+                  {{ sortDir === 'asc' ? '↑' : '↓' }}
+                </span>
+              </button>
+              <template v-else>{{ label(col.label) }}</template>
             </th>
-            <th v-if="hasActionsColumn" class="px-4 py-3 font-semibold text-right">
+            <th
+              v-if="hasActionsColumn"
+              scope="col"
+              class="sticky top-0 z-10 bg-surface px-4 py-3 font-semibold text-right"
+            >
               {{ i18n.global.t('generic.actionsColumn') }}
             </th>
           </tr>
@@ -257,6 +327,16 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
             <tr>
               <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
                 <Skeleton variant="row" :rows="4" />
+              </td>
+            </tr>
+          </template>
+          <template v-else-if="loadError">
+            <tr>
+              <td :colspan="visibleColumns.length + (hasActionsColumn ? 1 : 0)" class="p-4">
+                <EmptyState
+                  :heading="i18n.global.t('emptyState.loadErrorHeading')"
+                  :body="i18n.global.t('emptyState.loadErrorBody')"
+                />
               </td>
             </tr>
           </template>
@@ -281,7 +361,7 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
               <td
                 v-for="{ key, col } in visibleColumns"
                 :key="key"
-                class="max-w-xs truncate px-4 py-3"
+                class="cell-truncate max-w-xs px-4 py-3"
                 :title="cellDisplay(row, key, col)"
               >
                 {{ cellDisplay(row, key, col) }}
@@ -304,7 +384,7 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
     </div>
 
     <Pagination
-      v-if="!loading && (rows.length > 0 || page > 1)"
+      v-if="!loading && !loadError && (rows.length > 0 || page > 1)"
       :page="page"
       :limit="limit"
       :total="total"

@@ -5,6 +5,7 @@ import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
 import { AUDIT_OUTCOMES } from '@shared/ssot/domain';
 import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
+import { AUDIT_SORT_FIELDS } from '@shared/ssot/list-sort';
 import { structure } from '@shared/ssot/structure';
 import type { TableStructure } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
@@ -18,6 +19,7 @@ import EmptyState from '@/components/shared/EmptyState.vue';
 import AppButton from '@/components/shared/AppButton.vue';
 import Pagination from '@/components/generic/Pagination.vue';
 import DateField from '@/components/shared/DateField.vue';
+import SortableHeader from '@/components/shared/SortableHeader.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -26,29 +28,73 @@ const { label } = useLabel();
 
 // Route meta already gates access; render nothing if somehow reached as non-Admin.
 const isAdmin = computed(() => auth.user?.role === 'Admin');
+// A super-admin (Admin with no business) reads across tenants, so it needs the tenant column to
+// tell the merged rows apart; a tenant Admin sees one business and the column would be noise.
+const isSuperAdmin = computed(() => auth.user?.role === 'Admin' && auth.user?.business_id == null);
 
 const events = ref<AuditEvent[]>([]);
 const loading = ref(false);
 const loadFailed = ref(false);
 const total = ref(0);
 
+// created_at carries the shared `min,max` date range; the two date pickers edit its two halves.
 const BLANK_FILTERS = {
   entity_type: '',
   actor_user_id: '',
   event_type: '',
-  date_from: '',
-  date_to: '',
+  created_at: '',
   outcome: '',
 };
+
+function splitRange(range: string): { from: string; to: string } {
+  const comma = range.indexOf(',');
+  if (comma < 0) return { from: range, to: '' };
+  return { from: range.slice(0, comma), to: range.slice(comma + 1) };
+}
+
+function joinRange(from: string, to: string): string {
+  return from === '' && to === '' ? '' : `${from},${to}`;
+}
 
 // The search is shareable: filters and page live in the URL under the same list-request
 // vocabulary every other list uses.
 const listQuery = useListQuerySync({
   onChange: load,
+  sortableFields: () => AUDIT_SORT_FIELDS,
   filterableFields: () => Object.keys(BLANK_FILTERS),
   defaultFilters: () => ({ ...BLANK_FILTERS }),
 });
-const { page, filters } = listQuery;
+const { page, filters, sort, dir } = listQuery;
+
+// The two pickers write into one created_at range so the URL and the request carry a single
+// filter_created_at param, not two ad-hoc date keys.
+const dateFrom = computed<string>({
+  get: () => splitRange(filters.value.created_at ?? '').from,
+  set: (v) => {
+    const { to } = splitRange(filters.value.created_at ?? '');
+    filters.value = { ...filters.value, created_at: joinRange(v, to) };
+  },
+});
+const dateTo = computed<string>({
+  get: () => splitRange(filters.value.created_at ?? '').to,
+  set: (v) => {
+    const { from } = splitRange(filters.value.created_at ?? '');
+    filters.value = { ...filters.value, created_at: joinRange(from, v) };
+  },
+});
+
+// A new column starts ascending; clicking the active one reverses it. Sorting restarts at page 1 —
+// the row that was on page 3 under the old order is not on page 3 under the new one.
+function toggleSort(field: string) {
+  if (sort.value === field) {
+    dir.value = dir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sort.value = field;
+    dir.value = 'asc';
+  }
+  page.value = 1;
+  listQuery.commit();
+}
 const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
@@ -82,12 +128,12 @@ async function load() {
       entity_type: active.entity_type || undefined,
       actor_user_id: Number.isFinite(actorId) && actorId > 0 ? actorId : undefined,
       event_type: active.event_type || undefined,
-      date_from: active.date_from || undefined,
-      date_to: active.date_to || undefined,
+      created_at: active.created_at || undefined,
       outcome: active.outcome || undefined,
     },
     page.value,
     limit.value,
+    { sort: sort.value || undefined, dir: dir.value },
   );
   if (result.ok) {
     events.value = result.data;
@@ -169,14 +215,14 @@ if (isAdmin.value) {
           <label for="audit-date-from" class="text-xs font-semibold text-neutral shrink-0">
             {{ t('generic.from') }}
           </label>
-          <DateField id="audit-date-from" v-model="filters.date_from" />
+          <DateField id="audit-date-from" v-model="dateFrom" />
         </div>
 
         <div class="flex items-center gap-2">
           <label for="audit-date-to" class="text-xs font-semibold text-neutral shrink-0">
             {{ t('generic.to') }}
           </label>
-          <DateField id="audit-date-to" v-model="filters.date_to" />
+          <DateField id="audit-date-to" v-model="dateTo" />
         </div>
 
         <select
@@ -225,22 +271,15 @@ if (isAdmin.value) {
       <div v-else class="overflow-x-auto rounded-lg border border-border">
         <table class="min-w-full divide-y divide-border text-sm">
           <thead class="bg-surface">
-            <tr>
-              <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ t('calendar.dateLabel') }}
+            <tr class="text-heading">
+              <th v-if="isSuperAdmin" scope="col" class="px-4 py-3 text-left font-semibold">
+                {{ t('nav.business') }}
               </th>
-              <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ t('audit.colEvent') }}
-              </th>
-              <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ t('audit.colEntity') }}
-              </th>
-              <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ t('audit.colActor') }}
-              </th>
-              <th class="px-4 py-3 text-left font-semibold text-heading whitespace-nowrap">
-                {{ t('audit.outcome') }}
-              </th>
+              <SortableHeader field="created_at" :label="t('calendar.dateLabel')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="event_type" :label="t('audit.colEvent')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="entity_type" :label="t('audit.colEntity')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="actor_user_id" :label="t('audit.colActor')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="outcome" :label="t('audit.outcome')" :active="sort" :dir="dir" @sort="toggleSort" />
             </tr>
           </thead>
           <tbody class="divide-y divide-border bg-card">
@@ -252,6 +291,10 @@ if (isAdmin.value) {
                 'bg-destructive-tint [&>td]:text-destructive-strong': event.outcome === 'denied',
               }"
             >
+              <td v-if="isSuperAdmin" class="px-4 py-3 text-neutral whitespace-nowrap">
+                <span v-if="event.business_id != null" class="tabular-nums">#{{ event.business_id }}</span>
+                <span v-else class="text-xs uppercase tracking-wide opacity-70">{{ t('audit.systemActor') }}</span>
+              </td>
               <td class="px-4 py-3 tabular-nums text-neutral whitespace-nowrap">
                 {{ formatDateTime(event.created_at) }}
               </td>

@@ -17,6 +17,7 @@ import { buildUpdateStatement } from '../db/generic';
 import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
 import { requireUser, rejectServerDerivedFields } from './request-guards';
+import { auditGenericWrite, auditGenericDenied } from './crud-audit';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import type { TableKey, TableRecordMap } from '../../../shared/src/ssot/derived';
@@ -39,6 +40,7 @@ export async function putHandler(
   const allowed = assertCrudAllowed(req.params.tableName, 'update', user);
 
   if (!allowed.ok) {
+    await auditGenericDenied(pool, req, allowed);
     return sendError(res, allowed.status, allowed.code, allowed.message);
   }
 
@@ -87,12 +89,14 @@ export async function putHandler(
       const bodyOwner = body[fk] != null ? Number(body[fk]) : null;
       const rowOwner = existing[fk] != null ? Number(existing[fk]) : null;
       if (bodyOwner != null && bodyOwner !== rowOwner) {
+        await auditGenericDenied(pool, req, { code: 'owner_reassignment' });
         return sendError(res, 403, 'forbidden', 'The owner of a schedule row cannot be changed');
       }
     }
 
     const guard = await assertOwnScheduleAllowed(pool, user, existingRow);
     if (!guard.ok) {
+      await auditGenericDenied(pool, req, guard);
       return sendError(res, guard.status, guard.code, guard.message);
     }
   }
@@ -133,6 +137,7 @@ export async function putHandler(
   );
 
   const { text, values } = buildUpdateStatement(
+    tableName,
     physicalTable,
     fieldsToUpdate,
     newValues,
@@ -147,6 +152,8 @@ export async function putHandler(
   if (rows.length === 0) {
     return sendError(res, 404, 'not_found', `${entityName} not found`);
   }
+
+  await auditGenericWrite(pool, req, tableName, 'update', rows[0]);
 
   return sendData(res, rows[0], 202);
 }

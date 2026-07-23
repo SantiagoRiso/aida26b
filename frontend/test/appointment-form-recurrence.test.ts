@@ -42,14 +42,14 @@ function makeI18n() {
 }
 
 const baseAppointment: Appointment = {
-  id: 11,
+  id: '11',
   starts_at: '2026-07-07T13:00:00.000Z',
   ends_at: '2026-07-07T13:50:00.000Z',
   duration_minutes: 50,
-  client_user_id: 7,
-  professional_user_id: 2,
-  service_id: 3,
-  resource_id: 1,
+  client_user_id: '7',
+  professional_user_id: '2',
+  service_id: '3',
+  resource_id: '1',
   state: 'scheduled',
   name: 'Sesión - Homero',
   description: null,
@@ -58,6 +58,10 @@ const baseAppointment: Appointment = {
   override_actor_id: null,
   staff_note: null,
   conflict_ignored: false,
+  series_id: null,
+  occurrence_date: null,
+  created_at: '2026-07-01T00:00:00.000Z',
+  updated_at: '2026-07-01T00:00:00.000Z',
 };
 
 const PREFILL_DATE = '2026-07-20';
@@ -176,7 +180,7 @@ describe('AppointmentForm recurrence submit', () => {
   });
 
   it('calls scheduleSeries (not scheduleAppointment) with the built body when recurrence is on', async () => {
-    vi.mocked(scheduleSeries).mockResolvedValue({ ok: true, data: seriesResult([]), meta: {} });
+    vi.mocked(scheduleSeries).mockResolvedValue({ ok: true, data: seriesResult([]), meta: { page: 1, limit: 1, total: 1 } });
 
     const wrapper = mountCreateForm();
     await flushPromises();
@@ -205,7 +209,7 @@ describe('AppointmentForm recurrence submit', () => {
   });
 
   it('renders the skipped-dates report on success, with an empty-state when nothing was skipped', async () => {
-    vi.mocked(scheduleSeries).mockResolvedValue({ ok: true, data: seriesResult([]), meta: {} });
+    vi.mocked(scheduleSeries).mockResolvedValue({ ok: true, data: seriesResult([]), meta: { page: 1, limit: 1, total: 1 } });
 
     const wrapper = mountCreateForm();
     await flushPromises();
@@ -234,7 +238,7 @@ describe('AppointmentForm recurrence submit', () => {
           ],
         },
       ]),
-      meta: {},
+      meta: { page: 1, limit: 1, total: 1 },
     });
 
     const wrapper = mountCreateForm();
@@ -256,7 +260,7 @@ describe('AppointmentForm recurrence submit', () => {
     vi.mocked(scheduleAppointment).mockResolvedValue({
       ok: true,
       data: { saved: true, appointment: baseAppointment },
-      meta: {},
+      meta: { page: 1, limit: 1, total: 1 },
     });
 
     const wrapper = mountCreateForm();

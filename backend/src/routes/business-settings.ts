@@ -6,6 +6,7 @@ import { guardRoute } from '../helpers';
 import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext } from './business-context';
+import { adminTenantScope } from './tenant-scope';
 import { getBusinessSettings, updateBusinessSettings } from '../db/businesses';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import { BUSINESS_PATTERNS } from '../../../shared/src/ssot/api-paths';
@@ -17,7 +18,9 @@ export function mountBusinessSettingsRoutes(
   pool: Pool,
   guards: { auth: RequestHandler; passwordReady: RequestHandler; audit: AuditWriter },
 ) {
-  // Admin gate for the :id routes. A mismatched :id is cross-tenant — returns 404 to hide existence.
+  // Admin gate for the :id routes. The :id names the target tenant: a super-admin may target any
+  // business (an unknown one 404s downstream when its settings don't load); a tenant Admin only its
+  // own, so a mismatched :id is cross-tenant and returns 404 to hide existence.
   async function resolveAdminBusinessTarget(
     req: express.Request,
     res: express.Response,
@@ -33,14 +36,20 @@ export function mountBusinessSettingsRoutes(
       return null;
     }
 
-    const businessId = requireBusinessContext(req, res);
-    if (businessId == null) return null;
+    const scope = adminTenantScope(req, res);
+    if (scope == null) return null;
 
-    if (Number(req.params.id) !== businessId) {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
       sendError(res, 404, 'not_found', 'Business not found');
       return null;
     }
-    return businessId;
+
+    if (scope.kind === 'tenant' && targetId !== scope.businessId) {
+      sendError(res, 404, 'not_found', 'Business not found');
+      return null;
+    }
+    return targetId;
   }
 
   async function sendSettingsOr404(res: express.Response, businessId: number) {
@@ -81,6 +90,7 @@ export function mountBusinessSettingsRoutes(
     ) {
       return sendError(res, 422, 'invalid_request', 'cancellation_cutoff_hours must be a non-negative integer', {
         fields: { cancellation_cutoff_hours: 'required non-negative integer' },
+        fieldDetails: { cancellation_cutoff_hours: { key: 'nonNegativeInteger' } },
       });
     }
 
@@ -97,12 +107,14 @@ export function mountBusinessSettingsRoutes(
     if (!minParsed.ok || minParsed.value === null) {
       return sendError(res, 422, 'invalid_request', 'min_booking_days must be a non-negative integer', {
         fields: { min_booking_days: 'non-negative integer' },
+        fieldDetails: { min_booking_days: { key: 'nonNegativeInteger' } },
       });
     }
     const maxParsed = asOptInt(req.body.max_booking_days, true);
     if (!maxParsed.ok) {
       return sendError(res, 422, 'invalid_request', 'max_booking_days must be a non-negative integer or null', {
         fields: { max_booking_days: 'non-negative integer or null' },
+        fieldDetails: { max_booking_days: { key: 'nonNegativeIntegerOrEmpty' } },
       });
     }
 
@@ -115,6 +127,7 @@ export function mountBusinessSettingsRoutes(
     if (maxDays !== null && maxDays < minDays) {
       return sendError(res, 422, 'invalid_request', 'max_booking_days must be greater than or equal to min_booking_days', {
         fields: { max_booking_days: 'must be ≥ min_booking_days' },
+        fieldDetails: { max_booking_days: { key: 'maxBookingBelowMin' } },
       });
     }
 
@@ -127,13 +140,14 @@ export function mountBusinessSettingsRoutes(
       return sendError(res, 404, 'not_found', 'Business not found');
     }
 
-    // No data-integrity dependency on the audit row, so guards.audit (pool) is fine here.
+    // No data-integrity dependency on the audit row, so guards.audit (pool) is fine here. Attributed
+    // to the tenant being edited, not the actor — a super-admin has no business of its own.
     await guards.audit(req, 'business_settings_updated', 'success', {
       business_id: businessId,
       cancellation_cutoff_hours: cutoffHours,
       min_booking_days: minDays,
       max_booking_days: maxDays,
-    });
+    }, { businessId });
 
     return sendData(res, updated);
   }));

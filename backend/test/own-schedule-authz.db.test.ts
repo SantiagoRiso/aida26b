@@ -46,6 +46,9 @@ let pro2: number;
 let recepNoGrant: number;
 let recepWithGrant: number;
 let clientId: number;
+let block1: string;
+let block2: string;
+const svc: number[] = [];
 
 async function seedUser(username: string, role: string): Promise<number> {
   const r = await pool.query<{ id: string }>(
@@ -84,6 +87,28 @@ beforeAll(async () => {
     pro1,
     recepWithGrant,
   ]);
+
+  // Distinct services so per-block (block_id, service_id) uniqueness doesn't collide across cases.
+  for (let i = 0; i < 5; i++) {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+       VALUES ($1, $2, 30, '1000.00') RETURNING id`,
+      [bizId, `osa_svc${i}`],
+    );
+    svc.push(Number(r.rows[0].id));
+  }
+  const b1 = await pool.query<{ id: string }>(
+    `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+     VALUES ($1, 'mon', '08:00', '18:00') RETURNING id`,
+    [pro1],
+  );
+  block1 = b1.rows[0].id;
+  const b2 = await pool.query<{ id: string }>(
+    `INSERT INTO schedule_blocks (professional_user_id, weekday, start_time, end_time)
+     VALUES ($1, 'tue', '08:00', '18:00') RETURNING id`,
+    [pro2],
+  );
+  block2 = b2.rows[0].id;
 
   const app = express();
   app.use(express.json());
@@ -170,6 +195,79 @@ describe('own-schedule authz via generic schedule_exceptions create', () => {
       body: JSON.stringify({
         professional_user_id: String(pro2), resource_id: null, exception_date: '2026-07-20',
         is_unavailable: true, start_time: null, end_time: null, granularity_minutes: null, reason: null,
+      }),
+    });
+    expect(putRes.status).toBe(403);
+  });
+});
+
+// schedule_block_services declares ownership/grantScope but is not an owner-scheduled table, so its
+// create had no WHERE to scope and slipped the guard entirely. The professionalOwnerGuard closes it.
+async function createBlockService(professionalUserId: number, blockId: string, serviceId: number) {
+  const response = await fetch(`${baseUrl}/api/schedule_block_services`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      professional_user_id: String(professionalUserId),
+      schedule_block_id: blockId,
+      service_id: String(serviceId),
+      duration_minutes: null,
+      price_ars: null,
+    }),
+  });
+  return response.status;
+}
+
+describe('own-schedule authz via generic schedule_block_services create/update', () => {
+  test('Admin may attach a service to any in-business block', async () => {
+    currentUser = asUser(100000, 'Admin');
+    expect(await createBlockService(pro1, block1, svc[0])).toBe(201);
+  });
+
+  test('a Professional may attach a service to their OWN block', async () => {
+    currentUser = asUser(pro1, 'Professional');
+    expect(await createBlockService(pro1, block1, svc[1])).toBe(201);
+  });
+
+  test('a Professional may NOT attach a service to a peer\'s block', async () => {
+    currentUser = asUser(pro1, 'Professional');
+    expect(await createBlockService(pro2, block2, svc[0])).toBe(403);
+  });
+
+  test('a Receptionist WITHOUT a grant is forbidden', async () => {
+    currentUser = asUser(recepNoGrant, 'Receptionist');
+    expect(await createBlockService(pro1, block1, svc[2])).toBe(403);
+  });
+
+  test('a Receptionist WITH a grant for that professional succeeds', async () => {
+    currentUser = asUser(recepWithGrant, 'Receptionist');
+    expect(await createBlockService(pro1, block1, svc[2])).toBe(201);
+  });
+
+  test('a Client can never attach a block service', async () => {
+    currentUser = asUser(clientId, 'Client');
+    expect(await createBlockService(pro1, block1, svc[3])).toBe(403);
+  });
+
+  test('a Professional cannot reassign their own block service to a peer via PUT', async () => {
+    currentUser = asUser(pro1, 'Professional');
+    const createRes = await fetch(`${baseUrl}/api/schedule_block_services`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: String(pro1), schedule_block_id: block1, service_id: String(svc[4]),
+        duration_minutes: null, price_ars: null,
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const id = ((await createRes.json()) as { data: { id: string } }).data.id;
+
+    const putRes = await fetch(`${baseUrl}/api/schedule_block_services/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        professional_user_id: String(pro2), schedule_block_id: block1, service_id: String(svc[4]),
+        duration_minutes: null, price_ars: null,
       }),
     });
     expect(putRes.status).toBe(403);

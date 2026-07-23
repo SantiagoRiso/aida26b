@@ -6,7 +6,7 @@ import type { RequestWithId } from '../src/logger';
 
 type LogEntry = Record<string, string | number>;
 
-async function captureLogs(fn: () => Promise<unknown>): Promise<LogEntry[]> {
+async function captureLogs(fn: () => Promise<void>): Promise<LogEntry[]> {
   const lines: string[] = [];
   const realWrite = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line no-restricted-syntax -- monkey-patching Node's overloaded stdout.write signature for output capture; a test stub can't match its full stdlib overload set
@@ -31,6 +31,7 @@ function throwingPool(message: string): Pool {
     query: async () => {
       throw new Error(message);
     },
+    // eslint-disable-next-line no-restricted-syntax -- test double: a stub exposing only query() can't implement pg's full Pool interface
   } as unknown as Pool;
 }
 

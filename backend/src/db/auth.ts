@@ -15,12 +15,15 @@ function userWireColumns(alias: string): string {
   return USER_WIRE_COLUMN_NAMES.map((c) => `${alias}.${c}`).join(', ');
 }
 
+// Soft-deleted users must authenticate the same as a wrong password: this stays a plain
+// null (never a distinct branch) so login can't be used to probe for a deleted account.
 export function findUserForLogin(db: Queryable, username: string): Promise<LoginUserRow | null> {
   return queryOne<LoginUserRow>(
     db,
     `SELECT ${USER_WIRE_COLUMNS}, password_hash, password_salt
        FROM auth.users
-      WHERE username = $1`,
+      WHERE username = $1
+        AND deleted_at IS NULL`,
     [username],
   );
 }
@@ -74,7 +77,8 @@ export async function deleteOtherSessions(db: Queryable, userId: number, keepTok
   );
 }
 
-// Validates a session token: unexpired session whose user is still active. Null otherwise.
+// Validates a session token: unexpired session whose user is still active and not
+// soft-deleted. A delete after login must kill the session, not just hide the user from lists.
 export function loadSessionUser(db: Queryable, tokenHash: string): Promise<UsersWireRow | null> {
   return queryOne<UsersWireRow>(
     db,
@@ -83,7 +87,8 @@ export function loadSessionUser(db: Queryable, tokenHash: string): Promise<Users
        JOIN auth.users u ON u.id = s.user_id
       WHERE s.token_hash = $1
         AND s.expires_at > now()
-        AND u.is_active = true`,
+        AND u.is_active = true
+        AND u.deleted_at IS NULL`,
     [tokenHash],
   );
 }

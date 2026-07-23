@@ -128,13 +128,28 @@ function normalize() {
   emit('update:modelValue', display.value);
 }
 
-// Blur fires when focus leaves the whole component (the popover buttons keep focus via
-// mousedown.prevent), so this both closes the popover and normalizes the typed value.
+// Which half of the value the caret sits in, so the arrow keys adjust the segment the user is
+// actually editing rather than always the hour.
+function onArrow(e: KeyboardEvent, delta: number) {
+  const el = e.target;
+  const colon = display.value.indexOf(':');
+  const caret = el instanceof HTMLInputElement ? (el.selectionStart ?? 0) : 0;
+  if (colon >= 0 && caret > colon) bumpMinute(delta);
+  else bumpHour(delta);
+}
+
+// Leaving the input normalizes what was typed, even when focus only moves to the adjuster buttons
+// (which the stepper reads back from).
+function onInputBlur() {
+  normalize();
+}
+
+// Focus leaving the whole component closes the popover; the buttons keep focus on click via
+// mousedown.prevent, so a click never trips this.
 function onBlur(e: FocusEvent) {
   const next = e.relatedTarget;
   if (next instanceof Node && e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)) return;
   open.value = false;
-  normalize();
   emit('blur');
 }
 </script>
@@ -155,9 +170,10 @@ function onBlur(e: FocusEvent) {
       @input="onInput"
       @focus="open = true"
       @click="open = true"
+      @blur="onInputBlur"
       @keydown.escape="open = false"
-      @keydown.up.prevent="bumpHour(1)"
-      @keydown.down.prevent="bumpHour(-1)"
+      @keydown.up.prevent="onArrow($event, 1)"
+      @keydown.down.prevent="onArrow($event, -1)"
     />
 
     <div
@@ -166,24 +182,24 @@ function onBlur(e: FocusEvent) {
       @mousedown.prevent
     >
       <div class="flex flex-col items-center">
-        <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
+        <button type="button" class="rounded p-0.5 text-neutral hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           :aria-label="t('timeField.hourUp')" @click="bumpHour(1)">
           <ChevronUpIcon class="h-5 w-5" />
         </button>
         <span class="w-8 text-center text-sm font-semibold tabular-nums">{{ pad(parts.h) }}</span>
-        <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
+        <button type="button" class="rounded p-0.5 text-neutral hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           :aria-label="t('timeField.hourDown')" @click="bumpHour(-1)">
           <ChevronDownIcon class="h-5 w-5" />
         </button>
       </div>
       <span class="text-sm font-semibold text-neutral">:</span>
       <div class="flex flex-col items-center">
-        <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
+        <button type="button" class="rounded p-0.5 text-neutral hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           :aria-label="t('timeField.minuteUp')" @click="bumpMinute(1)">
           <ChevronUpIcon class="h-5 w-5" />
         </button>
         <span class="w-8 text-center text-sm font-semibold tabular-nums">{{ pad(parts.m) }}</span>
-        <button type="button" tabindex="-1" class="rounded p-0.5 text-neutral hover:bg-surface"
+        <button type="button" class="rounded p-0.5 text-neutral hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           :aria-label="t('timeField.minuteDown')" @click="bumpMinute(-1)">
           <ChevronDownIcon class="h-5 w-5" />
         </button>

@@ -4,10 +4,14 @@ import type { ColumnDef, ForeignKeyDef, TableStructure } from '../../types/types
 // nullability/derivability at the declaring site.
 export const businessForeignKey: ForeignKeyDef = { table: 'businesses', valueField: 'id', labelField: 'name' };
 
+// filterable so a caller holding ids can ask for exactly those rows instead of paging the table
+// looking for them. It narrows only: the scope predicates are ANDed in regardless, so an id the
+// viewer may not read still comes back empty rather than confirming it exists.
 export const pkColumn = {
   type: 'string',
   label: { es: 'ID', en: 'ID' },
   editable: false,
+  filterable: true,
   sortable: true,
   derivable: { originTable: '', sqlGenerationStatement: 'id' },
 } satisfies ColumnDef;

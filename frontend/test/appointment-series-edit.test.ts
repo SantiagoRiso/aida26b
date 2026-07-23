@@ -21,6 +21,7 @@ import {
 // jsdom) so the dialogs' real content — which buttons appear, what they call — is reachable.
 vi.mock('@/api/crud', () => ({
   listRows: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  getRow: () => Promise.resolve({ ok: false, status: 404, code: 'not_found', message: 'not found' }),
   deleteRow: vi.fn().mockResolvedValue({ ok: true, data: {} }),
 }));
 vi.mock('@/api/business', () => ({
@@ -74,6 +75,8 @@ const baseAppointment: Appointment = {
   conflict_ignored: false,
   series_id: null,
   occurrence_date: null,
+  created_at: '2099-01-01T00:00:00.000Z',
+  updated_at: '2099-01-01T00:00:00.000Z',
 };
 
 function seriesAppointment(overrides: Partial<Appointment> = {}): Appointment {

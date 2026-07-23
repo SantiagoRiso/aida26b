@@ -517,7 +517,7 @@ const customDrag = useCustomDrag({
   onCommit: (appt, target) => { requestMove(appt, target, () => {}); },
 });
 
-const { calendarOptions } = useAppointmentCalendar(
+const { calendarOptions, narrowViewport } = useAppointmentCalendar(
   appointments,
   ref(auth.user),
   {
@@ -537,6 +537,12 @@ const { calendarOptions } = useAppointmentCalendar(
     }),
   },
 );
+
+// initialView only decides the first render, so crossing the breakpoint has to move the live view:
+// the week grid is unreadable on a phone, and a day grid wastes a desktop screen.
+watch(narrowViewport, (narrow) => {
+  calendarRef.value?.getApi()?.changeView(narrow ? 'timeGridDay' : 'timeGridWeek');
+});
 
 // A cell is fully elapsed (not bookable) if its whole day has passed, or — today — it ENDS at or
 // before now. Compare the END, not the start, so the cell that currently contains "now" stays

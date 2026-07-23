@@ -5,13 +5,15 @@ import { i18n } from './i18n';
 import { router } from './router';
 import './styles/main.css';
 import { useAuthStore } from './stores/auth';
-import { installGlobalErrorHandlers } from './global-errors';
+import { installErrorTelemetry, installGlobalErrorHandlers } from './global-errors';
 
 const app = createApp(App);
 const pinia = createPinia();
 
 // Installed before anything can throw, so a failure during boot is recorded rather than lost.
 installGlobalErrorHandlers(app);
+// The default reporters only reach the browser console, which nobody operating the server reads.
+installErrorTelemetry();
 
 app.use(pinia);
 app.use(i18n);

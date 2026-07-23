@@ -6,6 +6,7 @@ import {
   findProfessionalId,
   findServiceId,
   requestViaApi,
+  cleanupUsers,
   isoDaysFromNow,
   es,
 } from './helpers';
@@ -24,11 +25,13 @@ const toMin = (t: string) => {
   return h * 60 + m;
 };
 
-async function createLoginClient(req: APIRequestContext, username: string, displayName: string): Promise<void> {
+async function createLoginClient(req: APIRequestContext, username: string, displayName: string): Promise<number> {
   const res = await req.post('/api/admin/users', {
     data: { role: 'Client', username, email: `${username}@demo.test`, password: DEMO_PASSWORD, display_name: displayName },
   });
-  if (!res.ok()) throw new Error(`create login client failed: ${res.status()} ${await res.text()}`);
+  const body = await res.json();
+  if (!res.ok() || !body.data?.id) throw new Error(`create login client failed: ${res.status()} ${JSON.stringify(body)}`);
+  return Number(body.data.id);
 }
 
 // First date with >= 2 free sesión slots for Marge. Requests (unlike the override schedule API) are
@@ -47,6 +50,8 @@ async function findMargeSlots(page: Page, margeId: number, sesionId: number): Pr
 
 let clientAName: string;
 let clientBName: string;
+let clientAId: number;
+let clientBId: number;
 let requestAId: number;
 let requestBId: number;
 
@@ -65,8 +70,8 @@ test.beforeAll(async ({ browser }) => {
   clientBName = `E2E ReqB ${ts}`;
   const aUser = `e2e_reqa_${ts}`;
   const bUser = `e2e_reqb_${ts}`;
-  await createLoginClient(ap.request, aUser, clientAName);
-  await createLoginClient(ap.request, bUser, clientBName);
+  clientAId = await createLoginClient(ap.request, aUser, clientAName);
+  clientBId = await createLoginClient(ap.request, bUser, clientBName);
 
   const { date, slots } = await findMargeSlots(ap, margeId, sesionId);
   const reqFor = async (username: string, slot: { start: string; end: string }): Promise<number> => {
@@ -94,6 +99,13 @@ test.beforeAll(async ({ browser }) => {
   await adminCtx.close();
 });
 
+// Deactivate the two throwaway request clients so re-runs don't accumulate Clients. Their requests
+// (approved/rejected by the tests) are workflow rows that drop out of every scoped read once the
+// client is gone.
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, [clientAId, clientBId]);
+});
+
 async function openRequests(page: Page): Promise<void> {
   await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
   await page.getByRole('link', { name: es.nav.requests }).click();
@@ -108,7 +120,7 @@ async function apptState(page: Page, id: number): Promise<string> {
 test.describe('Requests triage — list, detail drawer, approve & reject', () => {
   test('opening a request shows the detail drawer with client, balance, and day schedule', async ({ page }) => {
     await openRequests(page);
-    const row = page.locator('li').filter({ hasText: clientAName });
+    const row = page.locator('tbody tr').filter({ hasText: clientAName });
     await expect(row).toBeVisible({ timeout: 10_000 });
     await row.click();
 
@@ -121,7 +133,7 @@ test.describe('Requests triage — list, detail drawer, approve & reject', () =>
 
   test('approving a request schedules it and drops it from the list', async ({ page }) => {
     await openRequests(page);
-    const row = page.locator('li').filter({ hasText: clientAName });
+    const row = page.locator('tbody tr').filter({ hasText: clientAName });
     await expect(row).toBeVisible({ timeout: 10_000 });
 
     const approveResp = page.waitForResponse(
@@ -132,12 +144,12 @@ test.describe('Requests triage — list, detail drawer, approve & reject', () =>
     expect((await approveResp).ok()).toBe(true);
 
     expect(await apptState(page, requestAId)).toBe('scheduled');
-    await expect(page.locator('li').filter({ hasText: clientAName })).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator('tbody tr').filter({ hasText: clientAName })).toHaveCount(0, { timeout: 10_000 });
   });
 
   test('rejecting a request confirms then marks it rejected', async ({ page }) => {
     await openRequests(page);
-    const row = page.locator('li').filter({ hasText: clientBName });
+    const row = page.locator('tbody tr').filter({ hasText: clientBName });
     await expect(row).toBeVisible({ timeout: 10_000 });
     await row.getByRole('button', { name: es.calendar.reject }).click();
 

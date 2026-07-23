@@ -25,15 +25,15 @@ function makeI18n() {
 }
 
 const baseAppointment: Appointment = {
-  id: 11,
+  id: '11',
   // 13:00 UTC — the wall-clock time the form must show is the LOCAL equivalent, not "13:00".
   starts_at: '2026-07-07T13:00:00.000Z',
   ends_at: '2026-07-07T13:50:00.000Z',
   duration_minutes: 50,
-  client_user_id: 7,
-  professional_user_id: 2,
-  service_id: 3,
-  resource_id: 1,
+  client_user_id: '7',
+  professional_user_id: '2',
+  service_id: '3',
+  resource_id: '1',
   state: 'scheduled',
   name: 'Sesión - Homero',
   description: null,
@@ -42,6 +42,10 @@ const baseAppointment: Appointment = {
   override_actor_id: null,
   staff_note: null,
   conflict_ignored: false,
+  series_id: null,
+  occurrence_date: null,
+  created_at: '2026-07-01T00:00:00.000Z',
+  updated_at: '2026-07-01T00:00:00.000Z',
 };
 
 describe('AppointmentForm reschedule prefill', () => {

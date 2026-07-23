@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Page, APIRequestContext } from '@playwright/test';
 import {
-  login, DEMO_ACCOUNTS, selectFromCombobox, fillDate, findProfessionalId, isoDaysFromNow, es,
+  login, DEMO_ACCOUNTS, selectFromCombobox, fillDate, findProfessionalId, cleanupUsers, isoDaysFromNow, es,
 } from './helpers';
 import { DEMO_SERVICE_NAMES, DEMO_PASSWORD } from '../../shared/src/dev-fixtures';
 
@@ -18,12 +18,21 @@ import { DEMO_SERVICE_NAMES, DEMO_PASSWORD } from '../../shared/src/dev-fixtures
  * business setting, so it can't affect any other spec's availability assumptions; it's restored at
  * the end of the test regardless.
  */
-async function createLoginClient(req: APIRequestContext, username: string, displayName: string): Promise<void> {
+async function createLoginClient(req: APIRequestContext, username: string, displayName: string): Promise<number> {
   const res = await req.post('/api/admin/users', {
     data: { role: 'Client', username, email: `${username}@demo.test`, password: DEMO_PASSWORD, display_name: displayName },
   });
-  if (!res.ok()) throw new Error(`create login client failed: ${res.status()} ${await res.text()}`);
+  const body = await res.json();
+  if (!res.ok() || !body.data?.id) throw new Error(`create login client failed: ${res.status()} ${JSON.stringify(body)}`);
+  return Number(body.data.id);
 }
+
+// Throwaway Clients minted per test, deactivated in afterAll so re-runs don't accumulate Clients.
+const createdClientIds: number[] = [];
+
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, createdClientIds);
+});
 
 async function loginFreshClient(page: Page, username: string): Promise<void> {
   await login(page, username, DEMO_PASSWORD);
@@ -82,7 +91,7 @@ test.describe('Booking window — date-stepper clamp and server-side enforcement
     const ts = Date.now();
     const username = `e2e_p4_bw_${ts}`;
     try {
-      await createLoginClient(adminPage.request, username, `E2E P4 BookingWindow ${ts}`);
+      createdClientIds.push(await createLoginClient(adminPage.request, username, `E2E P4 BookingWindow ${ts}`));
     } finally {
       await adminContext.close();
     }
@@ -131,7 +140,7 @@ test.describe('Booking window — date-stepper clamp and server-side enforcement
     const ts = Date.now();
     const username = `e2e_p4_owb_${ts}`;
     // Admin-authenticated create (the bare `request` fixture has no session).
-    await createLoginClient(adminPage.request, username, `E2E P4 OutsideWindow ${ts}`);
+    createdClientIds.push(await createLoginClient(adminPage.request, username, `E2E P4 OutsideWindow ${ts}`));
     await loginFreshClient(page, username);
 
     await page.getByRole('button', { name: es.actions.requestAppointment }).click();

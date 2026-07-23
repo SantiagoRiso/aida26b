@@ -108,8 +108,8 @@ describe('BusinessClosuresSection server errors', () => {
     vi.mocked(listClosures).mockResolvedValue({ ok: true, data: [] });
   });
 
-  async function failSaveWith(failure: Record<string, unknown>) {
-    vi.mocked(createClosure).mockResolvedValueOnce(failure as Awaited<ReturnType<typeof createClosure>>);
+  async function failSaveWith(failure: Extract<Awaited<ReturnType<typeof createClosure>>, { ok: false }>) {
+    vi.mocked(createClosure).mockResolvedValueOnce(failure);
     const wrapper = mountSection();
     await flushPromises();
     setAddDate(wrapper, '2026-07-20');

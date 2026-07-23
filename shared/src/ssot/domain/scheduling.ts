@@ -146,6 +146,11 @@ export const schedulingTables = {
       update: ['Admin', 'Professional', 'Receptionist'],
       delete: ['Admin', 'Professional', 'Receptionist'],
     },
+    // ownership/grantScope compile to WHERE predicates, which an INSERT has no way to apply, so
+    // create would otherwise let a Professional/Receptionist attach a service to a peer's block.
+    // The own/admin/grant guard runs on the body owner instead; guard every op so it matches
+    // schedule_blocks, which this row scopes exactly like.
+    professionalOwnerGuard: { ops: ['create', 'update', 'delete'] },
   } satisfies TableStructure,
 
   schedule_exceptions: {

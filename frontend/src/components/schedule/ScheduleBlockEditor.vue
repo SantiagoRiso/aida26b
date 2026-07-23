@@ -6,6 +6,7 @@ import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import CalendarView from '@/components/calendar/CalendarView.vue';
 import BlockEditorModal from '@/components/schedule/BlockEditorModal.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
+import AppButton from '@/components/shared/AppButton.vue';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { useScheduleTemplate } from '@/composables/useScheduleTemplate';
@@ -15,6 +16,7 @@ import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type Template
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { OwnerKind } from '@shared/ssot/domain/conflict';
 import { isWeekday } from '@shared/ssot/domain/availability';
+import type { Weekday } from '@shared/ssot/domain/availability';
 
 const props = defineProps<{ owner: { kind: OwnerKind; id: number } }>();
 
@@ -116,25 +118,35 @@ function onEventClick(arg: EventClickArg) {
   editorOpen.value = true;
 }
 
-// Persist the block window edited via the modal's textboxes — same overlap/validity rule as a drag.
+// No selected block means the modal is creating one — the keyboard path to both adding a block and
+// putting it on another weekday, neither of which a drag-only grid can offer.
+function openCreateBlock() {
+  selectedBlockId.value = null;
+  editorOpen.value = true;
+}
+
+// Persist the block window edited via the modal's fields — same overlap/validity rule as a drag.
 // Returns success; the modal orchestrates the full submit (times + services) and closes on both.
-async function saveTimes(times: { startTime: string; endTime: string }): Promise<boolean> {
+// Times typed into the form persist exactly as entered; only a drag snaps to neighbouring edges.
+async function submitBlock(times: { weekday: Weekday; startTime: string; endTime: string }): Promise<boolean> {
   const block = selectedBlock.value;
-  if (block == null) return false;
-  const date = weekdayToDate(block.weekday);
+  const date = weekdayToDate(times.weekday);
   const decision = decideUpdate(
     { startStr: `${date}T${times.startTime}:00`, endStr: `${date}T${times.endTime}:00` },
     blocks.value,
-    block.id,
+    block?.id ?? '',
   );
   if (!decision.ok) {
     toast.error(decision.reason === 'overlap' ? 'scheduleBlockOverlap' : 'scheduleBlockInvalidRange');
     return false;
   }
-  const res = await updateRow('schedule_blocks', block.id, writeBody(decision.body));
+  const res = block
+    ? await updateRow('schedule_blocks', block.id, writeBody(decision.body))
+    : await createRow('schedule_blocks', writeBody(decision.body));
   if (res.ok) {
-    await absorbWrittenBlock(res.data, (updated) =>
-      blocks.value.map((b) => (b.id === block.id ? updated : b)));
+    await absorbWrittenBlock(res.data, (written) => (block
+      ? blocks.value.map((b) => (b.id === block.id ? written : b))
+      : [...blocks.value, written]));
     return true;
   }
   toast.error('scheduleBlockSaveError');
@@ -186,7 +198,7 @@ async function onDeleteConfirm() {
   }
 }
 
-const { calendarOptions } = useScheduleTemplate(blocks, {
+const { calendarOptions, narrowViewport } = useScheduleTemplate(blocks, {
   onSelect, onEventClick, onEventDrop, onEventResize, editable,
 });
 
@@ -196,6 +208,11 @@ const { calendarOptions } = useScheduleTemplate(blocks, {
 const sectionRef = ref<HTMLElement | null>(null);
 const calendarRef = ref<InstanceType<typeof CalendarView> | null>(null);
 const geometry = useTimegridGeometry(() => calendarRef.value?.getRootEl() ?? null);
+
+// initialView only decides the first render, so crossing the breakpoint has to move the live grid.
+watch(narrowViewport, (narrow) => {
+  calendarRef.value?.getApi()?.changeView(narrow ? 'timeGridDay' : 'timeGridWeek');
+});
 const dragging = ref(false);
 const blockDrag = useTemplateBlockDrag({
   geometry,
@@ -249,12 +266,17 @@ onBeforeUnmount(() => {
 
 // Exposed so tests can drive the exact handlers FullCalendar and the editor modal would call,
 // without mounting FC or the dialog's Teleport DOM (delete-confirm and textbox-save flows).
-defineExpose({ calendarOptions, onDeleteConfirm, saveTimes, editorOpen });
+defineExpose({ calendarOptions, onDeleteConfirm, submitBlock, openCreateBlock, editorOpen });
 </script>
 
 <template>
   <section ref="sectionRef" class="flex flex-col gap-4">
-    <p class="text-xs text-neutral">{{ t('schedule.addHint') }}</p>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-xs text-neutral">{{ t('schedule.addHint') }}</p>
+      <AppButton size="sm" data-testid="schedule-add-block" @click="openCreateBlock">
+        {{ t('schedule.addBlock') }}
+      </AppButton>
+    </div>
     <div class="schedule-grid rounded-lg border border-border bg-card p-3 shadow-sm">
       <CalendarView ref="calendarRef" :options="calendarOptions" />
     </div>
@@ -262,7 +284,7 @@ defineExpose({ calendarOptions, onDeleteConfirm, saveTimes, editorOpen });
     <BlockEditorModal
       :open="editorOpen"
       :block="selectedBlock"
-      :submit-times="saveTimes"
+      :submit="submitBlock"
       :show-services="props.owner.kind === 'professional'"
       @delete="onDeleteRequest"
       @close="editorOpen = false"
@@ -281,15 +303,14 @@ defineExpose({ calendarOptions, onDeleteConfirm, saveTimes, editorOpen });
 </template>
 
 <style scoped>
-/* Working-hour blocks read as solid accent bands (not default FullCalendar blue) and invite a click. */
-.schedule-grid {
-  --fc-event-bg-color: var(--color-accent);
-  --fc-event-border-color: var(--color-accent-hover);
-  --fc-event-text-color: #ffffff;
-}
+/* Blocks carry no per-event colour, so they take the app-wide FullCalendar event tokens mapped in
+   main.css — solid accent bands that invite a click, and that follow the theme. */
 .schedule-grid :deep(.fc-timegrid-event) {
   border-radius: 6px;
   box-shadow: none;
+  /* Move/resize is pointer-driven (useTemplateBlockDrag): a finger drag must not double as a scroll,
+     which would cancel the pointer stream mid-gesture. */
+  touch-action: none;
 }
 .schedule-grid :deep(.fc-event-main) {
   padding: 2px 6px;

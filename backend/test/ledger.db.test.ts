@@ -77,6 +77,23 @@ function asUser(id: number, role: AuthUser['role']): AuthUser {
   };
 }
 
+// One charge per appointment is a schema invariant, so each test that posts a charge uses its own
+// appointment. A distinct time per row keeps them from overlapping.
+let apptSeq = 0;
+async function seedAppt(clientUserId = clientId, professionalUserId = proId): Promise<number> {
+  apptSeq += 1;
+  const hh = String(6 + (apptSeq % 12)).padStart(2, '0');
+  const mm = String((apptSeq * 7) % 60).padStart(2, '0');
+  const r = await pool.query<{ id: string }>(
+    `INSERT INTO appointments
+       (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+     VALUES ($1, $2, $3, $4, 30, 'scheduled', '2500.00', false)
+     RETURNING id`,
+    [clientUserId, professionalUserId, svcId, mondayAt(`${hh}:${mm}`)],
+  );
+  return Number(r.rows[0].id);
+}
+
 beforeAll(async () => {
   await resetTestDb();
   pool = makeTestPool();
@@ -209,33 +226,45 @@ describe('POST /api/ledger — Admin write matrix', () => {
     expect(audit.rows.some((r) => r.event_type === 'ledger_adjustment_credit_created')).toBe(true);
   });
 
-  test('two charges referencing the same appointment both succeed (no dedupe)', async () => {
+  test('a second charge on the same appointment is rejected (409) — one charge per appointment', async () => {
     currentUser = asUser(adminId, 'Admin');
-    const r1 = await req<LedgerRow>('POST', '/api/ledger', {
+    const appt = await seedAppt();
+    const first = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
       amount_ars: '300.00',
     });
-    const r2 = await req<LedgerRow>('POST', '/api/ledger', {
+    const second = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
       amount_ars: '300.00',
+    });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(409);
+  });
+
+  test('an unlinked charge (no appointment_id) is unconstrained — several can coexist', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const r1 = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, entry_type: 'charge', amount_ars: '77.00',
+    });
+    const r2 = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, entry_type: 'charge', amount_ars: '77.00',
     });
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
-    expect(Number(dataOf(r1).appointment_id)).toBe(apptId);
-    expect(Number(dataOf(r2).appointment_id)).toBe(apptId);
   });
 });
 
 describe('POST /api/ledger — charge prefill from appointment', () => {
   test('charge with appointment_id but no amount_ars prefills from booked price', async () => {
     currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
     const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
     });
     expect(res.status).toBe(201);
@@ -245,9 +274,10 @@ describe('POST /api/ledger — charge prefill from appointment', () => {
 
   test('charge with explicit amount_ars overrides the appointment price', async () => {
     currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
     const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
       amount_ars: '999.00',
     });
@@ -259,9 +289,10 @@ describe('POST /api/ledger — charge prefill from appointment', () => {
 describe('POST /api/ledger — Professional write matrix', () => {
   test('professional creates charge for own client → 201', async () => {
     currentUser = asUser(proId, 'Professional');
+    const appt = await seedAppt();
     const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
       amount_ars: '500.00',
     });
@@ -292,9 +323,10 @@ describe('POST /api/ledger — Professional write matrix', () => {
 describe('POST /api/ledger — Receptionist write matrix', () => {
   test('receptionist with grant creates appointment-linked charge → 201', async () => {
     currentUser = asUser(recepWithGrantId, 'Receptionist');
+    const appt = await seedAppt();
     const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      appointment_id: apptId,
+      appointment_id: appt,
       entry_type: 'charge',
       amount_ars: '100.00',
     });

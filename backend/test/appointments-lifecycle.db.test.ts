@@ -489,6 +489,8 @@ describe('POST /api/appointments/:id/transition — timing guard', () => {
     currentUser = asUser(proId, 'Professional');
     const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'completed' });
     expect(res.status).toBe(422);
+    // Localizable reason, not just the coarse too_early code.
+    expect(errorOf(res).detail).toEqual({ key: 'completeTooEarly' });
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
@@ -512,6 +514,8 @@ describe('POST /api/appointments/:id/transition — timing guard', () => {
     const outsideId = await insertFuture(25);
     const outside = await apptReq<AppointmentResponse>('POST', `/api/appointments/${outsideId}/transition`, { to: 'no_show' });
     expect(outside.status).toBe(422);
+    // The cutoff hours travel in the detail so the client can render them.
+    expect(errorOf(outside).detail).toEqual({ key: 'noShowTooEarly', params: { hours: 24 } });
 
     const insideId = await insertFuture(1);
     const inside = await apptReq<AppointmentResponse>('POST', `/api/appointments/${insideId}/transition`, { to: 'no_show' });
@@ -616,6 +620,8 @@ describe('Client cancellation cutoff', () => {
     currentUser = asUser(clientId, 'Client');
     const res = await apptReq<AppointmentResponse>('POST', `/api/appointments/${id}/transition`, { to: 'canceled' });
     expect(res.status).toBe(422);
+    // The cutoff hours travel in the detail so the client can render them.
+    expect(errorOf(res).detail).toEqual({ key: 'cancelCutoff', params: { hours: 9999 } });
 
     await pool.query(`UPDATE businesses SET cancellation_cutoff_hours = 0 WHERE id = $1`, [bizId]);
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);

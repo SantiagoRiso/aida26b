@@ -17,6 +17,7 @@ import { appointmentFromExtendedProps } from '@/composables/calendarEventPayload
 import { dayISO } from '@/composables/availabilityShading';
 import { listRows } from '@/api/crud';
 import { getMySettings } from '@/api/business';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { canCancelAppointment, DEFAULT_CANCELLATION_CUTOFF_HOURS, isOpenAppointmentState } from '@shared/ssot/domain';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { EventClickArg } from '@fullcalendar/core';
@@ -176,7 +177,9 @@ async function confirmCancel() {
   if (res.ok) {
     await load();
   } else {
-    ui.toast('error', res.code === 'outside_cutoff' ? 'cancelOutsideCutoff' : 'genericError');
+    // outside_cutoff now carries the real cutoff hours in its detail; resolve it so the client is
+    // told the actual number rather than a generic "within the cutoff" line.
+    ui.toast('error', apiErrorMessage(res, 'toast.genericError'));
   }
 }
 

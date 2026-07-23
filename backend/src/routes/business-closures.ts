@@ -5,7 +5,8 @@ import { sendData, sendError, sendList } from '../status_messages';
 import { guardRoute } from '../helpers';
 import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
-import { requireBusinessContext, belongsToBusiness } from './business-context';
+import { requireBusinessContext } from './business-context';
+import { adminTenantScope, resolveTargetTenant, resolveCreationTenant } from './tenant-scope';
 import {
   insertBusinessClosure,
   updateBusinessClosure,
@@ -35,7 +36,8 @@ function parseClosureBody(body: Record<string, unknown>): ClosureParse {
 }
 
 // A business-wide closure is a schedule_exceptions row owned by the whole business — both per-owner
-// columns null, business_id stamped from the session here (never the body). Because the SSOT owner
+// columns null, business_id resolved from the caller's tenant (a super-admin names it, everyone else
+// gets it from session; never trusted from the body of a tenant caller). Because the SSOT owner
 // CHECK is exactly-one-of-three, the generic CRUD engine (which never sets business_id) can only ever
 // write per-owner exceptions; these owner-less closures are created/read/deleted only through here.
 // Creation is Admin-only: a clinic closure is a business-level decision, not a single professional's.
@@ -51,8 +53,9 @@ export function mountBusinessClosureRoutes(
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
-    // Closures are tenant-bound; a super-admin (null business) has no single business to close.
-    const businessId = requireBusinessContext(req, res);
+    // Creation names no target row, so a super-admin picks the tenant explicitly; a tenant Admin has
+    // it stamped from session and may not name another.
+    const businessId = await resolveCreationTenant(pool, req, res);
     if (businessId == null) return;
 
     const parsed = parseClosureBody(req.body ?? {});
@@ -65,7 +68,7 @@ export function mountBusinessClosureRoutes(
       entity_type: 'schedule_exceptions',
       entity_id: Number(row.id),
       exception_date: parsed.data.exception_date,
-    });
+    }, { businessId });
 
     return sendData(res, row, 201);
   }));
@@ -77,16 +80,18 @@ export function mountBusinessClosureRoutes(
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
-    const businessId = requireBusinessContext(req, res);
-    if (businessId == null) return;
+    const scope = adminTenantScope(req, res);
+    if (scope == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return sendError(res, 400, 'invalid_request', 'Valid closure id is required', { detail: { key: 'invalidId' } });
     }
 
+    // A super-admin edits whatever tenant this closure belongs to; a tenant Admin only its own.
     const existing = await findBusinessClosure(pool, id);
-    if (!belongsToBusiness(existing, businessId)) {
+    const businessId = resolveTargetTenant(scope, existing);
+    if (businessId == null) {
       return sendError(res, 404, 'not_found', 'Closure not found', { detail: { key: 'closureNotFound' } });
     }
 
@@ -100,7 +105,7 @@ export function mountBusinessClosureRoutes(
       entity_type: 'schedule_exceptions',
       entity_id: id,
       exception_date: parsed.data.exception_date,
-    });
+    }, { businessId });
 
     return sendData(res, row);
   }));
@@ -126,8 +131,8 @@ export function mountBusinessClosureRoutes(
       await guards.audit(req, 'closure_denied', 'denied', { reason: 'role_forbidden' });
       return sendError(res, 403, 'forbidden', 'Only an Admin may manage business closures', { detail: { key: 'closuresAdminOnly' } });
     }
-    const businessId = requireBusinessContext(req, res);
-    if (businessId == null) return;
+    const scope = adminTenantScope(req, res);
+    if (scope == null) return;
 
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -135,7 +140,8 @@ export function mountBusinessClosureRoutes(
     }
 
     const row = await findBusinessClosure(pool, id);
-    if (!belongsToBusiness(row, businessId)) {
+    const businessId = resolveTargetTenant(scope, row);
+    if (businessId == null || row == null) {
       return sendError(res, 404, 'not_found', 'Closure not found', { detail: { key: 'closureNotFound' } });
     }
 
@@ -144,7 +150,7 @@ export function mountBusinessClosureRoutes(
     await guards.audit(req, 'closure_deleted', 'success', {
       entity_type: 'schedule_exceptions',
       entity_id: id,
-    });
+    }, { businessId });
 
     return sendData(res, { id: row.id, deleted: true });
   }));

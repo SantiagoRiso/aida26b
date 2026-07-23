@@ -14,6 +14,9 @@ import {
   INCLUDE_UNRELATED_VALUE,
 } from '@shared/ssot/list-protocol';
 import type { Role } from '@shared/types/roles';
+import type { TableRecordMap } from '@shared/ssot/derived';
+import type { Wire } from '@shared/ssot/query-types';
+import type { ListParams } from '@/api/crud';
 
 // Only the network-calling exports are stubbed; the query vocabulary the URL and the request
 // share stays the real one.
@@ -38,10 +41,14 @@ const clientColumns = structure.tables.clients.columns;
 const nameLabel = clientColumns.display_name.label.es;
 const dniLabel = clientColumns.dni.label.es;
 
-const bart = { id: '4', display_name: 'Bart Simpson', dni: '30440001', email: null, phone: null };
-const selma = { id: '9', display_name: 'Selma Bouvier', dni: '11220003', email: null, phone: null };
+const bart: Wire<TableRecordMap['clients']> = {
+  id: '4', display_name: 'Bart Simpson', dni: '30440001', email: null, phone: null, username: null, notes: null,
+};
+const selma: Wire<TableRecordMap['clients']> = {
+  id: '9', display_name: 'Selma Bouvier', dni: '11220003', email: null, phone: null, username: null, notes: null,
+};
 
-function okPage(rows: Array<Record<string, unknown>>, total = rows.length, limit = LIST_DEFAULT_LIMIT) {
+function okPage(rows: Array<Wire<TableRecordMap['clients']>>, total = rows.length, limit = LIST_DEFAULT_LIMIT) {
   return { ok: true, data: rows, meta: { page: 1, limit, total } };
 }
 
@@ -74,7 +81,7 @@ async function mountView(initialUrl = '/', role: Role = 'Admin') {
   return { wrapper, router };
 }
 
-function lastRequest(): Record<string, unknown> {
+function lastRequest(): ListParams {
   const calls = listRowsMock.mock.calls.filter((call) => call[0] === 'clients');
   expect(calls.length).toBeGreaterThan(0);
   return calls[calls.length - 1][1];
@@ -155,11 +162,71 @@ describe('ClientsView — the server pages and filters the list', () => {
     const { wrapper, router } = await mountView();
 
     const dniHeader = wrapper.findAll('th').find((th) => th.text().includes(dniLabel));
-    await dniHeader!.trigger('click');
+    await dniHeader!.get('button').trigger('click');
     await flushPromises();
 
     expect(router.currentRoute.value.query).toMatchObject({ sort: 'dni', dir: 'asc' });
     expect(lastRequest()).toMatchObject({ sort: 'dni', dir: 'asc' });
+  });
+});
+
+describe('ClientsView — the list is operable without a mouse', () => {
+  it('sorting is a real button inside a scoped header that reports the sort state', async () => {
+    const { wrapper } = await mountView();
+
+    const dniHeader = wrapper.findAll('th').find((th) => th.text().includes(dniLabel))!;
+    expect(dniHeader.attributes('scope')).toBe('col');
+    expect(dniHeader.attributes('aria-sort')).toBe('none');
+
+    // A native button is what Tab reaches and what Enter/Space activate; both produce a click.
+    const sortButton = dniHeader.get('button');
+    expect(sortButton.element.tagName).toBe('BUTTON');
+    expect(sortButton.attributes('type')).toBe('button');
+    expect(sortButton.attributes('disabled')).toBeUndefined();
+
+    await sortButton.trigger('click');
+    await flushPromises();
+
+    // Re-queried: the reload re-renders the table, so the earlier node is detached.
+    const sortedHeader = wrapper.findAll('th').find((th) => th.text().includes(dniLabel))!;
+    expect(sortedHeader.attributes('aria-sort')).toBe('ascending');
+  });
+
+  it('opening a client is a button, so the detail is reachable by keyboard', async () => {
+    const { wrapper } = await mountView();
+
+    const nameButton = rowsOf(wrapper)[0]!.get('button');
+    expect(nameButton.text()).toContain(bart.display_name);
+
+    await nameButton.trigger('click');
+    await flushPromises();
+
+    // The detail panel is stubbed; what matters is that the row's button opened it.
+    expect(wrapper.findAllComponents({ name: 'DetailPanel' })[0]!.props('open')).toBe(true);
+  });
+
+  it('names the table for assistive tech', async () => {
+    const { wrapper } = await mountView();
+    expect(wrapper.get('table').attributes('aria-label')).toBe(es.clients.tableLabel);
+  });
+});
+
+describe('ClientsView — a failed load is not an empty client list', () => {
+  it('renders the load-error state instead of "no clients to show"', async () => {
+    listRowsMock.mockResolvedValue({ ok: false, status: 500, code: 'internal', message: 'boom' });
+    const { wrapper } = await mountView();
+
+    expect(wrapper.text()).toContain(es.emptyState.loadErrorHeading);
+    expect(wrapper.text()).not.toContain(es.clients.emptyHeading);
+    expect(wrapper.text()).not.toContain('boom');
+  });
+
+  it('a genuinely empty result still reads as empty, not as a failure', async () => {
+    listRowsMock.mockResolvedValue(okPage([]));
+    const { wrapper } = await mountView();
+
+    expect(wrapper.text()).toContain(es.clients.emptyHeading);
+    expect(wrapper.text()).not.toContain(es.emptyState.loadErrorHeading);
   });
 });
 

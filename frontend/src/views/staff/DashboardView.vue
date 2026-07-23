@@ -26,9 +26,9 @@ const { stateLabel } = useStateLabel();
 
 const role = computed(() => auth.user?.role);
 
-const { proUpcoming, proPending, loadingPro, loadProfessional } = useProfessionalDashboard();
-const { recToday, recPending, loadingRec, loadReceptionist } = useReceptionistDashboard();
-const { adminTodayCount, adminPendingCount, recentAudit, loadingAdmin, loadAdmin } = useAdminDashboard();
+const { proUpcoming, proPending, loadingPro, proLoadFailed, loadProfessional } = useProfessionalDashboard();
+const { recToday, recPending, loadingRec, recLoadFailed, loadReceptionist } = useReceptionistDashboard();
+const { adminTodayCount, adminPendingCount, recentAudit, loadingAdmin, adminLoadFailed, loadAdmin } = useAdminDashboard();
 
 const {
   conflictTurnos, conflictTotal, loadConflicts, conflictBusy, resolveTarget,
@@ -151,6 +151,11 @@ onMounted(() => {
       <div v-if="loadingPro">
         <Skeleton variant="tile" :rows="2" />
       </div>
+      <EmptyState
+        v-else-if="proLoadFailed"
+        :heading="t('emptyState.loadErrorHeading')"
+        :body="t('emptyState.loadErrorBody')"
+      />
       <div v-else class="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div class="rounded-lg border border-border bg-card p-5">
           <h2 class="text-lg font-semibold text-heading mb-3">
@@ -203,6 +208,11 @@ onMounted(() => {
       <div v-if="loadingRec">
         <Skeleton variant="tile" :rows="2" />
       </div>
+      <EmptyState
+        v-else-if="recLoadFailed"
+        :heading="t('emptyState.loadErrorHeading')"
+        :body="t('emptyState.loadErrorBody')"
+      />
       <div v-else class="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div class="rounded-lg border border-border bg-card p-5">
           <h2 class="text-lg font-semibold text-heading mb-3">
@@ -253,6 +263,11 @@ onMounted(() => {
       <div v-if="loadingAdmin">
         <Skeleton variant="tile" :rows="3" />
       </div>
+      <EmptyState
+        v-else-if="adminLoadFailed"
+        :heading="t('emptyState.loadErrorHeading')"
+        :body="t('emptyState.loadErrorBody')"
+      />
       <div v-else>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
           <div class="rounded-lg border border-border bg-card p-4 text-center">

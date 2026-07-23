@@ -8,6 +8,7 @@ import { sendData, sendError } from '../status_messages';
 import { assertCrudAllowed, assertOwnScheduleAllowed, assertRoleCheckedReferences } from './crud-policy';
 import type { OwnScheduleTarget } from './crud-policy';
 import { requireUser, rejectServerDerivedFields } from './request-guards';
+import { auditGenericWrite, auditGenericDenied } from './crud-audit';
 import {
   isBusinessScoped,
   isScheduleGuarded,
@@ -35,6 +36,7 @@ export async function postHandler(
   const allowed = assertCrudAllowed(req.params.tableName, 'create', user);
 
   if (!allowed.ok) {
+    await auditGenericDenied(pool, req, allowed);
     return sendError(res, allowed.status, allowed.code, allowed.message);
   }
 
@@ -72,6 +74,7 @@ export async function postHandler(
       Object.fromEntries(getScheduleOwnerForeignKeys().map((fk) => [fk, owner?.[fk]])),
     );
     if (!guard.ok) {
+      await auditGenericDenied(pool, req, guard);
       return sendError(res, guard.status, guard.code, guard.message);
     }
   }
@@ -89,9 +92,12 @@ export async function postHandler(
     valuesToInsert.push(user.business_id);
   }
 
-  const { text, values } = buildInsertStatement(physicalTable, notDerivableFields, valuesToInsert);
+  const { text, values } = buildInsertStatement(physicalTable, notDerivableFields, valuesToInsert, tableName);
 
   // Constraint violations (unique, FK) propagate to guardRoute's central SQLSTATE mapping.
   const rows = await runQuery<GenericRow>(pool, text, values);
+
+  await auditGenericWrite(pool, req, tableName, 'create', rows[0]);
+
   return sendData(res, rows[0], 201);
 }

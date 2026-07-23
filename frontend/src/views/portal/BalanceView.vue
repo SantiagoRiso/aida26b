@@ -1,16 +1,20 @@
 <script setup lang="ts">
 // Read-only: the client never modifies the ledger; server scopes results to the caller.
 
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { getBalance, getLedger } from '@/api/ledger';
 import type { LedgerEntry } from '@/api/ledger';
+import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
+import { LEDGER_SORT_FIELDS } from '@shared/ssot/list-sort';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLedgerLabel } from '@/composables/useLedgerLabel';
+import { useListQuerySync } from '@/composables/useListQuerySync';
 import Skeleton from '@/components/shared/Skeleton.vue';
 import EmptyState from '@/components/shared/EmptyState.vue';
-import AppButton from '@/components/shared/AppButton.vue';
+import Pagination from '@/components/generic/Pagination.vue';
+import SortableHeader from '@/components/shared/SortableHeader.vue';
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -19,6 +23,9 @@ const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
 
 const balanceArs = ref<string | null>(null);
 const loadingBalance = ref(false);
+// A failed load must never read as "nothing owed" — the client would conclude the account is settled.
+const balanceFailed = ref(false);
+const entriesFailed = ref(false);
 
 // Positive balance = client owes money → destructive (overdue) indicator.
 const balancePositive = computed(() => {
@@ -28,9 +35,34 @@ const balancePositive = computed(() => {
 
 const entries = ref<LedgerEntry[]>([]);
 const loadingEntries = ref(false);
-const page = ref(1);
-const limit = 25;
-const hasMore = ref(false);
+const total = ref(0);
+
+// The statement is shareable: the page and the chosen order live in the URL, so a reload lands on
+// the same view rather than back at the top of the newest-first default.
+const listQuery = useListQuerySync({
+  onChange: load,
+  sortableFields: () => LEDGER_SORT_FIELDS,
+});
+const { page, sort, dir } = listQuery;
+const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
+
+// A new column starts ascending; clicking the active one reverses it. Sorting restarts at page 1 —
+// the entry that was on page 3 under the old order is not on page 3 under the new one.
+function toggleSort(field: string) {
+  if (sort.value === field) {
+    dir.value = dir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sort.value = field;
+    dir.value = 'asc';
+  }
+  page.value = 1;
+  listQuery.commit();
+}
+
+function goToPage(p: number) {
+  page.value = p;
+  listQuery.commit();
+}
 
 async function load() {
   if (!auth.user) return;
@@ -38,35 +70,36 @@ async function load() {
 
   loadingBalance.value = true;
   loadingEntries.value = true;
+  balanceFailed.value = false;
+  entriesFailed.value = false;
 
-  const [balRes, ledRes] = await Promise.all([
-    getBalance(id),
-    getLedger(id, page.value, limit),
-  ]);
+  try {
+    const [balRes, ledRes] = await Promise.all([
+      getBalance(id),
+      getLedger(id, page.value, limit.value, { sort: sort.value || undefined, dir: dir.value }),
+    ]);
 
-  loadingBalance.value = false;
-  loadingEntries.value = false;
+    if (balRes.ok) balanceArs.value = balRes.data.balance_ars;
+    else {
+      balanceArs.value = null;
+      balanceFailed.value = true;
+    }
 
-  if (balRes.ok) balanceArs.value = balRes.data.balance_ars;
-  if (ledRes.ok) {
-    entries.value = ledRes.data;
-    hasMore.value = ledRes.data.length >= limit;
+    if (ledRes.ok) {
+      entries.value = ledRes.data;
+      total.value = ledRes.meta ? ledRes.meta.total : ledRes.data.length;
+    } else {
+      entries.value = [];
+      total.value = 0;
+      entriesFailed.value = true;
+    }
+  } finally {
+    loadingBalance.value = false;
+    loadingEntries.value = false;
   }
 }
 
-async function loadMore() {
-  if (!auth.user) return;
-  page.value += 1;
-  loadingEntries.value = true;
-  const res = await getLedger(auth.user.id, page.value, limit);
-  loadingEntries.value = false;
-  if (res.ok) {
-    entries.value = [...entries.value, ...res.data];
-    hasMore.value = res.data.length >= limit;
-  }
-}
-
-onMounted(load);
+load();
 </script>
 
 <template>
@@ -76,6 +109,15 @@ onMounted(load);
     <section :aria-label="t('portal.balanceSummaryLabel')">
       <div v-if="loadingBalance">
         <Skeleton :rows="1" />
+      </div>
+      <div
+        v-else-if="balanceFailed"
+        role="alert"
+        class="rounded-xl border border-border bg-surface p-6"
+      >
+        <p class="text-sm">{{ t('portal.currentBalance') }}</p>
+        <p class="mt-1 text-lg font-semibold">{{ t('portal.balanceLoadError') }}</p>
+        <p class="mt-2 text-sm text-neutral">{{ t('emptyState.loadErrorBody') }}</p>
       </div>
       <div
         v-else
@@ -107,19 +149,25 @@ onMounted(load);
       </div>
 
       <EmptyState
+        v-else-if="entriesFailed && entries.length === 0"
+        :heading="t('portal.ledgerLoadErrorHeading')"
+        :body="t('emptyState.loadErrorBody')"
+      />
+
+      <EmptyState
         v-else-if="!loadingEntries && entries.length === 0"
         :heading="t('portal.noLedgerHeading')"
         :body="t('portal.noLedgerBody')"
       />
 
       <div v-else class="overflow-x-auto rounded-lg border border-border">
-        <table class="w-full text-sm">
+        <table class="w-full text-sm" :aria-label="t('portal.ledgerHeading')">
           <thead class="border-b border-border bg-surface">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.type') }}</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.amount') }}</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.date') }}</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.detail') }}</th>
+            <tr class="text-xs text-neutral">
+              <SortableHeader field="entry_type" :label="t('portal.type')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="amount_ars" :label="t('portal.amount')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="created_at" :label="t('portal.date')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-neutral">{{ t('portal.detail') }}</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-border">
@@ -150,11 +198,18 @@ onMounted(load);
         </table>
       </div>
 
-      <div v-if="hasMore" class="mt-4 flex justify-center">
-        <AppButton variant="neutral" :loading="loadingEntries" @click="loadMore">
-          {{ t('portal.loadMore') }}
-        </AppButton>
-      </div>
+      <p v-if="entriesFailed && entries.length > 0" role="alert" class="mt-3 text-sm text-destructive">
+        {{ t('portal.ledgerLoadErrorHeading') }}
+      </p>
+
+      <Pagination
+        v-if="total > limit"
+        :page="page"
+        :limit="limit"
+        :total="total"
+        class="mt-2"
+        @change="goToPage"
+      />
     </section>
   </div>
 </template>

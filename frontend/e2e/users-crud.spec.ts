@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page, APIRequestContext } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, openScreen, es } from './helpers';
+import { login, DEMO_ACCOUNTS, openScreen, cleanupUsers, es } from './helpers';
 
 /**
  * UsersView — Reset password / Deactivate (per-row, admin-only, never on your own row) and the
@@ -45,12 +45,22 @@ async function openUsers(page: Page): Promise<void> {
   await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 }
 
+// Every throwaway Receptionist this spec creates, so re-runs don't pile up rows in the Usuarios
+// table (its own tests rely on filtering to a unique username, but other specs' rosters don't).
+// The 'deactivate' test already removes its own row; cleanup 404s harmlessly on that id.
+const createdUserIds: number[] = [];
+
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, createdUserIds);
+});
+
 test.describe('Users CRUD (admin) — reset password, deactivate, isSelf, create error', () => {
   test('resets a password for another user (not self)', async ({ page }) => {
     // openUsers logs in (giving page.request its session cookie) before any API call; filtering
     // afterwards re-fetches the list so the freshly-created target is on page 1.
     await openUsers(page);
     const target = await createStaffUser(page.request, 'Receptionist', 'E2E P5 Users Reset');
+    createdUserIds.push(target.id);
     await filterUsersByUsername(page, target.username);
 
     const row = page.locator('tr').filter({ hasText: target.username });
@@ -76,6 +86,7 @@ test.describe('Users CRUD (admin) — reset password, deactivate, isSelf, create
   test('deactivates another user after a destructive confirm', async ({ page }) => {
     await openUsers(page);
     const target = await createStaffUser(page.request, 'Receptionist', 'E2E P5 Users Deactivate');
+    createdUserIds.push(target.id);
     await filterUsersByUsername(page, target.username);
 
     const row = page.locator('tr').filter({ hasText: target.username });

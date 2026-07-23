@@ -6,6 +6,7 @@ import {
   findProfessionalId,
   findServiceId,
   scheduleViaApi,
+  cleanupUsers,
   isoDaysFromNow,
   clientSearchBox,
   searchClientsByName,
@@ -53,6 +54,8 @@ let sesionId: number;
 let hibbertId: number;
 let medicoId: number;
 let unseenClientId: number;
+let contactClientId: number;
+let pendingClientId: number;
 let unseenClientName: string;
 let contactClientName: string;
 let pendingClientName: string;
@@ -76,12 +79,12 @@ test.beforeAll(async ({ browser }) => {
   contactClientName = `E2E CD Contact ${ts}`;
   pendingClientName = `E2E CD Pending ${ts}`;
 
-  [unseenClientId] = await Promise.all([
+  [unseenClientId, contactClientId] = await Promise.all([
     createContactClient(req, unseenClientName),
     createContactClient(req, contactClientName),
   ]);
 
-  const pendingClientId = await createContactClient(req, pendingClientName);
+  pendingClientId = await createContactClient(req, pendingClientName);
   pendingApptId = await scheduleViaApi(page, {
     professional_user_id: hibbertId,
     service_id: medicoId,
@@ -93,6 +96,13 @@ test.beforeAll(async ({ browser }) => {
   });
 
   await context.close();
+});
+
+// Deactivate the throwaway Clients so re-runs don't accumulate rows in the Clientes list. The
+// scheduled/canceled appointments they carry are workflow rows on now-relative dates no other spec
+// reads, and drop out of every scoped read once their client is deactivated.
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, [unseenClientId, contactClientId, pendingClientId]);
 });
 
 test.describe('ClientDetail — ledger gating & role affordances', () => {

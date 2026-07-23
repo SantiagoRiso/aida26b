@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import type { Page, Locator } from '@playwright/test';
+import type { Page, Locator, Browser } from '@playwright/test';
 import { DEMO_ACCOUNTS as DEMO_USERS, DEMO_PASSWORD } from '../../shared/src/dev-fixtures';
 import { APPOINTMENT_STATES } from '../../shared/src/ssot/domain/appointment-lifecycle';
 // The UI-string SSoT. `es` is pure data (no runtime imports), so it loads in the Playwright loader
@@ -294,4 +294,35 @@ export async function openAppointmentDetail(
   await navigateCalendarToAppointment(page, id, 12, direction);
   await page.locator(`[data-testid="appt-${id}"]`).first().click();
   await expect(page.getByText('Detalle del turno')).toBeVisible({ timeout: 10_000 });
+}
+
+// --- Teardown helpers ---
+// The suite runs serially against one seeded DB (workers:1) that is NOT reset between local runs, so
+// any fixture a spec leaves behind piles up across runs until a count- or page-order-sensitive spec
+// breaks. Specs that create throwaway rows clean them up in an afterAll with these.
+
+// Runs `work` inside a throwaway admin-authenticated context (login gives page.request its session),
+// then always closes it. The teardown counterpart to the beforeAll admin-context pattern.
+export async function withAdmin<T>(browser: Browser, work: (page: Page) => Promise<T>): Promise<T> {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+    return await work(page);
+  } finally {
+    await context.close();
+  }
+}
+
+// Soft-deactivates admin-created e2e users (any role) so they drop out of every roster/list read.
+// Deactivation is a soft delete; an already-gone id 404s, so each call is swallowed — teardown must
+// never turn a green run red. Nulls/dupes are filtered so callers can pass ids collected loosely.
+export async function cleanupUsers(browser: Browser, ids: ReadonlyArray<number | null | undefined>): Promise<void> {
+  const present = [...new Set(ids.filter((id): id is number => typeof id === 'number' && Number.isFinite(id)))];
+  if (present.length === 0) return;
+  await withAdmin(browser, async (page) => {
+    for (const id of present) {
+      await page.request.post(`/api/admin/users/${id}/deactivate`).catch(() => {});
+    }
+  });
 }

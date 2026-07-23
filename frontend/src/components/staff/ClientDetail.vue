@@ -22,6 +22,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import PasswordInput from '@/components/shared/PasswordInput.vue';
 import GenericForm from '@/components/generic/GenericForm.vue';
+import ClientPricesSection from '@/components/staff/ClientPricesSection.vue';
 import LedgerEntryForm from '@/components/ledger/LedgerEntryForm.vue';
 import AppointmentForm from '@/components/calendar/AppointmentForm.vue';
 import ConflictOverrideDialog from '@/components/calendar/ConflictOverrideDialog.vue';
@@ -239,6 +240,8 @@ onMounted(load);
         </p>
       </section>
       </div>
+
+      <ClientPricesSection :client-id="clientId" />
 
       <!-- Historial — full width so the table fits without a horizontal scrollbar. -->
       <section v-if="historyAppointments.length > 0" class="space-y-2">

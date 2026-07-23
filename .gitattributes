@@ -1,0 +1,5 @@
+# Migrations are checksummed and immutable once applied, so their bytes must be identical on
+# every platform. Git for Windows defaults to core.autocrlf=true, which would otherwise hand a
+# fresh clone CRLF files. The runner also normalizes line endings before hashing; this keeps the
+# checkout itself consistent (diffs, psql runs, editors).
+*.sql text eol=lf

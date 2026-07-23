@@ -6,6 +6,7 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountAppointmentRoutes } from '../src/routes/appointments';
+import { MAX_LIST_WINDOW_DAYS } from '../../shared/src/ssot/domain/recurrence-expand';
 import type { AuthUser } from '../src/auth';
 import { makeApiClient, dataOf, errorOf, metaOf } from './api_client';
 import type { JsonBody } from './api_client';
@@ -684,5 +685,44 @@ describe('GET /api/appointments — a series occurrence over an existing turno f
     expect(rows.some((r) => r.id === realId)).toBe(true);
     expect(rows.some((r) => r.id === null && r.series_id === seriesId && r.occurrence_date === targetMonday)).toBe(true);
     expect(rows.every((r) => r.in_conflict === true)).toBe(true);
+  });
+
+  test('materializing the conflicting occurrence flags a staff override and audits it', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await materialize(seriesId, targetMonday);
+    expect(res.status).toBe(200);
+    const appt = dataOf(res).appointment;
+    // Before the fix this row inserted with override_conflict=false and emitted no override audit.
+    expect(appt.override_conflict).toBe(true);
+
+    const audit = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit_events WHERE entity_id = $1 AND event_type = 'conflict_override'`,
+      [appt.id],
+    );
+    expect(Number(audit.rows[0].n)).toBe(1);
+
+    // Drop the materialized row so the describe's afterAll can delete the series.
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [appt.id]);
+  });
+});
+
+describe('GET /api/appointments — the date-range window is bounded', () => {
+  test('a window wider than the max is rejected before any unpaginated fetch or expansion', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await seriesReq<ListRow[]>(
+      'GET',
+      `/api/appointments?date_from=${MONDAY}&date_to=${addDaysISO(MONDAY, MAX_LIST_WINDOW_DAYS + 1)}&limit=50&page=1`,
+    );
+    expect(res.status).toBe(422);
+    expect(errorOf(res).code).toBe('invalid_request');
+  });
+
+  test('a window exactly at the max is accepted', async () => {
+    currentUser = asUser(proId, 'Professional');
+    const res = await seriesReq<ListRow[]>(
+      'GET',
+      `/api/appointments?date_from=${MONDAY}&date_to=${addDaysISO(MONDAY, MAX_LIST_WINDOW_DAYS)}&limit=50&page=1`,
+    );
+    expect(res.status).toBe(200);
   });
 });

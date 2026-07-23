@@ -26,9 +26,12 @@ function fakeRes() {
   return res;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- test double: the fake carries only the Response methods guardRoute touches, not Express's full interface
+const asResponse = (res: ReturnType<typeof fakeRes>): Response => res as unknown as Response;
+
 // Captures logger.error's stdout writes instead of stubbing console.error — helpers.ts now
 // routes unhandled errors through the structured logger, not console.
-async function captureLogs(fn: () => Promise<unknown>): Promise<LogEntry[]> {
+async function captureLogs(fn: () => Promise<void>): Promise<LogEntry[]> {
   const lines: string[] = [];
   const realWrite = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line no-restricted-syntax -- monkey-patching Node's overloaded stdout.write signature for output capture; a test stub can't match its full stdlib overload set
@@ -58,7 +61,7 @@ describe('async handler crash net', () => {
     // The wrapped handler must settle without rejecting — a rejection here is
     // exactly the unhandled-rejection process kill this guard exists to prevent.
     const logs = await captureLogs(() =>
-      Promise.resolve(handler(reqWithId, res as unknown as Response, () => {})),
+      Promise.resolve(handler(reqWithId, asResponse(res), () => {})),
     );
 
     expect(res.statusCode).toBe(500);
@@ -80,7 +83,7 @@ describe('async handler crash net', () => {
     });
 
     const logs = await captureLogs(() =>
-      Promise.resolve(handler(req, res as unknown as Response, () => {})),
+      Promise.resolve(handler(req, asResponse(res), () => {})),
     );
 
     const entry = logs.find((l) => l.level === 'error');
@@ -95,7 +98,7 @@ describe('async handler crash net', () => {
     });
 
     const logs = await captureLogs(() =>
-      Promise.resolve(middleware(req, res as unknown as Response, next)),
+      Promise.resolve(middleware(req, asResponse(res), next)),
     );
 
     expect(res.statusCode).toBe(500);
@@ -113,7 +116,7 @@ describe('async handler crash net', () => {
     });
 
     await captureLogs(() =>
-      Promise.resolve(handler(req, res as unknown as Response, () => {})),
+      Promise.resolve(handler(req, asResponse(res), () => {})),
     );
 
     expect(res.statusCode).toBe(200);
@@ -126,7 +129,7 @@ describe('async handler crash net', () => {
     });
 
     const logs = await captureLogs(() =>
-      Promise.resolve(handler(req, res as unknown as Response, () => {})),
+      Promise.resolve(handler(req, asResponse(res), () => {})),
     );
 
     expect(res.statusCode).toBe(409);
@@ -142,7 +145,7 @@ describe('async handler crash net', () => {
     });
 
     const logs = await captureLogs(() =>
-      Promise.resolve(middleware(req, res as unknown as Response, next)),
+      Promise.resolve(middleware(req, asResponse(res), next)),
     );
 
     expect(res.statusCode).toBe(403);
@@ -158,7 +161,7 @@ describe('async handler crash net', () => {
     });
 
     const logs = await captureLogs(() =>
-      Promise.resolve(handler(req, res as unknown as Response, () => {})),
+      Promise.resolve(handler(req, asResponse(res), () => {})),
     );
 
     expect(res.statusCode).toBe(500);

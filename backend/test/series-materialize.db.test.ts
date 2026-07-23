@@ -8,6 +8,9 @@ import { getAppointmentWallClock } from '../src/db/appointments';
 import { transitionAppointmentState } from '../src/db/appointments';
 import { insertSessionChargeIfAbsent } from '../src/db/ledger';
 import { ensureOccurrenceMaterialized } from '../src/services/series-materialize';
+import { withTransaction } from '../src/db/core';
+import type { AppointmentRow } from '../../shared/src/ssot/query-types';
+import type { AuthUser } from '../src/auth';
 import { weekdayOf } from '../../shared/src/ssot/domain/availability';
 import type { AppointmentSeriesRow } from '../../shared/src/ssot/query-types';
 
@@ -55,6 +58,18 @@ function baseInput(overrides: Partial<InsertSeriesInput> = {}): InsertSeriesInpu
   };
 }
 
+// Materialization is staff-only and now routes through the conflict recheck, so it needs an actor
+// and a tx. This helper mirrors the route and returns the row (unwrapping the override flag) so the
+// existing assertions read unchanged.
+function staffActor(): AuthUser {
+  return { id: proId, username: 'mat_pro1', email: null, role: 'Professional', business_id: bizId, is_active: true, must_change_password: false };
+}
+async function materialize(series: AppointmentSeriesRow, occurrenceDate: string): Promise<AppointmentRow> {
+  const r = await withTransaction(pool, (tx) =>
+    ensureOccurrenceMaterialized(tx, series, occurrenceDate, { businessId: bizId, actor: staffActor() }));
+  return r.appointment;
+}
+
 beforeAll(async () => {
   await resetTestDb();
   pool = makeTestPool();
@@ -95,7 +110,7 @@ describe('ensureOccurrenceMaterialized', () => {
   test('first call materializes a scheduled row with series identity, frozen price, and correct wall-clock', async () => {
     const series = (await insertSeries(pool, baseInput())) as AppointmentSeriesRow;
 
-    const appt = await ensureOccurrenceMaterialized(pool, series, OCCURRENCE_DATE);
+    const appt = await materialize(series, OCCURRENCE_DATE);
 
     expect(appt.series_id).toBe(series.id);
     expect(appt.occurrence_date).toBe(OCCURRENCE_DATE);
@@ -115,8 +130,8 @@ describe('ensureOccurrenceMaterialized', () => {
     const series = (await insertSeries(pool, baseInput())) as AppointmentSeriesRow;
     const occurrenceDate = isoDaysFromNow(1 + 14);
 
-    const first = await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
-    const second = await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
+    const first = await materialize(series, occurrenceDate);
+    const second = await materialize(series, occurrenceDate);
 
     expect(second.id).toBe(first.id);
 
@@ -142,7 +157,7 @@ describe('ensureOccurrenceMaterialized', () => {
     );
     const winnerId = raw.rows[0].id;
 
-    const result = await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
+    const result = await materialize(series, occurrenceDate);
     expect(result.id).toBe(winnerId);
 
     const count = await pool.query<{ n: string }>(
@@ -156,7 +171,7 @@ describe('ensureOccurrenceMaterialized', () => {
     const series = (await insertSeries(pool, baseInput())) as AppointmentSeriesRow;
     const occurrenceDate = isoDaysFromNow(1 + 28);
 
-    const appt = await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
+    const appt = await materialize(series, occurrenceDate);
     const id = Number(appt.id);
 
     const completed = await transitionAppointmentState(pool, id, 'completed');
@@ -176,5 +191,26 @@ describe('ensureOccurrenceMaterialized', () => {
     );
     expect(charges.rows).toHaveLength(1);
     expect(charges.rows[0].amount_ars).toBe(series.price_ars);
+  });
+
+  test('materializing onto a slot a one-off has since taken flags the row as a staff override', async () => {
+    const series = (await insertSeries(pool, baseInput())) as AppointmentSeriesRow;
+    const occurrenceDate = isoDaysFromNow(1 + 35); // whole weeks after START_DATE → on-pattern
+
+    // A one-off booked over the occurrence's slot after the series was created.
+    await pool.query(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)`,
+      [clientId, proId, svcId, `${occurrenceDate} 09:00:00 ${BUSINESS_TZ}`],
+    );
+
+    const { appointment, forcedOverride } = await withTransaction(pool, (tx) =>
+      ensureOccurrenceMaterialized(tx, series, occurrenceDate, { businessId: bizId, actor: staffActor() }));
+
+    // Before the fix this inserted silently with override_conflict=false and no override signal.
+    expect(forcedOverride).toBe(true);
+    expect(appointment.override_conflict).toBe(true);
+    expect(Number(appointment.override_actor_id)).toBe(proId);
   });
 });

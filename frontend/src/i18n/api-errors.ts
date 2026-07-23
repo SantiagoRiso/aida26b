@@ -25,13 +25,14 @@ export function fieldErrorMessage(detail: ErrorDetail | undefined): string {
 }
 
 // Field-level messages for a failed write: the translated per-field map, empty when the endpoint
-// reported no field errors.
+// reported no localizable field errors. Only `fieldDetails` carries a translation key; `fields` is
+// the English diagnostic layer (logs, non-browser callers) and is never rendered. A field named
+// only in `fields` yields no entry here, so the caller falls through to the top-level code — which
+// is more specific than a fabricated fieldError.fallback would be.
 export function fieldErrorMessages(result: FailedResult): Record<string, string> {
-  const names = new Set([
-    ...Object.keys(result.fieldDetails ?? {}),
-    ...Object.keys(result.fields ?? {}),
-  ]);
   const out: Record<string, string> = {};
-  for (const name of names) out[name] = fieldErrorMessage(result.fieldDetails?.[name]);
+  for (const [name, detail] of Object.entries(result.fieldDetails ?? {})) {
+    out[name] = fieldErrorMessage(detail);
+  }
   return out;
 }

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page, APIRequestContext } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, openScreen, es } from './helpers';
+import { login, DEMO_ACCOUNTS, openScreen, cleanupUsers, es } from './helpers';
 
 /**
  * CalendarGrantsSection — binary "who may manage this professional's calendar" list. Mounted twice:
@@ -58,6 +58,7 @@ const grantsSection = (page: Page) =>
 
 let marvin: Staff;
 let marvinId: number;
+let prof2: Staff;
 let demoRecepId: number;
 let grantee2: Staff;
 let grantee3: Staff;
@@ -75,12 +76,13 @@ test.beforeAll(async ({ browser }) => {
   await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
   const req = page.request;
 
-  const [marvinStaff] = await Promise.all([
+  const [marvinStaff, prof2Staff] = await Promise.all([
     createStaff(req, 'Professional', MARVIN),
     createStaff(req, 'Professional', PROF2),
   ]);
   marvin = marvinStaff;
   marvinId = marvin.id;
+  prof2 = prof2Staff;
 
   [grantee2, grantee3] = await Promise.all([
     createStaff(req, 'Receptionist', `E2E P5 Grantee2 ${ts}`),
@@ -94,6 +96,14 @@ test.beforeAll(async ({ browser }) => {
   if (!grantRes.ok()) throw new Error(`pre-grant failed: ${grantRes.status()} ${await grantRes.text()}`);
 
   await context.close();
+});
+
+// Deactivate the four throwaway staff so repeated local runs don't accumulate Professionals on the
+// roster (calendar-grants runs first alphabetically; leftover Professionals would push count-sensitive
+// specs like professionals-roster toward page 2). The grant on demo_recep is revoked automatically
+// when its professional (Marvin) is deactivated; demo_recep itself is a seeded account, never touched.
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, [marvinId, prof2?.id, grantee2?.id, grantee3?.id]);
 });
 
 test.describe('Calendar grants — Give access / Remove access', () => {

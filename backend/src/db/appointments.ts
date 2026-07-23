@@ -4,6 +4,9 @@ import { grantedProfessionalScope } from './grants';
 import { appointmentInConflictSql } from './scheduling';
 import { reNumberFragment } from './scope';
 import { dateBoundConditions } from './date-bounds';
+import { orderByClause } from './sort';
+import type { ListSort, SortColumns } from './sort';
+import type { AppointmentSortField } from '../../../shared/src/ssot/list-sort';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
 
 // Null when absent or cross-tenant — both surface as 404 to hide existence.
@@ -190,8 +193,21 @@ export type AppointmentRoleScope =
   | { kind: 'receptionist'; granteeUserId: number }
   | { kind: 'all' };
 
+// SQL for each sortable column the shared declaration names. Every other value falls back to the
+// default order.
+export const APPOINTMENT_SORT_COLUMNS: SortColumns<AppointmentSortField> = {
+  starts_at: 'a.starts_at',
+  price: 'a.price',
+  duration_minutes: 'a.duration_minutes',
+  state: 'a.state',
+};
+
+// Chronological: a turno list is read as a schedule.
+export const APPOINTMENT_DEFAULT_SORT: ListSort<AppointmentSortField> = { column: 'starts_at', dir: 'asc' };
+
 export type AppointmentListFilter = {
   businessId: number;
+  sort: ListSort<AppointmentSortField>;
   roleScope: AppointmentRoleScope;
   // Business timezone — feeds the per-row in_conflict flag (turno time vs. time-off, wall-clock).
   tz: string;
@@ -247,6 +263,7 @@ export async function listAppointments(
   // The row query also computes the in_conflict flag, so it carries an extra tz param (after the
   // shared WHERE params) that the count query does not; hence the two build their param lists apart.
   const flagTz = `$${params.length + 1}`;
+  const orderBy = orderByClause(APPOINTMENT_SORT_COLUMNS, f.sort, 'a.id');
 
   if (f.unpaginated) {
     // Every matching row comes back unbounded — total is exactly what was fetched, so there is no
@@ -257,7 +274,7 @@ export async function listAppointments(
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
         WHERE ${where}
-        ORDER BY a.starts_at`,
+        ORDER BY ${orderBy}`,
       [...params, f.tz],
     );
     return { rows, total: rows.length };
@@ -273,7 +290,7 @@ export async function listAppointments(
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
         WHERE ${where}
-        ORDER BY a.starts_at
+        ORDER BY ${orderBy}
         LIMIT ${limitPh} OFFSET ${offsetPh}`,
       [...params, f.tz, f.limit, f.offset],
     ),

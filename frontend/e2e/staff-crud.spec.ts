@@ -1,5 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, clientSearchBox, searchClientsByName, es } from './helpers';
+import { login, DEMO_ACCOUNTS, clientSearchBox, searchClientsByName, withAdmin, es } from './helpers';
+
+// Rows the create tests add. Cleaning them up keeps the catalog/user list small across local re-runs
+// so their own "small seeded set fits on page 1" reads stay valid; services are soft-deletable and
+// users are soft-deactivated.
+const createdServiceIds: number[] = [];
+const createdUserIds: number[] = [];
+
+test.afterAll(async ({ browser }) => {
+  await withAdmin(browser, async (adminPage) => {
+    for (const id of createdServiceIds) await adminPage.request.delete(`/api/services/${id}`).catch(() => {});
+    for (const id of createdUserIds) await adminPage.request.post(`/api/admin/users/${id}/deactivate`).catch(() => {});
+  });
+});
 
 test.describe('Staff CRUD — services, clients, resources, users (real GenericForm/GenericTable UI)', () => {
   test('admin creates a new service through the real form', async ({ page }) => {
@@ -27,6 +40,7 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
     const body = await resp.json();
     expect(body.success).toBe(true);
     expect(body.data.name).toBe(uniqueName);
+    if (body.data?.id != null) createdServiceIds.push(Number(body.data.id));
 
     // Panel closes and the table reloads — the small seeded catalog (~5 rows) fits on page 1.
     await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
@@ -141,6 +155,7 @@ test.describe('Staff CRUD — services, clients, resources, users (real GenericF
     const body = await resp.json();
     // The admin create-user handler wraps its payload: { success, data: { id, username, role } }.
     expect(body.data.username).toBe(uniqueUsername);
+    if (body.data?.id != null) createdUserIds.push(Number(body.data.id));
 
     // Confirm the created account is real and usable, independent of the Usuarios listing
     // (asserted separately above): log in as it directly.

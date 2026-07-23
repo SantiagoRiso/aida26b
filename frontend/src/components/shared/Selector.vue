@@ -39,6 +39,9 @@ const props = withDefaults(
     extraSearch?: (option: T) => string;
     // Options are still arriving (a server-side search is in flight).
     loading?: boolean;
+    // Shown in place of the bound value when it has no option and never will (the owner knows
+    // the referenced row is unreadable). Blank would read as "nothing selected".
+    missingLabel?: string;
   }>(),
   {
     searchable: false,
@@ -49,6 +52,7 @@ const props = withDefaults(
     showEmptyOption: true,
     disabled: false,
     loading: false,
+    missingLabel: '',
   },
 );
 
@@ -79,7 +83,7 @@ const showAsLabel = computed(() => props.readonly || single.value != null);
 
 function labelFor(value: string | null): string {
   if (value == null) return '';
-  return props.options.find((o) => o.value === value)?.label ?? '';
+  return props.options.find((o) => o.value === value)?.label ?? props.missingLabel;
 }
 const labelText = computed(() => (single.value ? single.value.label : labelFor(props.modelValue)));
 

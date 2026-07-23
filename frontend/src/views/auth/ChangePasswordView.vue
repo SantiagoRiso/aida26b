@@ -61,7 +61,7 @@ async function logout() {
 
 <template>
   <!-- Full-screen blocking form: guard prevents leaving while must_change_password is true. -->
-  <div class="flex min-h-screen flex-col items-center justify-center bg-surface px-4">
+  <main class="flex min-h-screen flex-col items-center justify-center bg-surface px-4">
     <div class="w-full max-w-sm rounded-xl bg-card p-8 shadow-sm border border-border">
       <div class="mb-6 rounded-md bg-warning-tint border border-warning-tint-border px-4 py-3 text-sm text-warning-strong font-semibold">
         {{ t('auth.mustChangeBanner') }}
@@ -116,5 +116,5 @@ async function logout() {
         {{ t('nav.logout') }}
       </button>
     </div>
-  </div>
+  </main>
 </template>

@@ -5,6 +5,9 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { insertSeries, type InsertSeriesInput } from '../src/db/series';
 import { ensureOccurrenceMaterialized } from '../src/services/series-materialize';
+import { withTransaction } from '../src/db/core';
+import type { AppointmentRow } from '../../shared/src/ssot/query-types';
+import type { AuthUser } from '../src/auth';
 import { transitionAppointmentState } from '../src/db/appointments';
 import { listVirtualOccurrences } from '../src/services/series-listing';
 import { weekdayOf } from '../../shared/src/ssot/domain';
@@ -67,6 +70,13 @@ function baseInput(overrides: Partial<InsertSeriesInput> = {}): InsertSeriesInpu
     created_by_user_id: String(proId),
     ...overrides,
   };
+}
+
+async function materialize(series: AppointmentSeriesRow, occurrenceDate: string): Promise<AppointmentRow> {
+  const staff: AuthUser = { id: proId, username: 'list_pro1', email: null, role: 'Professional', business_id: bizId, is_active: true, must_change_password: false };
+  const r = await withTransaction(pool, (tx) =>
+    ensureOccurrenceMaterialized(tx, series, occurrenceDate, { businessId: bizId, actor: staff }));
+  return r.appointment;
 }
 
 beforeAll(async () => {
@@ -170,7 +180,7 @@ describe('listVirtualOccurrences', () => {
     });
     expect(before.some((v) => v.series_id === series.id && v.occurrence_date === occurrenceDate)).toBe(true);
 
-    await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
+    await materialize(series, occurrenceDate);
 
     const after = await listVirtualOccurrences(pool, {
       businessId: bizId,
@@ -190,7 +200,7 @@ describe('listVirtualOccurrences', () => {
     const series = (await insertSeries(pool, baseInput({ weekday, start_date: startDate }))) as AppointmentSeriesRow;
     const occurrenceDate = startDate;
 
-    const materialized = await ensureOccurrenceMaterialized(pool, series, occurrenceDate);
+    const materialized = await materialize(series, occurrenceDate);
     await transitionAppointmentState(pool, Number(materialized.id), 'canceled');
 
     const windowStart = startDate;

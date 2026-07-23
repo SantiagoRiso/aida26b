@@ -1,6 +1,6 @@
 import { evaluateConflicts, resolveBooking, weekdayOf } from '../../../shared/src/ssot/domain';
 import type { ConflictVerdict } from '../../../shared/src/ssot/domain';
-import { getServiceDefaults, getClientOverridePrice } from '../db/catalog';
+import { getServiceDefaults, getClientOverridePrice, getProfessionalServiceOffer } from '../db/catalog';
 import { getBlockServiceForSlot, resourceExistsInBusiness } from '../db/scheduling';
 import { findUser } from '../db/users';
 import { withTransaction, type Queryable, type TransactionClient, type TransactionPool } from '../db/core';
@@ -143,6 +143,24 @@ export async function resolveAndLoadService(
     return { ok: false, status: 404, code: 'not_found', message: 'Service not found in this business' };
   }
   const serviceDefaultPriceArs = serviceDefaults.default_price_ars;
+
+  // A professional offers a declared set of services and may only be booked for those. One with no
+  // declared services is unconfigured rather than restricted, so the whole catalog stays bookable
+  // for them — the same reading the booking screens use.
+  const offer = await getProfessionalServiceOffer(pool, professionalUserId, serviceId, businessId);
+  if (offer == null) {
+    return { ok: false, status: 404, code: 'not_found', message: 'Professional not found in this business' };
+  }
+  if (offer.restricts_services && !offer.offers_service) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'invalid_request',
+      message: invalidMessage,
+      fields: { service_id: 'the professional does not offer this service' },
+      fieldDetails: { service_id: { key: 'serviceNotOffered' } },
+    };
+  }
 
   // Resource (when supplied) must belong to the session's business — an explicit
   // check independent of the conflict loader so a future override bypass cannot

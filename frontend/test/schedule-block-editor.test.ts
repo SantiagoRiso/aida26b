@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui';
 import { listRows, createRow, updateRow, deleteRow } from '@/api/crud';
 import ScheduleBlockEditor from '@/components/schedule/ScheduleBlockEditor.vue';
 import type { OwnerKind } from '@shared/ssot/domain/conflict';
+import type { Weekday } from '@shared/ssot/domain/availability';
 
 vi.mock('@/api/crud', () => ({
   listRows: vi.fn(),
@@ -46,7 +47,8 @@ type ScheduleEditorHarness = {
   };
   editorOpen: boolean;
   onDeleteConfirm: () => Promise<void>;
-  saveTimes: (times: { startTime: string; endTime: string }) => Promise<boolean>;
+  submitBlock: (times: { weekday: Weekday; startTime: string; endTime: string }) => Promise<boolean>;
+  openCreateBlock: () => void;
 };
 
 function editorVm(wrapper: ReturnType<typeof mountEditor>) {
@@ -190,7 +192,7 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
 
     // Per-minute textbox edit (09:05-11:35) within block '1''s own span → no overlap with itself.
-    const ok = await editorVm(wrapper).saveTimes({ startTime: '09:05', endTime: '11:35' });
+    const ok = await editorVm(wrapper).submitBlock({ weekday: 'mon', startTime: '09:05', endTime: '11:35' });
     await flushPromises();
 
     expect(ok).toBe(true);
@@ -220,7 +222,7 @@ describe('ScheduleBlockEditor', () => {
     await flushPromises();
 
     // Edit block '2' to 11:00-15:00 → overlaps block '1' (Mon 09:00-12:00).
-    const ok = await editorVm(wrapper).saveTimes({ startTime: '11:00', endTime: '15:00' });
+    const ok = await editorVm(wrapper).submitBlock({ weekday: 'mon', startTime: '11:00', endTime: '15:00' });
     await flushPromises();
 
     expect(ok).toBe(false);
@@ -295,5 +297,80 @@ describe('ScheduleBlockEditor', () => {
       start_time: '13:00',
       end_time: '14:00',
     });
+  });
+  // Creating a block and moving one to another weekday are drag-only on the grid; the modal is the
+  // keyboard path to both.
+  it('creates a block from the modal with no block selected', async () => {
+    vi.mocked(createRow).mockResolvedValueOnce({
+      ok: true,
+      data: { id: '99', professional_user_id: '1', resource_id: null, weekday: 'wed', start_time: '09:00', end_time: '13:00' },
+    });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    editorVm(wrapper).openCreateBlock();
+    await flushPromises();
+    expect(editorVm(wrapper).editorOpen).toBe(true);
+
+    const ok = await editorVm(wrapper).submitBlock({ weekday: 'wed', startTime: '09:00', endTime: '13:00' });
+    await flushPromises();
+
+    expect(ok).toBe(true);
+    expect(createRow).toHaveBeenCalledWith('schedule_blocks', {
+      professional_user_id: '1',
+      resource_id: null,
+      weekday: 'wed',
+      start_time: '09:00',
+      end_time: '13:00',
+    });
+    expect(updateRow).not.toHaveBeenCalled();
+  });
+
+  it('moves a block to another weekday from the modal', async () => {
+    vi.mocked(updateRow).mockResolvedValueOnce({
+      ok: true,
+      data: { id: '1', professional_user_id: '1', resource_id: null, weekday: 'thu', start_time: '09:00', end_time: '12:00' },
+    });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    editorVm(wrapper).calendarOptions.eventClick({ event: { id: '1' } });
+    await flushPromises();
+
+    const ok = await editorVm(wrapper).submitBlock({ weekday: 'thu', startTime: '09:00', endTime: '12:00' });
+    await flushPromises();
+
+    expect(ok).toBe(true);
+    expect(updateRow).toHaveBeenCalledWith('schedule_blocks', '1', {
+      professional_user_id: '1',
+      resource_id: null,
+      weekday: 'thu',
+      start_time: '09:00',
+      end_time: '12:00',
+    });
+  });
+
+  it('rejects a created block that overlaps an existing one on the same weekday', async () => {
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    editorVm(wrapper).openCreateBlock();
+    // Overlaps the existing Mon 09:00-12:00 block.
+    const ok = await editorVm(wrapper).submitBlock({ weekday: 'mon', startTime: '11:00', endTime: '13:00' });
+    await flushPromises();
+
+    expect(ok).toBe(false);
+    expect(createRow).not.toHaveBeenCalled();
+    const ui = useUiStore();
+    expect(ui.toasts.at(-1)).toMatchObject({ kind: 'error', messageKey: 'scheduleBlockOverlap' });
+  });
+
+  it('exposes the add-block action as a button, not only as a drag on the grid', async () => {
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="schedule-add-block"]').trigger('click');
+
+    expect(editorVm(wrapper).editorOpen).toBe(true);
   });
 });

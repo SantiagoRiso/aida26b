@@ -21,8 +21,10 @@ import {
   insertLedgerEntry,
   getClientBalance,
   listClientLedger,
+  LEDGER_SORT_COLUMNS,
+  LEDGER_DEFAULT_SORT,
 } from '../db/ledger';
-import { parsePagination } from './pagination';
+import { parsePagination, parseListSort } from './pagination';
 import { LEDGER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 import type { BalanceResult } from '../../../shared/src/ssot/contracts/ledger';
 
@@ -168,8 +170,9 @@ export function mountLedgerRoutes(
     }
 
     const { limit, page, offset } = parsePagination(req.query);
+    const sort = parseListSort(req.query, LEDGER_SORT_COLUMNS, LEDGER_DEFAULT_SORT);
 
-    const { rows, total } = await listClientLedger(pool, clientUserId, { limit, offset });
+    const { rows, total } = await listClientLedger(pool, clientUserId, { limit, offset, sort });
 
     return sendList(res, rows, { page, limit, total });
   }));

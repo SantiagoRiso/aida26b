@@ -2,25 +2,25 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Pool } from 'pg';
 import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
-import { resetTestDb, makeTestPool } from './helpers';
+import { resetTestDb, makeTestPool, APP_ROLE, assertAppRoleIsLeastPrivilege } from './helpers';
 import { structure } from '../../shared/src/ssot/structure';
 import type { CrudOp, TableStructure } from '../../shared/src/types/types';
 
 // The generic engine issues real statements for every operation a table's descriptor enables. If
-// the app role lacks the matching grant, that path 500s in production ("permission denied") — yet
-// the authz db tests mount the server on the SUPERUSER pool, so they never exercise grants and
-// stay green. This guard closes that blind spot: for every SSoT-declared operation, assert the
-// least-privilege app role holds exactly the privilege the engine will need.
+// the app role lacks the matching grant, that path 500s in production ("permission denied"). This
+// guard asserts the least-privilege app role holds exactly the privileges the backend will need:
+// derived from the descriptor for generic-CRUD tables, and from the workflow handlers' documented
+// statement set for the protected ones the descriptor says nothing about.
 let pool: Pool;
-const APP_ROLE = process.env.DB_USER ?? 'aida26_user';
 
-type Privilege = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
+const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as const;
+type Privilege = (typeof PRIVILEGES)[number];
 type GrantCase = { key: string; table: string; privilege: Privilege };
 
 // Which privilege the generic engine actually exercises for each declared operation. Reads may
 // target a secret-free view (sqlReadTable); soft delete archives the row with an UPDATE, so the
 // DELETE privilege is deliberately withheld and asserted absent instead.
-function deriveCases(): { granted: GrantCase[]; withheld: GrantCase[] } {
+function deriveCases(): { granted: GrantCase[]; withheld: GrantCase[]; keys: Set<string> } {
   const granted: GrantCase[] = [];
   const withheld: GrantCase[] = [];
 
@@ -55,55 +55,50 @@ function deriveCases(): { granted: GrantCase[]; withheld: GrantCase[] } {
     });
   };
 
-  return { granted: dedupe(granted), withheld: dedupe(withheld) };
+  const keys = new Set([...granted, ...withheld].map((c) => c.key));
+  return { granted: dedupe(granted), withheld: dedupe(withheld), keys };
 }
 
-const { granted, withheld } = deriveCases();
+const { granted, withheld, keys: derivedKeys } = deriveCases();
 
-// has_table_privilege answers true for any superuser and for the owner of the table, so running
-// these assertions against such a role proves nothing. Refuse to run rather than report a green
-// that only means "the role is too powerful to test".
-async function assertRoleIsLeastPrivilege(): Promise<void> {
-  const { rows } = await pool.query<{ rolsuper: boolean }>(
-    `SELECT rolsuper FROM pg_roles WHERE rolname = $1`,
-    [APP_ROLE],
-  );
-  if (rows.length === 0) {
-    throw new Error(
-      `App role '${APP_ROLE}' (DB_USER) does not exist. The grant assertions cannot run.`,
-    );
-  }
-  if (rows[0].rolsuper) {
-    throw new Error(
-      `App role '${APP_ROLE}' (DB_USER) is a SUPERUSER, so has_table_privilege() returns true ` +
-        `unconditionally and every grant assertion below would pass without proving anything. ` +
-        `Point DB_USER at the least-privilege application role (a two-role setup, as created by ` +
-        `database/bootstrap.sh), distinct from POSTGRES_SUPERUSER and DB_OWNER_USER.`,
-    );
-  }
+// Protected tables carry no `crud` descriptor to derive from — their access is bespoke, owned by
+// the workflow handlers in backend/src/db — so the statements each one issues are stated here.
+// The posture is asserted in full (all four privileges, granted or withheld), because for the
+// append-only tables it is the *absence* of a grant that enforces the guarantee. The exhaustiveness
+// test below refuses to let a new table drift in unmentioned.
+type BespokeGrants = { table: string; privileges: Privilege[] };
+const BESPOKE_GRANTS: Record<string, BespokeGrants> = {
+  // Login inserts, logout deletes; a session row is never rewritten in place.
+  sessions:           { table: 'auth.sessions',      privileges: ['SELECT', 'INSERT', 'DELETE'] },
+  // Tenant config is edited in-app; businesses themselves are provisioned out-of-band.
+  businesses:         { table: 'businesses',         privileges: ['SELECT', 'UPDATE'] },
+  // Booking inserts, lifecycle transitions update; cancelling is a state change, never a removal.
+  appointments:       { table: 'appointments',       privileges: ['SELECT', 'INSERT', 'UPDATE'] },
+  // Ending a series sets status='ended'; the rule row survives so past occurrences stay explicable.
+  appointment_series: { table: 'appointment_series', privileges: ['SELECT', 'INSERT', 'UPDATE'] },
+  // A grant row is presence-as-access: created by INSERT, revoked by DELETE, never mutated.
+  calendar_grants:    { table: 'calendar_grants',    privileges: ['SELECT', 'INSERT', 'DELETE'] },
+  // Append-only: corrections are posted as compensating entries so the balance stays reconstructible.
+  ledger_entries:     { table: 'ledger_entries',     privileges: ['SELECT', 'INSERT'] },
+  // Append-only: an audit trail the app role can rewrite is not an audit trail.
+  audit_events:       { table: 'audit_events',       privileges: ['SELECT', 'INSERT'] },
+};
 
-  const { rows: owned } = await pool.query<{ table_name: string }>(
-    `SELECT schemaname || '.' || tablename AS table_name
-       FROM pg_tables
-      WHERE tableowner = $1 AND schemaname IN ('public', 'auth')
-      ORDER BY 1`,
-    [APP_ROLE],
-  );
-  if (owned.length > 0) {
-    throw new Error(
-      `App role '${APP_ROLE}' (DB_USER) owns migrated tables (${owned
-        .map((r) => r.table_name)
-        .join(', ')}), and a table owner holds every privilege implicitly. Migrations must run as ` +
-        `the schema-owner role (DB_OWNER_USER), never as the application role.`,
-    );
-  }
-}
+const bespokeCases = Object.entries(BESPOKE_GRANTS).flatMap(([key, { table, privileges }]) =>
+  PRIVILEGES.map((privilege) => ({
+    key,
+    table,
+    privilege,
+    expected: privileges.includes(privilege),
+    verb: privileges.includes(privilege) ? 'may' : 'may NOT',
+  })),
+);
 
 beforeAll(async () => {
   await resetTestDb();
   pool = makeTestPool();
   await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
-  await assertRoleIsLeastPrivilege();
+  await assertAppRoleIsLeastPrivilege(pool);
 });
 
 afterAll(async () => {
@@ -129,5 +124,29 @@ describe('app-role grants match the SSoT crud policies', () => {
 describe('app-role grants withheld by design', () => {
   it.each(withheld)('$key: app role may NOT $privilege $table', async ({ table, privilege }) => {
     expect(await hasPrivilege(table, privilege)).toBe(false);
+  });
+});
+
+describe('app-role grants on protected tables match their bespoke handlers', () => {
+  it.each(bespokeCases)('$key: app role $verb $privilege $table', async ({ table, privilege, expected }) => {
+    expect(await hasPrivilege(table, privilege)).toBe(expected);
+  });
+});
+
+// A protected table added to the SSoT gets no derived case, so without this its grants would be
+// asserted by nothing at all — the exact gap that let seven live tables go unchecked.
+describe('every SSoT table has an asserted grant posture', () => {
+  it('no table is missing from both the derived and the bespoke expectations', () => {
+    const unasserted = Object.keys(structure.tables).filter(
+      (key) => !derivedKeys.has(key) && !(key in BESPOKE_GRANTS),
+    );
+    expect(unasserted).toEqual([]);
+  });
+
+  it('the bespoke expectations name only tables that still exist and still lack generic CRUD', () => {
+    const stale = Object.keys(BESPOKE_GRANTS).filter(
+      (key) => !(key in structure.tables) || derivedKeys.has(key),
+    );
+    expect(stale).toEqual([]);
   });
 });

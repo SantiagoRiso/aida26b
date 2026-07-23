@@ -4,6 +4,11 @@
 import { WEEKDAYS, type Weekday } from './availability';
 import type { AppointmentSeriesRow } from '../query-types';
 
+// A date-range appointment list expands every active series across the whole window and fetches its
+// real rows unpaginated, so the window itself is what bounds the work. No screen needs more than a
+// year in one request; an unbounded span is an expansion/row-fetch DoS.
+export const MAX_LIST_WINDOW_DAYS = 366;
+
 type SeriesPattern =
   | { frequency: 'weekly'; weekday: Weekday }
   | { frequency: 'monthly_dow'; weekday: Weekday; week_of_month: number }

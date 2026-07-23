@@ -76,8 +76,8 @@ beforeEach(() => {
 
 describe('useAdminDashboard — virtual filter', () => {
   it('counts only real appointments toward the today stat, ignoring virtual occurrences the date range folds in', async () => {
-    mockedList.mockImplementation((filters: AppointmentListFilters) => {
-      if (filters.state === 'requested') return Promise.resolve({ ok: true, data: [], meta: { total: 4 } });
+    mockedList.mockImplementation((filters?: AppointmentListFilters) => {
+      if (filters?.state === 'requested') return Promise.resolve({ ok: true, data: [], meta: { page: 1, limit: 50, total: 4 } });
       return Promise.resolve({ ok: true, data: [makeAppt('1'), makeAppt('2'), makeVirtual()] });
     });
     mockedAudit.mockResolvedValue({ ok: true, data: [] });
@@ -97,11 +97,11 @@ describe('useProfessionalDashboard — virtual filter', () => {
     const auth = useAuthStore();
     auth.user = {
       id: 7, username: 'pro', email: null, role: 'Professional',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     };
 
-    mockedList.mockImplementation((filters: AppointmentListFilters) => {
-      if (filters.state === 'requested') {
+    mockedList.mockImplementation((filters?: AppointmentListFilters) => {
+      if (filters?.state === 'requested') {
         return Promise.resolve({ ok: true, data: [makeAppt('p1'), makeVirtual()] });
       }
       return Promise.resolve({ ok: true, data: [makeAppt('u1'), makeVirtual()] });
@@ -133,7 +133,7 @@ describe('staff dashboards — "today" is the business day', () => {
   });
 
   function todayFilters() {
-    return mockedList.mock.calls.map(([filters]) => filters).find((filters) => filters.state !== 'requested');
+    return mockedList.mock.calls.map(([filters]) => filters).find((filters) => filters?.state !== 'requested');
   }
 
   it('admin bounds the today tile to that single business day', async () => {
@@ -150,7 +150,7 @@ describe('staff dashboards — "today" is the business day', () => {
     const auth = useAuthStore();
     auth.user = {
       id: 7, username: 'pro', email: null, role: 'Professional',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     };
     await useProfessionalDashboard().loadProfessional();
     expect(todayFilters()).toMatchObject({ date_from: BUSINESS_DAY });
@@ -159,8 +159,8 @@ describe('staff dashboards — "today" is the business day', () => {
 
 describe('useReceptionistDashboard — virtual filter', () => {
   it('drops virtual occurrences from both the today and pending lists', async () => {
-    mockedList.mockImplementation((filters: AppointmentListFilters) => {
-      if (filters.state === 'requested') {
+    mockedList.mockImplementation((filters?: AppointmentListFilters) => {
+      if (filters?.state === 'requested') {
         return Promise.resolve({ ok: true, data: [makeAppt('r1'), makeVirtual()] });
       }
       return Promise.resolve({ ok: true, data: [makeAppt('t1'), makeVirtual()] });

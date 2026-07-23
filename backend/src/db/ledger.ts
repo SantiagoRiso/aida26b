@@ -2,6 +2,9 @@ import { query, queryOne } from './core';
 import type { Queryable } from './core';
 import type { LedgerEntryRow } from '../../../shared/src/ssot/query-types';
 import { LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES } from '../../../shared/src/ssot/domain';
+import { orderByClause } from './sort';
+import type { ListSort, SortColumns } from './sort';
+import type { LedgerSortField } from '../../../shared/src/ssot/list-sort';
 
 // Post a session charge for a completed appointment, once. The NOT EXISTS guard keeps it
 // idempotent if a charge for this appointment was already written. Returns the new entry id,
@@ -79,17 +82,30 @@ export function getClientBalance(db: Queryable, clientUserId: number): Promise<s
   ).then((r) => r?.balance_ars ?? '0');
 }
 
+// SQL for each sortable column the shared declaration names. Every other value falls back to the
+// default order.
+export const LEDGER_SORT_COLUMNS: SortColumns<LedgerSortField> = {
+  created_at: 'created_at',
+  entry_type: 'entry_type',
+  amount_ars: 'amount_ars',
+};
+
+// Newest first: a statement is read from the most recent movement backwards.
+export const LEDGER_DEFAULT_SORT: ListSort<LedgerSortField> = { column: 'created_at', dir: 'desc' };
+
+// Entries posted in one transaction share created_at, so the id closes the sort — without a unique
+// tiebreaker two pages of the same statement can repeat one entry and never show another.
 export async function listClientLedger(
   db: Queryable,
   clientUserId: number,
-  page: { limit: number; offset: number },
+  page: { limit: number; offset: number; sort: ListSort<LedgerSortField> },
 ): Promise<{ rows: LedgerEntryRow[]; total: number }> {
   const pageRows = await query<LedgerEntryRow & { total_count: string }>(
     db,
     `SELECT ledger_entries.*, count(*) OVER()::text AS total_count
        FROM ledger_entries
       WHERE client_user_id = $1
-      ORDER BY created_at DESC
+      ORDER BY ${orderByClause(LEDGER_SORT_COLUMNS, page.sort, 'id')}
       LIMIT $2 OFFSET $3`,
     [clientUserId, page.limit, page.offset],
   );

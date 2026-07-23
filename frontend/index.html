@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Agenda Profesional</title>
+    <style>
+      /* Users who ask their OS to reduce motion include people whose vestibular disorders are
+         triggered by it, so every animation and transition is neutralised rather than shortened. */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
     <script>
       // Runs before first paint so a user who chose dark never sees a flash of the light palette:
       // the app bundle only executes after the session request resolves. Mirrors
@@ -12,6 +26,11 @@
       (function () {
         var stored = localStorage.getItem('theme');
         document.documentElement.dataset.theme = stored === 'dark' ? 'dark' : 'light';
+        // Same reason for the language: assistive tech reads <html lang> at load, so a stored
+        // non-default language must be declared before the app bundle runs. Mirrors
+        // readStoredLanguage() in src/i18n/language.ts.
+        var lang = localStorage.getItem('language');
+        document.documentElement.lang = lang === 'en' ? 'en' : 'es';
       })();
     </script>
   </head>

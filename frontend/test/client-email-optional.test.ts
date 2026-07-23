@@ -5,6 +5,8 @@ import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import { structure } from '@shared/ssot/structure';
+import type { ApiEnvelope } from '@shared/ssot/envelope';
+import type { SelfProfileRow } from '@shared/ssot/query-types';
 
 vi.mock('@/api/admin-users', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/admin-users')>()),
@@ -90,7 +92,7 @@ describe('CreateClientForm — email is optional for a contact-only client', () 
 });
 
 describe('self profile decoding — a client may have no email', () => {
-  function mockFetch(body: unknown) {
+  function mockFetch(body: ApiEnvelope<{ profile: SelfProfileRow }>) {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     ));

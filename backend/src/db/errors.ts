@@ -22,9 +22,31 @@ export class DbError extends Error {
 }
 
 // SQLSTATE → HTTP. Withheld codes fall through to a generic 500.
+// Every code below reuses an existing translated apiError.code (see frontend/src/i18n/es.ts) —
+// no new code needed a translation. `message` is English prose for logs only; the client resolves
+// wording from `code` (or `detail`, which none of these set).
 export const PG_ERROR_MAP: Record<string, { status: number; code: string; message: string }> = {
   '23505': { status: 409, code: 'conflict', message: 'Resource already exists' },
   '23503': { status: 400, code: 'invalid_request', message: 'Referenced resource does not exist' },
+  // Data-shape violations caught by the database rather than the app-level validator (a CHECK
+  // constraint, a NOT NULL column, a value too long/out of range/malformed to store). Same bucket
+  // and status as the app-level validator's own 'validation_error' (routes/../validate.ts), since
+  // to the client this is the same kind of failure: the submitted value didn't pass a stored rule.
+  '23514': { status: 400, code: 'validation_error', message: 'Value violates a database constraint' },
+  '23502': { status: 400, code: 'validation_error', message: 'Required field is missing' },
+  '22001': { status: 400, code: 'validation_error', message: 'Value exceeds the maximum length' },
+  '22003': { status: 400, code: 'validation_error', message: 'Numeric value out of range' },
+  '22007': { status: 400, code: 'validation_error', message: 'Invalid date/time value' },
+  // Generic RAISE EXCEPTION fallback. Every trigger in this codebase already sets an explicit
+  // ERRCODE (state-machine/immutability triggers all raise 'check_violation' — see the migrations),
+  // so P0001 should never actually fire; kept as a safety net so a future trigger that forgets to
+  // set one still gets a 4xx instead of a 500.
+  'P0001': { status: 400, code: 'validation_error', message: 'Database rule violation' },
+  // Consequence of the statement/lock timeouts added for the app role (db.ts / the
+  // role_session_timeouts migration): a query or lock wait that got cut off is a transient,
+  // retryable condition from the client's point of view, not a hard failure.
+  '57014': { status: 503, code: 'database_unavailable', message: 'Statement canceled (timeout)' },
+  '55P03': { status: 503, code: 'database_unavailable', message: 'Lock could not be acquired in time' },
 };
 
 export function httpForDbError(

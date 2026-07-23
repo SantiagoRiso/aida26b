@@ -86,6 +86,7 @@ export function useCustomDrag(deps: CustomDragDeps): {
   function cleanup() {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onCancel);
     document.removeEventListener('keydown', onKey);
     if (moveFrame != null) cancelAnimationFrame(moveFrame);
     moveFrame = null;
@@ -184,6 +185,14 @@ export function useCustomDrag(deps: CustomDragDeps): {
     }
   }
 
+  // The browser takes the pointer away (a touch gesture became a scroll, the pen left range): no
+  // pointerup will ever arrive, so this is the only chance to drop the ghost and the listeners.
+  function onCancel() {
+    if (!session) return;
+    if (session.dragging) deps.onEnd();
+    cleanup();
+  }
+
   function start(appt: Appointment, ev: PointerEvent, el: HTMLElement) {
     if (ev.button !== 0) return;
     // A virtual (recurring) occurrence drags like any turno; onCommit materializes it into a real
@@ -214,6 +223,7 @@ export function useCustomDrag(deps: CustomDragDeps): {
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
     document.addEventListener('keydown', onKey);
   }
 

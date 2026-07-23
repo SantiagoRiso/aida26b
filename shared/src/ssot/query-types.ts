@@ -237,8 +237,14 @@ export type BusinessSettingsRow = {
 // audit_events projected for the admin audit view. details is the JSON blob written by the
 // audit writer, read back verbatim. A value may be a list as well as a scalar — ending a series
 // records the ids it cancelled.
+//
+// business_id is projected only for a super-admin (cross-tenant) read, so it can tell which tenant
+// each row belongs to; a tenant Admin's rows are all their own business and the field is omitted,
+// leaving their payload unchanged. Null marks a tenantless system event (a login attempt on a
+// username nobody holds).
 export type AuditEventRow = {
   id: string;
+  business_id?: string | null;
   actor_user_id: string | null;
   event_type: string;
   entity_type: string | null;

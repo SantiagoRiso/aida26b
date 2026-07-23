@@ -6,7 +6,6 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import CrudSection from '@/components/generic/CrudSection.vue';
-import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
 
 // The table and form fetch rows / FK options via the CRUD API; stub so mounting stays offline.
@@ -49,7 +48,7 @@ describe('CrudSection', () => {
     await flushPromises();
 
     expect(wrapper.findComponent(DetailPanel).props('open')).toBe(false);
-    wrapper.findComponent(GenericTable).vm.$emit('create');
+    wrapper.findComponent({ name: 'GenericTable' }).vm.$emit('create');
     await flushPromises();
     expect(wrapper.findComponent(DetailPanel).props('open')).toBe(true);
   });

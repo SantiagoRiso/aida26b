@@ -14,7 +14,7 @@ import {
   type Conflict,
 } from '../../../shared/src/ssot/domain';
 import { addDaysISO } from '../time';
-import { assertAppointmentActionAllowed, auditInTx } from './appointment-authz';
+import { assertAppointmentActionAllowed, auditInTx, auditConflictOverrideInTx } from './appointment-authz';
 import { withTransaction } from '../db/core';
 import {
   isPositiveInteger,
@@ -200,8 +200,12 @@ export function mountAppointmentSeriesRoutes(
     }
 
     const appointment = await withTransaction(pool, async (tx) => {
-      const appt = await ensureOccurrenceMaterialized(tx, series, occurrenceDate);
+      const { appointment: appt, forcedOverride } = await ensureOccurrenceMaterialized(
+        tx, series, occurrenceDate, { businessId, actor: user },
+      );
       await auditInTx(tx, user, 'appointment_series_occurrence_materialized', 'success', Number(appt.id));
+      // A slot taken since the series was created is a staff sobreturno — recorded like any other.
+      if (forcedOverride) await auditConflictOverrideInTx(tx, user, Number(appt.id), 'materialize');
       return appt;
     });
 

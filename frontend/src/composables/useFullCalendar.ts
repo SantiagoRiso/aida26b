@@ -22,6 +22,7 @@ import type { Appointment } from '@/api/appointments';
 import type { AuthUser } from '@/stores/auth';
 import { VOID_APPOINTMENT_STATES } from '@shared/ssot/domain';
 import { classifyException } from '@/composables/scheduleExceptions';
+import { useNarrowViewport } from '@/composables/useViewport';
 import {
   appointmentFromExtendedProps,
   closureFromExtendedProps,
@@ -133,9 +134,17 @@ export function useAppointmentCalendar(
   viewer: Ref<AuthUser | null>,
   handlers: CalendarHandlers,
   decorators?: CalendarDecorators,
-): { calendarOptions: Ref<CalendarOptions>; timeBounds: Ref<{ min: string; max: string }> } {
+): {
+  calendarOptions: Ref<CalendarOptions>;
+  timeBounds: Ref<{ min: string; max: string }>;
+  narrowViewport: Ref<boolean>;
+} {
   // Only authenticated non-Client viewers may drag/resize — null viewer is read-only.
   const editable = computed(() => !!viewer.value && viewer.value.role !== 'Client');
+
+  // Seven day columns share ~330px on a phone, so the week grid collapses to a single day there.
+  // The caller switches the live view on a breakpoint crossing; this only picks the starting one.
+  const narrowViewport = useNarrowViewport();
 
   const visibleAppointments = computed(() => calendarVisibleAppointments(appointments.value));
 
@@ -163,12 +172,15 @@ export function useAppointmentCalendar(
 
   const calendarOptions = computed<CalendarOptions>(() => ({
     plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
-    initialView: 'timeGridWeek',
-    headerToolbar: {
-      left: 'prev,next today',
-      center: 'title',
-      right: 'timeGridDay,timeGridWeek,dayGridMonth',
-    },
+    initialView: narrowViewport.value ? 'timeGridDay' : 'timeGridWeek',
+    // Narrow: navigation on one row, the view buttons on a second below the grid — one row cannot
+    // hold both at phone widths without the title and the buttons overrunning each other.
+    headerToolbar: narrowViewport.value
+      ? { left: 'prev,next', center: 'title', right: 'today' }
+      : { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' },
+    footerToolbar: narrowViewport.value
+      ? { center: 'timeGridDay,timeGridWeek,dayGridMonth' }
+      : false,
     locale: locale.value === 'en' ? 'en' : esLocale,
     firstDay: 1,
     allDaySlot: false,
@@ -278,5 +290,5 @@ export function useAppointmentCalendar(
     },
   }));
 
-  return { calendarOptions, timeBounds };
+  return { calendarOptions, timeBounds, narrowViewport };
 }

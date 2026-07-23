@@ -12,6 +12,7 @@ import {
   AUDIT_PATTERNS,
   BUSINESS_PATTERNS,
   CLOSURE_PATTERNS,
+  TELEMETRY_PATTERNS,
   authPaths,
   adminUserPaths,
   appointmentPaths,
@@ -21,6 +22,7 @@ import {
   auditPaths,
   businessPaths,
   closurePaths,
+  telemetryPaths,
 } from '../../shared/src/ssot/api-paths';
 
 // Pins the complete public URL surface: an accidental edit to any builder changes the
@@ -86,6 +88,9 @@ const EXPECTED_PATTERNS: Record<string, Record<string, string>> = {
     list: '/api/business-closures',
     detail: '/api/business-closures/:id',
   },
+  TELEMETRY_PATTERNS: {
+    browserError: '/api/telemetry/browser-error',
+  },
 };
 
 const ACTUAL_PATTERNS: Record<string, Record<string, string>> = {
@@ -99,6 +104,7 @@ const ACTUAL_PATTERNS: Record<string, Record<string, string>> = {
   AUDIT_PATTERNS,
   BUSINESS_PATTERNS,
   CLOSURE_PATTERNS,
+  TELEMETRY_PATTERNS,
 };
 
 type Builder = (() => string) | ((id: number | string) => string);
@@ -113,6 +119,7 @@ const BUILDER_GROUPS: Record<string, Record<string, Builder>> = {
   AUDIT_PATTERNS: auditPaths,
   BUSINESS_PATTERNS: businessPaths,
   CLOSURE_PATTERNS: closurePaths,
+  TELEMETRY_PATTERNS: telemetryPaths,
 };
 
 describe('API path patterns (public URL surface)', () => {

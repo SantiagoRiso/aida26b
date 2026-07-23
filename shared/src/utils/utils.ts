@@ -77,6 +77,21 @@ export function getRoleCheckedColumns(tableKey: TableKey): Array<{ column: strin
     .map(([column, def]) => ({ column, role: def.referencesUserRole! }));
 }
 
+// FK columns pointing at another SSOT table, minus the role-checked ones (those are verified as
+// users by getRoleCheckedColumns). Lets the write path derive which references need a tenant check
+// from the descriptors, so a newly declared FK is covered without touching the generic engine.
+export function getForeignKeyColumns(
+  tableKey: TableKey,
+): Array<{ column: string; referencedTable: TableKey; valueField: string }> {
+  const out: Array<{ column: string; referencedTable: TableKey; valueField: string }> = [];
+  for (const [column, def] of Object.entries(tableOf(tableKey).columns)) {
+    const fk = def.foreignKey;
+    if (!fk || def.referencesUserRole != null || !isTableKey(fk.table)) continue;
+    out.push({ column, referencedTable: fk.table, valueField: fk.valueField });
+  }
+  return out;
+}
+
 // Column name every business-scoped table (and scope fragment) uses for its tenant owner.
 export const BUSINESS_ID_COLUMN = 'business_id';
 

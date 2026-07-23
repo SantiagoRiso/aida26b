@@ -213,6 +213,150 @@ describe('dark theme token coverage', () => {
 });
 
 /**
+ * FullCalendar paints from its own :root variables and ships light defaults for all of them — a
+ * white popover, white sticky scrollgrid seams, #ddd hairlines. Nothing in the app's own token
+ * system reaches those, so on the dark theme they render as light patches on a dark card until
+ * every one is mapped. The mapping is read back against FullCalendar's actual defaults, so a
+ * variable the library adds later shows up here as an unmapped colour rather than as a bug.
+ */
+describe('FullCalendar follows the theme', () => {
+  const sourceCss = readFileSync(join(__dirname, '../src/styles/main.css'), 'utf-8');
+
+  function blockAfter(css: string, selector: string, from = 0): string {
+    const start = css.indexOf(selector, from);
+    expect(start, `${selector} not found`).toBeGreaterThan(-1);
+    const open = css.indexOf('{', start);
+    return css.slice(open, css.indexOf('}', open));
+  }
+
+  /* Read from the installed package rather than a copy: a hand-maintained list of FullCalendar's
+     variables is exactly the drift this test exists to catch. */
+  const fullCalendarDefaults = (() => {
+    const path = join(__dirname, '../node_modules/@fullcalendar/core/internal-common.js');
+    const declarations = readFileSync(path, 'utf-8').match(/:root\{(--fc-[^}]*)\}/);
+    if (!declarations) {
+      throw new Error(`No :root --fc- defaults found in ${path}; FullCalendar's CSS moved.`);
+    }
+    return Object.fromEntries(
+      declarations[1]
+        .split(';')
+        .map((pair) => pair.split(/:(.*)/s).map((part) => part.trim()))
+        .filter((pair) => pair.length > 1 && pair[0].startsWith('--fc-')),
+    ) as Record<string, string>;
+  })();
+
+  // A colour-valued default: a hex, a functional colour, or a bare keyword (grey, red). The lengths
+  // and opacities FullCalendar keeps under the same prefix are none of those.
+  const colourVariables = Object.entries(fullCalendarDefaults)
+    .filter(([, value]) => /#|rgba?\(|hsla?\(/.test(value) || /^[a-z]+$/.test(value))
+    .map(([name]) => name);
+
+  // The single block that re-points them, which names both themes so it outranks the library's
+  // plain :root whatever order the stylesheets land in.
+  const mappingSelector = ":root[data-theme='light'],\n:root[data-theme='dark']";
+  const mapping = blockAfter(sourceCss, mappingSelector);
+
+  it('reads FullCalendar\'s own defaults', () => {
+    // A scan that found nothing would pass every assertion below for the wrong reason.
+    expect(fullCalendarDefaults['--fc-page-bg-color']).toBe('#fff');
+    expect(colourVariables.length).toBeGreaterThan(15);
+    expect(colourVariables).not.toContain('--fc-bg-event-opacity');
+  });
+
+  it('outranks the library defaults in both themes from one declaration', () => {
+    for (const theme of ['light', 'dark']) {
+      expect(mappingSelector).toContain(`[data-theme='${theme}']`);
+    }
+    // Light and dark are not listed separately: the values are tokens, so listing them twice would
+    // be two copies of one mapping free to drift.
+    expect(sourceCss.indexOf(mappingSelector)).toBe(sourceCss.lastIndexOf(mappingSelector));
+  });
+
+  it('maps every colour-valued FullCalendar variable', () => {
+    const unmapped = colourVariables.filter((name) => !new RegExp(`${name}\\s*:`).test(mapping));
+    expect(unmapped).toEqual([]);
+  });
+
+  it('maps them onto semantic tokens rather than a second palette', () => {
+    const literals = [...mapping.matchAll(/--fc-[a-z-]+:\s*([^;]+)/g)]
+      .filter(([, value]) => !value.includes('var(--color-'))
+      .map(([declaration]) => declaration.trim());
+    expect(literals).toEqual([]);
+  });
+
+  it('only references tokens that both themes declare', () => {
+    const light = blockAfter(sourceCss, '@theme');
+    const dark = blockAfter(sourceCss, ":root[data-theme='dark']");
+    const referenced = [...new Set([...mapping.matchAll(/var\((--color-[a-z0-9-]+)\)/g)].map((m) => m[1]))];
+    expect(referenced.length).toBeGreaterThan(5);
+
+    const missing = referenced.filter(
+      (token) => !new RegExp(`${token}\\s*:`).test(light) || !new RegExp(`${token}\\s*:`).test(dark),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  /*
+   * The month view's "+N más" popover paints --fc-page-bg-color while its text inherits the body
+   * step. Left on the library default that is white behind light-on-dark text — the pair has to be
+   * legible in whichever theme is stamped, which is what the mapping buys.
+   */
+  it('leaves the popover legible in both themes', () => {
+    const surface = mapping.match(/--fc-page-bg-color:\s*var\((--color-[a-z0-9-]+)\)/)?.[1];
+    expect(surface, '--fc-page-bg-color is not mapped to a token').toBeDefined();
+
+    const lum = (hex: string) =>
+      [1, 3, 5]
+        .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((acc, v, i) => acc + [0.2126, 0.7152, 0.0722][i] * v, 0);
+    const contrast = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const valueOf = (block: string, token: string) =>
+      block.match(new RegExp(`${token}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+
+    const failures: string[] = [];
+    for (const [theme, block] of [
+      ['light', blockAfter(sourceCss, '@theme')],
+      ['dark', blockAfter(sourceCss, ":root[data-theme='dark']")],
+    ] as const) {
+      const ratio = contrast(valueOf(block, surface!)!, valueOf(block, '--color-body')!);
+      if (ratio < 4.5) failures.push(`${theme}: popover text is ${ratio.toFixed(2)}:1`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  /*
+   * The calendar's own overlays (slot outlines, drop targets, occupancy washes, the sobreturno
+   * ghost) are drawn over the themed grid, so a literal colour there ignores the theme exactly the
+   * way the library defaults did. The only literals that belong are the marks drawn ON an event —
+   * the professional's identity colour is the same swatch in both themes, so white and black read
+   * against it either way.
+   */
+  it('draws its grid overlays from tokens, not from literals', () => {
+    const calendarCss = readFileSync(
+      join(__dirname, '../src/components/calendar/CalendarView.vue'),
+      'utf-8',
+    ).match(/<style[^>]*>([\s\S]*)<\/style>/)![1].replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const COLOUR_LITERAL = /rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}\b/g;
+    // Rules that decorate the event block itself: the badges, stripes and shadows read against the
+    // professional's fill, never against the page.
+    const ON_EVENT = /appt-|fc-virtual-occurrence/;
+
+    const offenders = calendarCss
+      .split('}')
+      .map((rule) => ({ selector: rule.slice(0, rule.indexOf('{')), body: rule.slice(rule.indexOf('{')) }))
+      .filter((rule) => !ON_EVENT.test(rule.selector))
+      .flatMap((rule) => (rule.body.match(COLOUR_LITERAL) ?? []).map((l) => `${rule.selector.trim()} → ${l}`));
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
  * The inverse guard: a colour utility written in a component with no token behind it.
  * Tailwind emits nothing for those, so the element silently falls back to the inherited
  * colour and looks plausible in review while being undesigned.

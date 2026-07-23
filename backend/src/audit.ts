@@ -14,10 +14,15 @@ export type AuditWriter = (
   override?: { actorId?: number | null; businessId?: number | null },
 ) => Promise<void>;
 
-// audit_events.business_id is NOT NULL. By default the business is derived from the actor's
-// session; callers may pass an explicit actor/business to record events with no session
-// (e.g. a failed login, resolved from the attempted account). The write is skipped only when
-// no business resolves. Best-effort: a failure never breaks the request.
+// By default the business is derived from the actor's session. An unauthenticated request with no
+// explicit scope is dropped rather than filed under a guess — this is the anti-DoS gate, since an
+// authenticated actor bounds the volume to a session while an anonymous one does not. An
+// authenticated actor whose own business is null is the super-admin: its scope is genuinely absent,
+// not unknown, so its event (including a denial) is recorded against no tenant rather than
+// discarded. Callers may instead pass an explicit actor/business to record events with no session
+// (e.g. a failed login, resolved from the attempted account); an explicit null business is a
+// deliberate "this belongs to no tenant" and is recorded as such. Best-effort: a failure never
+// breaks the request.
 export function createAuditWriter(pool: Pool): AuditWriter {
   return async function audit(req, eventType, outcome, details = {}, override = {}) {
     try {
@@ -33,8 +38,6 @@ export function createAuditWriter(pool: Pool): AuditWriter {
         if (actorId === null) return;
         businessId = await getUserBusinessId(pool, actorId);
       }
-
-      if (businessId === null) return;
 
       const entityType = typeof details.entity_type === 'string' ? details.entity_type : null;
       const entityId = typeof details.entity_id === 'number' ? details.entity_id : null;

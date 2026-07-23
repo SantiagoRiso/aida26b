@@ -18,6 +18,7 @@ import {
 import { getSelfProfile, updateSelfProfile } from '../db/users';
 import { AUTH_PATTERNS } from '../../../shared/src/ssot/api-paths';
 import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
+import { AuthThrottle, loginIdentityLimits, loginLimits, passwordChangeLimits } from '../auth-throttle';
 
 const EMAIL_RE = new RegExp(EMAIL_PATTERN);
 
@@ -27,18 +28,38 @@ const EMAIL_RE = new RegExp(EMAIL_PATTERN);
 const DUMMY_PASSWORD_SALT = '0'.repeat(32);
 const DUMMY_PASSWORD_HASH = '0'.repeat(128);
 
+// One shape for every throttled endpoint: no counts, no remaining budget, and identical for a
+// real and an invented username, so a 429 says only "this client has been failing", never
+// anything about the account it named.
+function tooManyAttempts(res: express.Response, retryAfterSeconds: number) {
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  return sendError(res, 429, 'too_many_attempts', 'Too many attempts', {
+    detail: { key: 'tooManyAttempts', params: { seconds: retryAfterSeconds } },
+  });
+}
+
 export function mountAuthRoutes(
   app: express.Application,
   pool: Pool,
-  deps: { audit: AuditWriter; requireAuth: RequestHandler },
+  deps: { audit: AuditWriter; requireAuth: RequestHandler; throttle?: AuthThrottle },
 ) {
   const { audit, requireAuth } = deps;
+  const throttle = deps.throttle ?? new AuthThrottle();
 
   app.post(AUTH_PATTERNS.login, guardRoute(async (req, res) => {
     const username =
       typeof req.body.username === 'string' ? req.body.username.trim() : '';
     const password =
       typeof req.body.password === 'string' ? req.body.password : '';
+
+    const client = req.ip ?? 'unknown';
+    const limits = loginLimits(client, username);
+    const verdict = throttle.check(limits);
+    if (verdict.blocked) {
+      // Deliberately unaudited: the failures that led here are already on the record, and an
+      // event per blocked attempt would hand an attacker an unbounded write into audit_events.
+      return tooManyAttempts(res, verdict.retryAfterSeconds);
+    }
 
     const row = await findUserForLogin(pool, username);
 
@@ -51,14 +72,17 @@ export function mountAuthRoutes(
     const ok = !!row && row.is_active === true && passwordOk;
 
     if (!ok) {
-      // Record failed attempts against a real account (resolved from the row); attempts on an
-      // unknown username have no business to attribute and are not audited.
+      throttle.recordFailure(limits);
+      // An attempt on a username nobody holds belongs to no tenant, so it is recorded with no
+      // business rather than dropped: the attempt on the system is the thing worth seeing.
       await audit(req, 'login_failed', 'failure', { username }, {
         actorId: row ? Number(row.id) : null,
         businessId: row?.business_id != null ? Number(row.business_id) : null,
       });
       return sendError(res, 401, 'invalid_credentials', 'Invalid credentials', { detail: { key: 'invalidCredentials' } });
     }
+
+    throttle.clear(loginIdentityLimits(client, username));
 
     const user = auth.publicUser(row);
     const token = auth.newSessionToken();
@@ -100,6 +124,10 @@ export function mountAuthRoutes(
     const newPassword = readPassword(req.body.new_password);
     const user = authenticatedUser(req);
 
+    const limits = passwordChangeLimits(user.id);
+    const verdict = throttle.check(limits);
+    if (verdict.blocked) return tooManyAttempts(res, verdict.retryAfterSeconds);
+
     if (!currentPassword || !newPassword) {
       return sendError(res, 400, 'invalid_request', 'Current password and a valid new password are required', { detail: { key: 'currentAndNewPasswordRequired' } });
     }
@@ -110,9 +138,12 @@ export function mountAuthRoutes(
       current !== null && (await auth.verifyPassword(currentPassword, current.password_salt, current.password_hash));
 
     if (!ok) {
+      throttle.recordFailure(limits);
       await audit(req, 'password_change_failed', 'failure');
       return sendError(res, 401, 'invalid_current_password', 'Invalid current password', { detail: { key: 'invalidCurrentPassword' } });
     }
+
+    throttle.clear(limits);
 
     // Reusing the current password defeats a forced reset, so reject it.
     const sameAsCurrent = await auth.verifyPassword(newPassword, current.password_salt, current.password_hash);

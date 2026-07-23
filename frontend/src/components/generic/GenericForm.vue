@@ -3,7 +3,7 @@ import { ref, computed, reactive } from 'vue';
 import { useLabel } from '@/composables/useLabel';
 import { i18n } from '@/i18n';
 import { validateFieldIssue, validateFullObject } from '@shared/validation/validate';
-import { fieldErrorMessage, fieldErrorMessages } from '@/i18n/api-errors';
+import { apiErrorMessage, fieldErrorMessage, fieldErrorMessages } from '@/i18n/api-errors';
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
@@ -54,6 +54,11 @@ for (const [key, col] of Object.entries(tableSpec.value.columns as Record<string
 const fieldErrors = reactive<Record<string, string>>({});
 const submitting = ref(false);
 
+// Colour alone can't convey the error state, and the message has to be announced with the field.
+const errorId = (field: string) => `${field}-error`;
+const describedBy = (field: string) => (fieldErrors[field] ? errorId(field) : undefined);
+const invalidFlag = (field: string) => (fieldErrors[field] ? 'true' : undefined);
+
 function onBlur(field: string) {
   const issue = validateFieldIssue(props.tableKey, field, values[field]);
   if (issue) {
@@ -96,7 +101,10 @@ async function onSubmit() {
           fieldErrors[f] = msg;
         }
       } else {
-        toast('error', 'genericError');
+        // No per-field message to place, but a top-level code (conflict, invalid_reference_role,
+        // operation_not_allowed, no_business…) usually has a translation — show it instead of the
+        // opaque generic toast, which the user could only respond to by retrying.
+        toast('error', apiErrorMessage(result, 'toast.genericError'));
       }
     }
   } finally {
@@ -124,6 +132,8 @@ async function onSubmit() {
         rows="3"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @blur="onBlur(field)"
       />
 
@@ -133,6 +143,8 @@ async function onSubmit() {
         :foreign-key="col.foreignKey"
         :model-value="(values[field] as string) || null"
         :placeholder="i18n.global.t('generic.selectPlaceholder')"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @update:model-value="values[field] = $event ?? ''"
         @blur="onBlur(field)"
       />
@@ -143,6 +155,8 @@ async function onSubmit() {
         v-model="values[field] as string"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @blur="onBlur(field)"
         @change="onBlur(field)"
       >
@@ -163,6 +177,8 @@ async function onSubmit() {
         v-model.number="values[field] as number"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @blur="onBlur(field)"
       />
 
@@ -173,6 +189,8 @@ async function onSubmit() {
         v-model="values[field] as string"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @blur="onBlur(field)"
       />
 
@@ -181,6 +199,8 @@ async function onSubmit() {
         :id="field"
         :model-value="(values[field] as string | null) ?? null"
         :invalid="!!fieldErrors[field]"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @update:model-value="values[field] = $event as ColumnValue"
         @blur="onBlur(field)"
       />
@@ -192,10 +212,12 @@ async function onSubmit() {
         v-model="values[field] as string"
         class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         :class="fieldErrors[field] ? 'border-destructive' : ''"
+        :aria-invalid="invalidFlag(field)"
+        :aria-describedby="describedBy(field)"
         @blur="onBlur(field)"
       />
 
-      <FieldError :message="fieldErrors[field]" />
+      <FieldError :id="errorId(field)" :message="fieldErrors[field]" />
     </div>
 
     <template v-if="mode === 'edit'">

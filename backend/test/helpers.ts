@@ -139,6 +139,48 @@ export function makeAppPool(): Pool {
   return new Pool({ ...envApp(), database: TEST_DB_NAME });
 }
 
+export const APP_ROLE = process.env.DB_USER ?? 'aida26_user';
+
+// Every grant assertion in the suite is vacuous when the app role is a superuser or owns the
+// migrated tables: both hold every privilege implicitly, so the check passes without proving
+// anything. Throw rather than skip — a skipped grant check reports green, and green is exactly
+// what lets a lost GRANT (or a lost withholding) ship unnoticed.
+export async function assertAppRoleIsLeastPrivilege(pool: Pool): Promise<void> {
+  const { rows } = await pool.query<{ rolsuper: boolean }>(
+    `SELECT rolsuper FROM pg_roles WHERE rolname = $1`,
+    [APP_ROLE],
+  );
+  if (rows.length === 0) {
+    throw new Error(
+      `App role '${APP_ROLE}' (DB_USER) does not exist. The grant assertions cannot run.`,
+    );
+  }
+  if (rows[0].rolsuper) {
+    throw new Error(
+      `App role '${APP_ROLE}' (DB_USER) is a SUPERUSER, so it bypasses every privilege check and ` +
+        `the grant assertions would pass without proving anything. Point DB_USER at the ` +
+        `least-privilege application role (a two-role setup, as created by database/bootstrap.sh), ` +
+        `distinct from POSTGRES_SUPERUSER and DB_OWNER_USER.`,
+    );
+  }
+
+  const { rows: owned } = await pool.query<{ table_name: string }>(
+    `SELECT schemaname || '.' || tablename AS table_name
+       FROM pg_tables
+      WHERE tableowner = $1 AND schemaname IN ('public', 'auth')
+      ORDER BY 1`,
+    [APP_ROLE],
+  );
+  if (owned.length > 0) {
+    throw new Error(
+      `App role '${APP_ROLE}' (DB_USER) owns migrated tables (${owned
+        .map((r) => r.table_name)
+        .join(', ')}), and a table owner holds every privilege implicitly. Migrations must run as ` +
+        `the schema-owner role (DB_OWNER_USER), never as the application role.`,
+    );
+  }
+}
+
 export function makeTempMigrationsDir(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrations-test-'));
   for (const [name, content] of Object.entries(files)) {

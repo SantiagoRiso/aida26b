@@ -90,6 +90,9 @@ defineExpose({
   box-shadow: none;
   border-radius: 8px !important;
   margin: 0 1.5px;
+  /* The move is pointer-driven (useCustomDrag). Without this a finger drag also scrolls the page,
+     the browser cancels the pointer stream, and the move can never be completed by touch. */
+  touch-action: none;
 }
 
 /* FC insets the foreground-event container 2.5% on the right (headroom for its overlap halo) but 2px
@@ -104,8 +107,8 @@ defineExpose({
 /* Permanent dotted outline for every real schedule slot inside a working block. Sits behind the
    appointments; makes the block's slot structure visible without cluttering the time axis. */
 :deep(.fc-slot-outline) {
-  background: rgba(37, 99, 235, 0.16) !important;
-  border: 1.5px dashed rgb(37, 99, 235);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent) !important;
+  border: 1.5px dashed var(--color-accent);
   border-radius: 8px;
   margin: 1.5px 3px;
   opacity: 1 !important;
@@ -121,10 +124,10 @@ defineExpose({
 /* Sobreturno hover preview: a translucent dashed block so it reads as a placement ghost, not a real
    turno. As a foreground event it shoves overlapping turnos aside (slotEventOverlap:false). */
 :deep(.fc-sobreturno-preview) {
-  background: rgba(37, 99, 235, 0.16) !important;
-  border: 1.5px dashed rgb(37, 99, 235) !important;
+  background: var(--color-accent-tint) !important;
+  border: 1.5px dashed var(--color-accent) !important;
   border-radius: 8px !important;
-  color: rgb(30, 58, 138) !important;
+  color: var(--color-accent-strong) !important;
   box-shadow: none !important;
 }
 
@@ -135,8 +138,8 @@ defineExpose({
 
 /* Valid drop target while dragging: a distinct dotted, rounded box per open slot. */
 :deep(.fc-slot-free) {
-  background: rgba(16, 185, 129, 0.12) !important;
-  border: 1.5px dashed rgb(5, 150, 105);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent) !important;
+  border: 1.5px dashed var(--color-success);
   border-radius: 8px;
   margin: 1.5px 3px;
   opacity: 1 !important;
@@ -144,8 +147,8 @@ defineExpose({
 
 /* The slot the drag is currently over — brighter than the open-slot boxes. */
 :deep(.fc-slot-target) {
-  background: rgba(5, 150, 105, 0.28) !important;
-  border: 2px solid rgb(5, 150, 105);
+  background: color-mix(in srgb, var(--color-success) 28%, transparent) !important;
+  border: 2px solid var(--color-success);
   border-radius: 8px;
   margin: 1.5px 3px;
   opacity: 1 !important;
@@ -156,24 +159,24 @@ defineExpose({
 }
 
 :deep(.fc-drag-target-invalid) {
-  background: rgba(239, 68, 68, 0.16) !important;
-  border-color: rgb(220, 38, 38) !important;
+  background: color-mix(in srgb, var(--color-destructive) 16%, transparent) !important;
+  border-color: var(--color-destructive) !important;
 }
 
 /* Resource availability overlay (filtering by a resource): free windows tinted green,
    closed/blocked time hatched grey. Complementary, so they never overlap. */
 :deep(.fc-res-free) {
-  background: rgba(16, 185, 129, 0.10) !important;
+  background: color-mix(in srgb, var(--color-success) 12%, transparent) !important;
   opacity: 1 !important;
 }
 
 :deep(.fc-res-closed) {
   background: repeating-linear-gradient(
     45deg,
-    rgba(71, 85, 105, 0.11),
-    rgba(71, 85, 105, 0.11) 6px,
-    rgba(71, 85, 105, 0.03) 6px,
-    rgba(71, 85, 105, 0.03) 12px
+    color-mix(in srgb, var(--color-neutral) 22%, transparent),
+    color-mix(in srgb, var(--color-neutral) 22%, transparent) 6px,
+    color-mix(in srgb, var(--color-neutral) 6%, transparent) 6px,
+    color-mix(in srgb, var(--color-neutral) 6%, transparent) 12px
   ) !important;
   opacity: 1 !important;
 }
@@ -182,41 +185,41 @@ defineExpose({
    Blue is reserved for bookable/interactive slots (outline, hover, sobreturno ghost), so occupied
    stays off-blue. Off-hours is the grey hatch above — a pattern, not a flat fill. */
 :deep(.fc-slot-occupied) {
-  background: rgba(100, 116, 139, 0.2) !important;
+  background: color-mix(in srgb, var(--color-neutral) 24%, transparent) !important;
   opacity: 1 !important;
 }
 
 :deep(.fc-slot-requested-bg) {
-  background: rgba(234, 179, 8, 0.26) !important;
+  background: color-mix(in srgb, var(--color-warning) 26%, transparent) !important;
   opacity: 1 !important;
 }
 
 /* Past time — a flat neutral wash (no stripes) so it reads as de-emphasized/unbookable. */
 :deep(.fc-slot-past) {
-  background: rgba(100, 116, 139, 0.18) !important;
+  background: color-mix(in srgb, var(--color-neutral) 20%, transparent) !important;
   opacity: 1 !important;
 }
 
 /* Schedule exceptions (days off / partial blocks / extra-hours) — distinct from the plain
    fc-res-closed availability hatch so staff can tell "why" apart from ordinary non-working time. */
 :deep(.fc-exception-off) {
-  background: rgba(220, 38, 38, 0.14) !important;
+  background: color-mix(in srgb, var(--color-destructive) 16%, transparent) !important;
   opacity: 1 !important;
 }
 
 :deep(.fc-exception-block) {
   background: repeating-linear-gradient(
     45deg,
-    rgba(220, 38, 38, 0.20),
-    rgba(220, 38, 38, 0.20) 6px,
-    rgba(220, 38, 38, 0.06) 6px,
-    rgba(220, 38, 38, 0.06) 12px
+    color-mix(in srgb, var(--color-destructive) 22%, transparent),
+    color-mix(in srgb, var(--color-destructive) 22%, transparent) 6px,
+    color-mix(in srgb, var(--color-destructive) 7%, transparent) 6px,
+    color-mix(in srgb, var(--color-destructive) 7%, transparent) 12px
   ) !important;
   opacity: 1 !important;
 }
 
 :deep(.fc-exception-extra) {
-  background: rgba(37, 99, 235, 0.12) !important;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent) !important;
   opacity: 1 !important;
 }
 
@@ -225,10 +228,10 @@ defineExpose({
 :deep(.fc-closure) {
   background: repeating-linear-gradient(
     -45deg,
-    rgba(220, 38, 38, 0.28),
-    rgba(220, 38, 38, 0.28) 8px,
-    rgba(220, 38, 38, 0.14) 8px,
-    rgba(220, 38, 38, 0.14) 16px
+    color-mix(in srgb, var(--color-destructive) 30%, transparent),
+    color-mix(in srgb, var(--color-destructive) 30%, transparent) 8px,
+    color-mix(in srgb, var(--color-destructive) 15%, transparent) 8px,
+    color-mix(in srgb, var(--color-destructive) 15%, transparent) 16px
   ) !important;
   opacity: 1 !important;
 }
@@ -248,20 +251,20 @@ defineExpose({
 /* Week/day: a single slot cell under the cursor (driven by pointer geometry, not CSS :hover,
    since the timegrid has no per-cell element). Month: the whole day cell, which is one cell. */
 :deep(.fc-slot-hover) {
-  background: rgba(37, 99, 235, 0.16) !important;
-  border: 1.5px dashed rgb(37, 99, 235);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent) !important;
+  border: 1.5px dashed var(--color-accent);
   border-radius: 8px;
   margin: 1.5px 3px;
   opacity: 1 !important;
 }
 
 :deep(.fc-daygrid-day:hover) {
-  background: rgba(37, 99, 235, 0.13);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
 }
 
 /* Month days the selected professional has no free slots on: dimmed and not actionable. */
 :deep(.fc-day-unavailable) {
-  background: rgba(100, 116, 139, 0.12);
+  background: color-mix(in srgb, var(--color-neutral) 14%, transparent);
 }
 
 :deep(.fc-day-unavailable .fc-daygrid-day-number) {
@@ -273,10 +276,15 @@ defineExpose({
 }
 
 :deep(.fc-day-unavailable:hover) {
-  background: rgba(100, 116, 139, 0.14);
+  background: color-mix(in srgb, var(--color-neutral) 16%, transparent);
 }
 
 /* The flat, in-place drag preview (createDragGhost) — its look is set inline; nothing to add here. */
+
+/* Everything below decorates the appointment block itself, which is filled with the professional's
+   identity colour — the same saturated swatch in either theme. The white marks, stripes and shadows
+   here are read against that fill, not against the page, so they stay literal rather than tokenised;
+   a token would flip with the theme and lose its contrast on the fill. */
 
 /* Three occupancy states must read at a glance:
    - not-working time      → the grey diagonal hatch (fc-res-closed): a low-contrast background wash.
@@ -325,7 +333,7 @@ defineExpose({
    time/title (top-left) and the sobreturno badge (bottom-right) — a turno can carry both. Computed;
    clears when the time off goes. */
 :deep(.appt-in-conflict) {
-  box-shadow: 0 0 0 2px rgb(220, 38, 38) !important;
+  box-shadow: 0 0 0 2px var(--color-destructive) !important;
 }
 
 :deep(.appt-in-conflict)::before {
@@ -339,8 +347,8 @@ defineExpose({
   text-align: center;
   font-size: 10px;
   font-weight: 700;
-  color: #fff;
-  background: rgb(220, 38, 38);
+  color: var(--color-inverted);
+  background: var(--color-destructive);
   border-radius: 9999px;
   pointer-events: none;
   z-index: 2;

@@ -62,6 +62,7 @@ jobs:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: |
+            package-lock.json
             backend/package-lock.json
             frontend/package-lock.json
 
@@ -70,6 +71,10 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
+
+      # Root package holds only the ESLint toolchain (the lint step below runs `eslint .` from here).
+      - name: Install root dependencies
+        run: npm ci
 
       # The postgres image runs this from /docker-entrypoint-initdb.d on a fresh volume in the local
       # stack; a service container gets no such mount, so run the same script by hand. Reusing it
@@ -97,7 +102,14 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: frontend
 
-      # vite build does not type-check, so the compiler only ever runs here.
+      # ESLint over the whole tree (src, test, and e2e specs). A non-zero exit — any error-level
+      # rule, including the app-wide `unknown` ban and lint-suppression hygiene — fails the build.
+      - name: Lint
+        run: npm run lint
+
+      # vite build does not type-check, so the compiler only ever runs here. `npm run typecheck`
+      # now also type-checks the frontend e2e specs (tsconfig.playwright.json) and every file under
+      # frontend/test (glob, not a hand-maintained list).
       - name: Type-check
         run: npm run typecheck
 
@@ -113,9 +125,13 @@ jobs:
         run: npm run test:coverage --prefix backend
 
       # Includes migration-seed-fresh.test.ts, which exercises migrations against a fresh schema.
-      # Plain run rather than coverage: the v8 report merge was seen hanging on this suite.
-      - name: Backend DB tests
-        run: npm run test:db --prefix backend
+      # Runs WITH coverage so the routes/db/services thresholds in vitest.db.config.mts (statements
+      # 78 / branches 65 / functions 85 / lines 80) actually gate — the suite's only ambitious
+      # thresholds, dead config until now because CI ran the plain suite. An earlier note reported
+      # the v8 report/merge hanging here; it did not reproduce against real Postgres (the full suite
+      # completed and wrote its report in ~150s), so coverage is enforced rather than skipped.
+      - name: Backend DB tests (coverage — gates the routes/db/services thresholds)
+        run: npm run test:db:coverage --prefix backend
 
       - name: Frontend unit tests
         run: npm run test:coverage --prefix frontend
@@ -138,7 +154,8 @@ jobs:
           echo "Server did not become ready in 30s."
           exit 1
 
-      # Full E2E suite — 38 spec files / 130 tests, workers:1 (serial, shared seeded DB).
+      # Full E2E suite — 40 spec files / 148 tests (desktop + mobile projects), workers:1 (serial,
+      # shared seeded DB).
       - name: Frontend E2E tests
         run: npm run test:e2e --prefix frontend
         env:

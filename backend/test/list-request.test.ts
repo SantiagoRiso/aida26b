@@ -11,7 +11,12 @@ import {
   isReservedListParam,
   INCLUDE_UNRELATED_PARAM,
   INCLUDE_UNRELATED_VALUE,
+  encodeFilterSet,
+  parseFilterSet,
+  filterColumnKind,
+  acceptsFilterSet,
 } from '../../shared/src/ssot/list-protocol';
+import { tableOf, getPkFields } from '../../shared/src/utils/utils';
 
 describe('list-protocol helpers', () => {
   test('filterParam and stripFilterPrefix are inverses', () => {
@@ -25,6 +30,36 @@ describe('list-protocol helpers', () => {
     }
     expect(isReservedListParam('id')).toBe(false);
     expect(isReservedListParam('filter_name')).toBe(false);
+  });
+});
+
+describe('the set grammar', () => {
+  test('encoding and parsing are inverses, blanks and repeats dropped', () => {
+    expect(parseFilterSet(encodeFilterSet(['7', '9']))).toEqual(['7', '9']);
+    expect(parseFilterSet('7||9| ')).toEqual(['7', '9']);
+    expect(parseFilterSet('7|7')).toEqual(['7']);
+    expect(parseFilterSet('')).toEqual([]);
+  });
+
+  test('only identity columns read a value as a set', () => {
+    const kindOf = (table: 'clients' | 'sessions' | 'audit_events', field: string) =>
+      filterColumnKind(tableOf(table).columns[field], getPkFields(table).includes(field));
+
+    expect(kindOf('clients', 'id')).toBe('identity');
+    expect(kindOf('sessions', 'user_id')).toBe('identity');
+    expect(kindOf('audit_events', 'outcome')).toBe('identity');
+    expect(kindOf('clients', 'display_name')).toBe('text');
+    expect(kindOf('sessions', 'expires_at')).toBe('date');
+
+    expect(acceptsFilterSet('identity')).toBe(true);
+    expect(acceptsFilterSet('text')).toBe(false);
+    expect(acceptsFilterSet('number')).toBe(false);
+    expect(acceptsFilterSet('date')).toBe(false);
+    expect(acceptsFilterSet('boolean')).toBe(false);
+  });
+
+  test('the set separator is not the one the range grammar already owns', () => {
+    expect(parseFilterSet('10,60')).toEqual(['10,60']);
   });
 });
 
@@ -132,6 +167,27 @@ describe('SQL injection surface is closed by construction, not convention', () =
     expect(dataValues).toContain(`%${payload}%`);
   });
 
+  test('every member of a set is a bind parameter, not spliced into the IN list', () => {
+    const payload = "1); DROP TABLE clients; --";
+    const spec = parseListRequest({ filter_id: encodeFilterSet(['7', payload]) });
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+
+    expect(dataQuery).not.toContain('DROP TABLE');
+    expect(dataQuery).not.toContain(payload);
+    expect(dataQuery).toMatch(/"id" IN \(\$1, \$2\)/);
+    expect(dataValues.slice(0, 2)).toEqual(['7', payload]);
+  });
+
+  test('a set naming an unregistered column is dropped like any other unknown field', () => {
+    const hostileField = `id"); DROP TABLE clients; --`;
+    const spec = parseListRequest({ [filterParam(hostileField)]: encodeFilterSet(['1', '2']) });
+    const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
+
+    expect(dataQuery).not.toContain('DROP TABLE');
+    expect(dataQuery).not.toContain(hostileField);
+    expect(dataValues).toEqual([LIST_DEFAULT_LIMIT, 0]);
+  });
+
   test('a hostile sort value is rejected by the allowlist, not interpolated into ORDER BY', () => {
     const spec = parseListRequest({ sort: 'id; DROP TABLE clients' });
     const { dataQuery } = buildListStatement('clients', spec, noScope);
@@ -161,7 +217,9 @@ describe('SQL injection surface is closed by construction, not convention', () =
     const spec = parseListRequest({ filter_notes: 'anything' });
     const { dataQuery, dataValues } = buildListStatement('clients', spec, noScope);
 
-    expect(dataQuery).not.toContain('"notes"');
+    // `notes` is a declared column so it appears in the projection; what must never happen is it
+    // becoming a predicate.
+    expect(dataQuery).not.toMatch(/"notes"\s*(::text)?\s*(ILIKE|IS|[<>=])/);
     expect(dataQuery).toMatch(/\) AS base\s*\n\s*ORDER BY/);
     expect(dataValues).toEqual([LIST_DEFAULT_LIMIT, 0]);
   });

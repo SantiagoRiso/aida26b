@@ -5,9 +5,13 @@ import {
   getProfessionalScheduleOwnerFk,
   getResourceScheduleOwnerFk,
   getRoleCheckedColumns,
+  getForeignKeyColumns,
+  getEntityName,
   isTableKey,
+  BUSINESS_ID_COLUMN,
 } from '../../../shared/src/utils/utils';
 import type { TableKey } from '../../../shared/src/ssot/derived';
+import { queryOne } from '../db/core';
 import type { Queryable, SqlParam } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
@@ -197,10 +201,41 @@ export type ReferenceCheckResult =
   | { ok: true }
   | { ok: false; status: number; code: string; message: string; fields: Record<string, string> };
 
-// Verify FK columns with a declared referencesUserRole point to an active user of the right role,
-// and that every such reference shares one business so a row can never mix tenants (enforced even
-// for super-admins). Replaces the removed composite-FK DB constraint; shared by create and update
-// so the tenant-integrity rule lives in exactly one place.
+// A referenced table is tenant-scoped when its own descriptor says how it reaches a business:
+// directly (businessScoped) or through the parents its businessJoin names.
+function tenantOwnerQuery(table: TableKey, valueField: string): { text: string; discriminator?: string } | null {
+  const meta = tableOf(table);
+  const from = getSqlReadTable(table);
+  const disc = meta.roleDiscriminator;
+  const discSql = disc ? ` AND t."${disc.column}" = $2` : '';
+  const where = `WHERE t."${valueField}" = $1${discSql}`;
+
+  if (meta.businessScoped) {
+    return {
+      text: `SELECT t."${BUSINESS_ID_COLUMN}" AS business_id FROM ${from} t ${where}`,
+      discriminator: disc?.value,
+    };
+  }
+
+  const paths = meta.businessJoin?.paths ?? [];
+  if (paths.length === 0) return null;
+
+  const joins = paths
+    .map((p, i) => `LEFT JOIN ${p.parentTable} p${i} ON p${i}."${p.parentPk}" = t."${p.localFk}"`)
+    .join(' ');
+  const owner = paths.map((_, i) => `p${i}."${BUSINESS_ID_COLUMN}"`).join(', ');
+  return {
+    text: `SELECT COALESCE(${owner}) AS business_id FROM ${from} t ${joins} ${where}`,
+    discriminator: disc?.value,
+  };
+}
+
+// Every reference a written row carries must resolve inside one tenant — the caller's, and the same
+// one for all of them, so a row can never mix businesses (enforced even for super-admins).
+// Role-checked FKs additionally require an active user of the declared role; the rest are checked
+// against whatever tenant their own descriptor derives, so a new FK is covered by declaring it.
+// Replaces the removed composite-FK DB constraint; shared by create and update so the
+// tenant-integrity rule lives in exactly one place.
 export async function assertRoleCheckedReferences(
   db: Queryable,
   table: TableKey,
@@ -208,17 +243,17 @@ export async function assertRoleCheckedReferences(
   user: AuthUser,
 ): Promise<ReferenceCheckResult> {
   let referencedBusiness: number | undefined;
+
+  const outOfTenant = (business: string | null | undefined): boolean =>
+    business == null ||
+    (user.business_id != null && Number(business) !== user.business_id) ||
+    (referencedBusiness !== undefined && Number(business) !== referencedBusiness);
+
   for (const { column, role } of getRoleCheckedColumns(table)) {
     const refId = data[column];
     if (refId == null) continue;
     const check = await findRoleUserBusiness(db, refId, role);
-    const refBusiness = check?.business_id;
-    const invalidRef =
-      !check ||
-      refBusiness == null ||
-      (user.business_id != null && Number(refBusiness) !== user.business_id) ||
-      (referencedBusiness !== undefined && Number(refBusiness) !== referencedBusiness);
-    if (invalidRef) {
+    if (!check || outOfTenant(check.business_id)) {
       return {
         ok: false,
         status: 422,
@@ -227,7 +262,31 @@ export async function assertRoleCheckedReferences(
         fields: { [column]: `must be an active ${role}` },
       };
     }
-    referencedBusiness = Number(refBusiness);
+    referencedBusiness = Number(check.business_id);
   }
+
+  for (const { column, referencedTable, valueField } of getForeignKeyColumns(table)) {
+    const refId = data[column];
+    if (refId == null) continue;
+    // A table that derives no business of its own (e.g. businesses) is not tenant-scoped: nothing
+    // to compare, and the FK constraint still guards existence.
+    const q = tenantOwnerQuery(referencedTable, valueField);
+    if (!q) continue;
+    const params: SqlParam[] = q.discriminator === undefined ? [refId] : [refId, q.discriminator];
+    const check = await queryOne<{ business_id: string | null }>(db, q.text, params);
+    if (!check || outOfTenant(check.business_id)) {
+      // Unknown and out-of-tenant answer alike so a probe can't map another business's ids.
+      const entity = getEntityName(referencedTable);
+      return {
+        ok: false,
+        status: 404,
+        code: 'not_found',
+        message: `${entity} not found in this business`,
+        fields: { [column]: 'not found in this business' },
+      };
+    }
+    referencedBusiness = Number(check.business_id);
+  }
+
   return { ok: true };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount, flushPromises } from '@vue/test-utils';
+import { mount } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory } from 'vue-router';
@@ -69,48 +69,54 @@ describe('BusinessView settings form', () => {
     });
   });
 
+  // Wait for the getSettings prefill to land rather than a fixed tick count — the page mounts several
+  // async sections, so under load the settings form settles after an unpredictable number of ticks.
+  async function waitForPrefill(wrapper: ReturnType<typeof mountAsAdmin>): Promise<void> {
+    await vi.waitFor(() => {
+      expect((wrapper.get('#biz-min-days').element as HTMLInputElement).value).toBe('1');
+    });
+  }
+
   it('prefills from getSettings and saves all three fields', async () => {
     const wrapper = mountAsAdmin();
-    await flushPromises();
-
-    const min = wrapper.get('#biz-min-days').element as HTMLInputElement;
-    expect(min.value).toBe('1');
+    await waitForPrefill(wrapper);
 
     await wrapper.get('#biz-max-days').setValue('45');
     await wrapper.get('#biz-settings-save').trigger('click');
-    await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(5, {
-      cancellation_cutoff_hours: 24,
-      min_booking_days: 1,
-      max_booking_days: 45,
+    await vi.waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith(5, {
+        cancellation_cutoff_hours: 24,
+        min_booking_days: 1,
+        max_booking_days: 45,
+      });
     });
   });
 
   it('clears the cap when max is emptied', async () => {
     const wrapper = mountAsAdmin();
-    await flushPromises();
+    await waitForPrefill(wrapper);
 
     await wrapper.get('#biz-max-days').setValue('');
     await wrapper.get('#biz-settings-save').trigger('click');
-    await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(5, {
-      cancellation_cutoff_hours: 24,
-      min_booking_days: 1,
-      max_booking_days: null,
+    await vi.waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith(5, {
+        cancellation_cutoff_hours: 24,
+        min_booking_days: 1,
+        max_booking_days: null,
+      });
     });
   });
 
   it('blocks save and shows an error when max < min', async () => {
     const wrapper = mountAsAdmin();
-    await flushPromises();
+    await waitForPrefill(wrapper);
     await wrapper.get('#biz-min-days').setValue('10');
     await wrapper.get('#biz-max-days').setValue('5');
     await wrapper.get('#biz-settings-save').trigger('click');
-    await flushPromises();
 
+    await vi.waitFor(() => expect(wrapper.text()).toContain('mayor o igual'));
     expect(updateSettings).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('mayor o igual');
   });
 });

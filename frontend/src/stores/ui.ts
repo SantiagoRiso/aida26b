@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { i18n } from '@/i18n';
-import { readStoredLanguage, persistLanguage } from '@/i18n/language';
+import { readStoredLanguage, persistLanguage, applyLanguage } from '@/i18n/language';
 import { readStoredTheme, persistTheme, applyTheme } from '@/styles/theme';
 import type { Theme } from '@/styles/theme';
 import type { Language } from '@shared/types/languages';
@@ -24,8 +24,10 @@ export const useUiStore = defineStore('ui', {
     setLanguage(lang: Language) {
       this.language = lang;
       persistLanguage(lang);
-      // Keep vue-i18n in lockstep — ui store is the single source of language truth.
+      // Keep vue-i18n and the document in lockstep — ui store is the single source of language
+      // truth, and <html lang> is what assistive tech reads to pronounce the content.
       i18n.global.locale.value = lang;
+      applyLanguage(lang);
     },
     setTheme(theme: Theme) {
       this.theme = theme;

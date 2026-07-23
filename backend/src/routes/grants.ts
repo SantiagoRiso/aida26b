@@ -6,6 +6,7 @@ import { guardRoute } from '../helpers';
 import { authenticatedUser } from '../session';
 import type { AuditWriter } from '../audit';
 import { requireBusinessContext, belongsToBusiness } from './business-context';
+import { adminTenantScope, resolveTargetTenant } from './tenant-scope';
 import { findUser } from '../db/users';
 import {
   insertCalendarGrant,
@@ -31,9 +32,10 @@ export function mountGrantRoutes(
       return sendError(res, 403, 'forbidden', 'Insufficient role', { detail: { key: 'insufficientRole' } });
     }
 
-    // Grants are tenant-bound; a super-admin (null business) has no business context.
-    const businessId = requireBusinessContext(req, res);
-    if (businessId == null) return;
+    // The professional being granted names the tenant: a super-admin acts on whatever business owns
+    // that professional; a tenant Admin/Professional only on their own.
+    const scope = adminTenantScope(req, res);
+    if (scope == null) return;
 
     const professionalUserId = req.body.professional_user_id;
     const granteeUserId = req.body.grantee_user_id;
@@ -48,10 +50,12 @@ export function mountGrantRoutes(
     }
 
     const pro = await findUser(pool, { id: professionalUserId, role: 'Professional', activeOnly: true });
-    if (!belongsToBusiness(pro, businessId)) {
+    const businessId = resolveTargetTenant(scope, pro);
+    if (businessId == null) {
       return sendError(res, 404, 'not_found', 'Professional not found in this business', { detail: { key: 'professionalNotFound' } });
     }
 
+    // The grantee must live in the professional's tenant, so a grant never bridges two businesses.
     const grantee = await findUser(pool, { id: granteeUserId, activeOnly: true });
     if (!belongsToBusiness(grantee, businessId)) {
       return sendError(res, 422, 'invalid_request', 'Grantee not found in this business', { detail: { key: 'granteeNotFound' } });
@@ -69,7 +73,7 @@ export function mountGrantRoutes(
       entity_id: Number(grant.id),
       professional_user_id: professionalUserId,
       grantee_user_id: granteeUserId,
-    });
+    }, { businessId });
 
     return sendData(res, grant, 201);
   }));
@@ -83,9 +87,10 @@ export function mountGrantRoutes(
       return sendError(res, 403, 'forbidden', 'Insufficient role', { detail: { key: 'insufficientRole' } });
     }
 
-    // Grants are tenant-bound; a super-admin (null business) has no business context.
-    const businessId = requireBusinessContext(req, res);
-    if (businessId == null) return;
+    // The grant's owning professional names the tenant: a super-admin revokes in whatever business
+    // owns it; a tenant Admin/Professional only in their own.
+    const scope = adminTenantScope(req, res);
+    if (scope == null) return;
 
     const grantId = Number(req.params.id);
     if (!Number.isInteger(grantId) || grantId <= 0) {
@@ -93,7 +98,8 @@ export function mountGrantRoutes(
     }
 
     const grant = await findGrantWithBusiness(pool, grantId);
-    if (!belongsToBusiness(grant, businessId)) {
+    const businessId = resolveTargetTenant(scope, grant);
+    if (businessId == null || grant == null) {
       return sendError(res, 404, 'not_found', 'Grant not found', { detail: { key: 'grantNotFound' } });
     }
 
@@ -108,7 +114,7 @@ export function mountGrantRoutes(
       entity_id: grantId,
       professional_user_id: grant.professional_user_id,
       grantee_user_id: grant.grantee_user_id,
-    });
+    }, { businessId });
 
     return sendData(res, { id: grant.id, revoked: true });
   }));

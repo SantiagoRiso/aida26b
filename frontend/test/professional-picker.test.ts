@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
 import { listRows } from '@/api/crud';
+import { listRowsFrom } from './helpers/api-fixtures';
 import ProfessionalPicker from '@/components/schedule/ProfessionalPicker.vue';
 
 vi.mock('@/api/crud', () => ({ listRows: vi.fn() }));
@@ -21,10 +22,12 @@ describe('ProfessionalPicker', () => {
   beforeEach(() => setActivePinia(createPinia()));
 
   it('renders a dropdown and does not auto-select when several professionals are available', async () => {
-    vi.mocked(listRows).mockResolvedValue({
-      ok: true,
-      data: [{ id: '1', display_name: 'Dr. Ana' }, { id: '2', display_name: 'Dr. Bruno' }],
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({
+      professionals: [
+        { id: '1', display_name: 'Dr. Ana', bio: null },
+        { id: '2', display_name: 'Dr. Bruno', bio: null },
+      ],
+    }));
     const wrapper = mountPicker();
     await flushPromises();
 
@@ -34,10 +37,9 @@ describe('ProfessionalPicker', () => {
   });
 
   it('collapses a single professional to a label and auto-selects it (as a number)', async () => {
-    vi.mocked(listRows).mockResolvedValue({
-      ok: true,
-      data: [{ id: '3', display_name: 'Dra. Marge Bouvier' }],
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({
+      professionals: [{ id: '3', display_name: 'Dra. Marge Bouvier', bio: null }],
+    }));
     const wrapper = mountPicker();
     await flushPromises();
 
@@ -57,10 +59,12 @@ describe('ProfessionalPicker (allowAll filter mode)', () => {
   beforeEach(() => setActivePinia(createPinia()));
 
   it('prepends an "all" option and starts unfiltered when several professionals exist', async () => {
-    vi.mocked(listRows).mockResolvedValue({
-      ok: true,
-      data: [{ id: '3', display_name: 'Dra. Marge' }, { id: '4', display_name: 'Dr. Ned' }],
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({
+      professionals: [
+        { id: '3', display_name: 'Dra. Marge', bio: null },
+        { id: '4', display_name: 'Dr. Ned', bio: null },
+      ],
+    }));
     const wrapper = mountAllPicker();
     await flushPromises();
 
@@ -73,10 +77,9 @@ describe('ProfessionalPicker (allowAll filter mode)', () => {
   });
 
   it('hides itself when a single professional is in scope (filtering is meaningless)', async () => {
-    vi.mocked(listRows).mockResolvedValue({
-      ok: true,
-      data: [{ id: '3', display_name: 'Dra. Marge' }],
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({
+      professionals: [{ id: '3', display_name: 'Dra. Marge', bio: null }],
+    }));
     const wrapper = mountAllPicker();
     await flushPromises();
 
@@ -85,10 +88,12 @@ describe('ProfessionalPicker (allowAll filter mode)', () => {
   });
 
   it('emits the numeric id when a professional is picked and null for "all"', async () => {
-    vi.mocked(listRows).mockResolvedValue({
-      ok: true,
-      data: [{ id: '3', display_name: 'Dra. Marge' }, { id: '4', display_name: 'Dr. Ned' }],
-    });
+    vi.mocked(listRows).mockImplementation(listRowsFrom({
+      professionals: [
+        { id: '3', display_name: 'Dra. Marge', bio: null },
+        { id: '4', display_name: 'Dr. Ned', bio: null },
+      ],
+    }));
     const wrapper = mountAllPicker();
     await flushPromises();
 

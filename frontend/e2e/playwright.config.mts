@@ -28,8 +28,10 @@ export default defineConfig({
   // concurrently makes a different spec fail each run. Set E2E_WORKERS to parallelise anyway.
   workers: Number(process.env.E2E_WORKERS ?? 1),
   fullyParallel: false,
-  // CI-only: a flaky interleave gets one automatic re-run before it's reported as a real failure.
-  // Local runs stay retry-free so a genuine bug fails immediately instead of masking on rerun.
+  // CI-only: a flaky interleave gets up to two automatic re-runs before it's reported as a real
+  // failure. Local runs stay retry-free so a genuine bug fails immediately instead of masking on
+  // rerun. Specs where a retry could mask a failure (e.g. forced-password-change, which mutates a
+  // one-way seed precondition) opt out per-describe with test.describe.configure({ retries: 0 }).
   retries: isCI ? 2 : 0,
   reporter: [
     ['list'],
@@ -50,6 +52,9 @@ export default defineConfig({
   // database and the run is serial, so re-running all ~40 files at 390px would roughly double the
   // wall clock to re-assert behaviour that has nothing to do with width. The shell, its drawer and
   // the axe audit are the parts that genuinely differ, so those are what the phone project covers.
+  // The axe spec applies the same asymmetry internally: it audits every subject at desktop width
+  // and re-runs only the width-sensitive ones here, in both themes (contrast lives in the palette,
+  // so a light-only audit would never see half of it).
   projects: [
     {
       name: 'desktop',
@@ -78,7 +83,7 @@ export default defineConfig({
           'npm run build --prefix backend',
           'npm run migrate --prefix backend',
           'npm run seed:demo --prefix backend',
-          'node backend/dist/server.js',
+          'node backend/dist/backend/src/server.js',
         ].join(' && '),
         url: 'http://localhost:3000/health',
         reuseExistingServer: true,

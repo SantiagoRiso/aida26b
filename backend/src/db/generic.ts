@@ -1,6 +1,11 @@
-import type { ColumnDef } from '../../../shared/src/types/types';
+import type { ColumnDef, SoftDeletePolicy } from '../../../shared/src/types/types';
 import type { TableKey } from '../../../shared/src/ssot/derived';
 import type { ListRequestSpec } from '../../../shared/src/ssot/list-protocol';
+import {
+  filterColumnKind,
+  parseFilterSet,
+  LIST_MAX_FILTER_SET,
+} from '../../../shared/src/ssot/list-protocol';
 import type { SqlParam } from './core';
 import {
   getSoftDeletePolicy,
@@ -9,9 +14,27 @@ import {
   getSortableColumns,
   getReferencedRelations,
   getDerivableFields,
+  tableOf,
   isTableKey,
 } from '../../../shared/src/utils/utils';
 import { buildScopeConditions, type ScopeConditionsInput } from './scope';
+import { dateBoundConditions } from './date-bounds';
+import { DATE_RE } from '../time';
+
+// A filter value that can't be read as its column's type narrows to nothing. Widening back to the
+// whole table would hand the caller a page that silently ignores the constraint they asked for.
+const NEVER_MATCHES = '1 = 0';
+
+// `%` and `_` are LIKE wildcards: unescaped, a search for either matches every row.
+const LIKE_ESCAPE = '\\';
+
+function escapeLikeValue(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `${LIKE_ESCAPE}${char}`);
+}
+
+function isDateFilterValue(value: string): boolean {
+  return DATE_RE.test(value) || !Number.isNaN(Date.parse(value));
+}
 
 export function softDeleteClause(table: TableKey): string {
   const policy = getSoftDeletePolicy(table);
@@ -41,8 +64,10 @@ export type ListScope = ScopeConditionsInput & { sqlTable: string };
 
 function buildListQueryInternal(
   baseQuery: string,
+  projection: string,
   spec: ListRequestSpec,
   filterConfig: Record<string, ColumnDef>,
+  pkFields: string[],
   defaultSort: string | string[],
   sortableColumns: string[],
   // Pre-built scope conditions (with $N starting at 1) and their values.
@@ -62,22 +87,88 @@ function buildListQueryInternal(
       continue;
     }
 
+    const kind = filterColumnKind(config, pkFields.includes(fieldName));
+
     for (const { negated, value: actualVal } of filterValues) {
-      // A foreign-key column holds an opaque id, never free text — match it exactly.
-      // Substring (ILIKE) matching an id would let `1` also match `10`, `21`, …
-      if (config.foreignKey || config.options) {
+      // An identity column holds an opaque token, never free text — match it exactly. Substring
+      // (ILIKE) matching an id would let `1` also match `10`, `21`, … A set names alternatives;
+      // negating one excludes every member, so `!` still reads as the complement of the match.
+      if (kind === "identity") {
+        const members = parseFilterSet(actualVal);
+
+        if (members.length === 0 || members.length > LIST_MAX_FILTER_SET) {
+          conditions.push(NEVER_MATCHES);
+          continue;
+        }
+
+        if (members.length === 1) {
+          conditions.push(`"${fieldName}" ${negated ? "!=" : "="} $${paramIndex}`);
+          values.push(members[0]);
+          paramIndex++;
+        } else {
+          const placeholders = members.map((_, offset) => `$${paramIndex + offset}`);
+          conditions.push(
+            `"${fieldName}" ${negated ? "NOT IN" : "IN"} (${placeholders.join(", ")})`
+          );
+          values.push(...members);
+          paramIndex += members.length;
+        }
+      } else if (kind === "text") {
         conditions.push(
-          `"${fieldName}" ${negated ? "!=" : "="} $${paramIndex}`
+          `"${fieldName}"::text ${negated ? "NOT " : ""}ILIKE $${paramIndex} ESCAPE '${LIKE_ESCAPE}'`
         );
-        values.push(actualVal);
+        values.push(`%${escapeLikeValue(actualVal)}%`);
         paramIndex++;
-      } else if (config.type === "string") {
+      } else if (kind === "boolean") {
+        const flag =
+          actualVal === "true" ? true : actualVal === "false" ? false : null;
+
+        if (flag === null) {
+          conditions.push(NEVER_MATCHES);
+          continue;
+        }
+
+        // IS [NOT] DISTINCT FROM, so on a nullable flag the excluded set is the exact
+        // complement of the included one and no row falls out of both.
         conditions.push(
-          `"${fieldName}"::text ${negated ? "NOT " : ""}ILIKE $${paramIndex}`
+          `"${fieldName}" IS ${negated ? "" : "NOT "}DISTINCT FROM $${paramIndex}::boolean`
         );
-        values.push(`%${actualVal}%`);
+        values.push(flag);
         paramIndex++;
-      } else if (config.type === "number") {
+      } else if (kind === "date") {
+        // Same `min,max` grammar as a numeric range; a bare value names a single calendar day.
+        const commaIdx = actualVal.indexOf(",");
+        const fromPart = commaIdx >= 0 ? actualVal.slice(0, commaIdx) : actualVal;
+        const toPart = commaIdx >= 0 ? actualVal.slice(commaIdx + 1) : actualVal;
+
+        if (fromPart === "" && toPart === "") {
+          continue;
+        }
+
+        if (
+          (fromPart !== "" && !isDateFilterValue(fromPart)) ||
+          (toPart !== "" && !isDateFilterValue(toPart))
+        ) {
+          conditions.push(NEVER_MATCHES);
+          continue;
+        }
+
+        // Day bounds resolve in the business timezone through the shared helper, so a list
+        // filter and a bespoke date-range route can't disagree on where a day starts.
+        const bounds = dateBoundConditions(
+          `"${fieldName}"`,
+          {
+            from: fromPart !== "" ? fromPart : undefined,
+            to: toPart !== "" ? toPart : undefined,
+          },
+          paramIndex
+        );
+
+        const range = bounds.conditions.join(" AND ");
+        conditions.push(negated ? `NOT (${range})` : `(${range})`);
+        values.push(...bounds.params);
+        paramIndex = bounds.nextIndex;
+      } else if (kind === "number") {
         const commaIdx = actualVal.indexOf(",");
 
         if (commaIdx >= 0) {
@@ -91,6 +182,7 @@ function buildListQueryInternal(
             const nMax = parseFloat(maxPart);
 
             if (isNaN(nMin) || isNaN(nMax)) {
+              conditions.push(NEVER_MATCHES);
               continue;
             }
 
@@ -110,6 +202,7 @@ function buildListQueryInternal(
             const n = parseFloat(minPart);
 
             if (isNaN(n)) {
+              conditions.push(NEVER_MATCHES);
               continue;
             }
 
@@ -122,6 +215,7 @@ function buildListQueryInternal(
             const n = parseFloat(maxPart);
 
             if (isNaN(n)) {
+              conditions.push(NEVER_MATCHES);
               continue;
             }
 
@@ -135,6 +229,7 @@ function buildListQueryInternal(
           const n = parseFloat(actualVal);
 
           if (isNaN(n)) {
+            conditions.push(NEVER_MATCHES);
             continue;
           }
 
@@ -162,11 +257,15 @@ function buildListQueryInternal(
       ? spec.sort
       : undefined;
 
-  const orderColumns = sortCol
-    ? [`"${sortCol}" ${sortDir}`]
-    : defaultSortColumns
-        .filter((column) => sortableColumns.includes(column))
-        .map((column) => `"${column}" ${sortDir}`);
+  // The pk always closes the sort. A chosen column may tie across rows, and two LIMIT/OFFSET
+  // queries over a non-deterministic order can hand the same row twice and skip another.
+  const tiebreakers = defaultSortColumns.filter(
+    (column) => sortableColumns.includes(column) && column !== sortCol
+  );
+
+  const orderColumns = (sortCol ? [sortCol, ...tiebreakers] : tiebreakers).map(
+    (column) => `"${column}" ${sortDir}`
+  );
 
   const orderClause =
     orderColumns.length > 0 ? `ORDER BY ${orderColumns.join(", ")}` : "";
@@ -177,7 +276,7 @@ function buildListQueryInternal(
   const fromClause = `FROM (${baseQuery}) AS base`;
 
   const dataQuery = `
-    SELECT base.*, COUNT(*) OVER()::text AS "__total_count"
+    SELECT ${projection}, COUNT(*) OVER()::text AS "__total_count"
     ${fromClause}
     ${whereClause}
     ${orderClause}
@@ -258,9 +357,21 @@ function getSelectStatement(tableName: TableKey): string {
   return `SELECT ${selectFields.join(", ")}`;
 }
 
-// The single read projection (columns, derivable expressions, referenced-table JOINs,
-// soft-delete filter). Both the list and single-row paths select from this, so their
-// row shape can never diverge.
+// Every projection — read and write alike — is the descriptor's declared column list. The physical
+// source carries more than the descriptor declares (auth.users behind clients/professionals holds
+// credentials; the tenant and role columns the scope predicates need are undeclared), so a wildcard
+// hands the caller columns the contract never promised.
+function declaredColumnList(tableName: TableKey, alias?: string): string {
+  const prefix = alias ? `${alias}.` : "";
+  return Object.keys(tableOf(tableName).columns)
+    .map((column) => `${prefix}"${column}"`)
+    .join(", ");
+}
+
+// The single read source (columns, derivable expressions, referenced-table JOINs, soft-delete
+// filter). Both the list and single-row paths select from this, so their row shape can never
+// diverge. It stays a wildcard so the outer query can still scope, filter and sort on columns the
+// descriptor doesn't declare; the narrowing to declared columns happens in that outer projection.
 function getBaseSelectQuery(tableName: TableKey, physicalTable: string): string {
   const referencedRelations = getReferencedRelations(tableName);
   const softDelete = softDeleteClause(tableName);
@@ -286,13 +397,16 @@ export function buildListStatement(
   spec: ListRequestSpec,
   allowed: ListScope,
 ): { dataQuery: string; dataValues: SqlParam[]; countQuery: string; countValues: SqlParam[]; page: number; limit: number } {
-  const defaultSort = getPkFields(tableName);
+  const pkFields = getPkFields(tableName);
+  const defaultSort = pkFields;
   const { conditions: scopeConditions, values: scopeValues } = buildScopeConditions(allowed, 1);
 
   return buildListQueryInternal(
     getBaseSelectQuery(tableName, allowed.sqlTable),
+    declaredColumnList(tableName, "base"),
     spec,
     getFilterableColumns(tableName),
+    pkFields,
     defaultSort,
     getSortableColumns(tableName),
     scopeConditions,
@@ -319,7 +433,7 @@ export function buildRowStatement(
   const baseQuery = getBaseSelectQuery(tableName, allowed.sqlTable);
 
   const text = `
-    SELECT *
+    SELECT ${declaredColumnList(tableName, "base")}
     FROM (${baseQuery}) AS base
     WHERE ${whereArguments}${extraClause}
   `;
@@ -327,21 +441,29 @@ export function buildRowStatement(
   return { text, values };
 }
 
+// Writes target `sqlTable`, which for a logical entity is the raw table behind its secret-free
+// `sqlReadTable` view (clients/professionals → auth.users, which carries the password columns).
+export function writeReturningClause(tableName: TableKey): string {
+  return `RETURNING ${declaredColumnList(tableName)}`;
+}
+
 export function buildInsertStatement(
   physicalTable: string,
   fieldNames: string[],
   values: SqlParam[],
+  tableName: TableKey,
 ): { text: string; values: SqlParam[] } {
   const [fieldNamesTuple, parametersNumbersTuple] = formatTableColumnsForQuery(fieldNames);
   const text = `
     INSERT INTO ${physicalTable} ${fieldNamesTuple}
     VALUES ${parametersNumbersTuple}
-    RETURNING *
+    ${writeReturningClause(tableName)}
   `;
   return { text, values };
 }
 
 export function buildUpdateStatement(
+  tableName: TableKey,
   physicalTable: string,
   fieldsToUpdate: string[],
   newValues: SqlParam[],
@@ -362,10 +484,20 @@ export function buildUpdateStatement(
     UPDATE ${physicalTable}
     SET ${setArgumentsString}
     WHERE ${whereArgumentsString}${scopeClause}
-    RETURNING *
+    ${writeReturningClause(tableName)}
   `;
 
   return { text, values: [...newValues, ...pkValues, ...scopeParams] };
+}
+
+// What archiving a row does to its columns, in one place: the generic engine compiles it from the
+// descriptor, and db/users.ts reuses it so the bespoke admin deactivation can't mean something
+// different by "archived". `actorParam` is the $N carrying the acting user's id.
+export function softDeleteAssignments(policy: SoftDeletePolicy, actorParam: number): string[] {
+  const sets = [`${policy.deletedAtColumn} = now()`, `updated_at = now()`];
+  if (policy.activeColumn) sets.push(`${policy.activeColumn} = false`);
+  if (policy.deletedByColumn) sets.push(`${policy.deletedByColumn} = $${actorParam}`);
+  return sets;
 }
 
 export function buildDeleteStatement(
@@ -380,12 +512,12 @@ export function buildDeleteStatement(
 
   if (softDelete) {
     // Referenced core records are archived, never physically removed.
-    const sets = [`${softDelete.deletedAtColumn} = now()`, `updated_at = now()`];
+    const sets = softDeleteAssignments(softDelete, 1);
     const params: SqlParam[] = [];
     let nextParam = 1;
 
     if (softDelete.deletedByColumn) {
-      sets.push(`${softDelete.deletedByColumn} = $${nextParam++}`);
+      nextParam++;
       params.push(actorId);
     }
 
@@ -402,7 +534,7 @@ export function buildDeleteStatement(
       UPDATE ${physicalTable}
       SET ${sets.join(", ")}
       WHERE ${whereArguments} AND ${softDelete.deletedAtColumn} IS NULL${scopeClause}
-      RETURNING *
+      ${writeReturningClause(tableName)}
     `;
     return { text, values: params };
   }
@@ -417,7 +549,7 @@ export function buildDeleteStatement(
   const text = `
     DELETE FROM ${physicalTable}
     WHERE ${whereArguments}${scopeClause}
-    RETURNING *
+    ${writeReturningClause(tableName)}
   `;
   return { text, values: params };
 }

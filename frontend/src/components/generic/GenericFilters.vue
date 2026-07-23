@@ -54,6 +54,19 @@ function isNumericField(field: string): boolean {
   return colForField(field)?.type === 'number';
 }
 
+function isDateField(field: string): boolean {
+  return colForField(field)?.type === 'date';
+}
+
+function isBooleanField(field: string): boolean {
+  return colForField(field)?.type === 'boolean';
+}
+
+// Numbers and dates share the 'min,max' range contract; every other type carries a single value.
+function isRangeField(field: string): boolean {
+  return isNumericField(field) || isDateField(field);
+}
+
 function isEnumField(field: string): boolean {
   return (colForField(field)?.options?.length ?? 0) > 0;
 }
@@ -65,11 +78,11 @@ function foreignKeyForField(field: string): ForeignKeyDef | undefined {
 }
 
 // Serializes active filters to the filter_ query contract.
-// Negation: prefix with '!'. Numeric range: 'min,max'.
+// Negation: prefix with '!'. Numeric and date ranges: 'min,max'.
 function serialize(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of filters.value) {
-    if (isNumericField(f.field)) {
+    if (isRangeField(f.field)) {
       if (f.min !== '' || f.max !== '') {
         const raw = `${f.min},${f.max}`;
         out[f.field] = f.negated ? `!${raw}` : raw;
@@ -91,7 +104,7 @@ function deserialize(source: Record<string, string> | undefined): FilterEntry[] 
     if (!colForField(field)?.filterable || raw === '') continue;
     const negated = raw.startsWith('!');
     const value = negated ? raw.slice(1) : raw;
-    if (isNumericField(field)) {
+    if (isRangeField(field)) {
       const [min = '', max = ''] = value.split(',');
       entries.push({ field, negated, value: '', min, max });
     } else {
@@ -99,6 +112,12 @@ function deserialize(source: Record<string, string> | undefined): FilterEntry[] 
     }
   }
   return entries;
+}
+
+// Ties the field name beside a filter row to the control it names, so the control has an
+// accessible name instead of only a visually adjacent one.
+function controlId(field: string): string {
+  return `filter-${props.tableKey}-${field}`;
 }
 
 function onValueChange() {
@@ -130,7 +149,12 @@ function onValueChange() {
     </div>
 
     <div v-for="f in filters" :key="f.field" class="flex flex-wrap items-center gap-2 rounded-md bg-surface px-3 py-2">
-      <span class="text-sm font-semibold">{{ label(colForField(f.field)?.label) }}</span>
+      <span v-if="isRangeField(f.field)" class="text-sm font-semibold">
+        {{ label(colForField(f.field)?.label) }}
+      </span>
+      <label v-else :for="controlId(f.field)" class="text-sm font-semibold">
+        {{ label(colForField(f.field)?.label) }}
+      </label>
 
       <label class="flex items-center gap-1 text-xs text-neutral">
         <input type="checkbox" v-model="f.negated" class="accent-accent" @change="onValueChange" />
@@ -143,6 +167,7 @@ function onValueChange() {
           type="number"
           class="w-20 rounded border border-border px-2 py-1 text-sm"
           :placeholder="i18n.global.t('generic.minPlaceholder')"
+          :aria-label="`${label(colForField(f.field)?.label)} ${i18n.global.t('generic.minPlaceholder')}`"
           @input="onValueChange"
         />
         <span class="text-xs text-neutral">-</span>
@@ -151,12 +176,45 @@ function onValueChange() {
           type="number"
           class="w-20 rounded border border-border px-2 py-1 text-sm"
           :placeholder="i18n.global.t('generic.maxPlaceholder')"
+          :aria-label="`${label(colForField(f.field)?.label)} ${i18n.global.t('generic.maxPlaceholder')}`"
           @input="onValueChange"
         />
       </template>
 
+      <template v-else-if="isDateField(f.field)">
+        <input
+          v-model="f.min"
+          type="date"
+          class="rounded border border-border px-2 py-1 text-sm"
+          :aria-label="i18n.global.t('generic.from')"
+          @input="onValueChange"
+        />
+        <span class="text-xs text-neutral">-</span>
+        <input
+          v-model="f.max"
+          type="date"
+          class="rounded border border-border px-2 py-1 text-sm"
+          :aria-label="i18n.global.t('generic.to')"
+          @input="onValueChange"
+        />
+      </template>
+
+      <template v-else-if="isBooleanField(f.field)">
+        <select
+          :id="controlId(f.field)"
+          v-model="f.value"
+          class="rounded border border-border px-2 py-1 text-sm"
+          @change="onValueChange"
+        >
+          <option value="">{{ i18n.global.t('generic.all') }}</option>
+          <option value="true">{{ i18n.global.t('generic.yes') }}</option>
+          <option value="false">{{ i18n.global.t('generic.no') }}</option>
+        </select>
+      </template>
+
       <template v-else-if="isEnumField(f.field)">
         <select
+          :id="controlId(f.field)"
           v-model="f.value"
           class="rounded border border-border px-2 py-1 text-sm"
           @change="onValueChange"
@@ -175,6 +233,7 @@ function onValueChange() {
       <template v-else-if="foreignKeyForField(f.field)">
         <div class="w-56 max-w-full">
           <ForeignKeySelect
+            :id="controlId(f.field)"
             :foreign-key="foreignKeyForField(f.field)!"
             :model-value="f.value || null"
             :placeholder="i18n.global.t('generic.all')"
@@ -185,6 +244,7 @@ function onValueChange() {
 
       <template v-else>
         <input
+          :id="controlId(f.field)"
           v-model="f.value"
           type="text"
           class="w-40 max-w-full rounded border border-border px-2 py-1 text-sm"
@@ -196,6 +256,7 @@ function onValueChange() {
       <button
         type="button"
         class="ml-auto text-xs text-neutral hover:text-destructive"
+        :aria-label="`${i18n.global.t('generic.removeFilter')}: ${label(colForField(f.field)?.label)}`"
         @click="removeFilter(f.field)"
       >
         ✕

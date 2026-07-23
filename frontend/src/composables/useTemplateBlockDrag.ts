@@ -80,6 +80,7 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
   function cleanup() {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onCancel);
     document.removeEventListener('keydown', onKey);
     session?.ghost?.destroy();
     document.body.style.cursor = '';
@@ -170,6 +171,14 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
     }
   }
 
+  // The browser takes the pointer away (a touch gesture became a scroll, the pen left range): no
+  // pointerup will ever arrive, so this is the only chance to drop the ghost and the listeners.
+  function onCancel() {
+    if (!session) return;
+    if (session.dragging) deps.onEnd();
+    cleanup();
+  }
+
   function modeFor(ev: PointerEvent, rect: DOMRect): Mode {
     const edge = Math.min(RESIZE_EDGE_PX, rect.height / 3);
     if (ev.clientY <= rect.top + edge) return 'resize-top';
@@ -203,6 +212,7 @@ export function useTemplateBlockDrag(deps: TemplateDragDeps): {
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
     document.addEventListener('keydown', onKey);
   }
 

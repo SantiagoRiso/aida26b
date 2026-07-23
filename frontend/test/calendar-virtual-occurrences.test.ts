@@ -265,7 +265,7 @@ describe('portal AppointmentsView renders a virtual occurrence', () => {
     const auth = useAuthStore();
     auth.user = {
       id: 4, username: 'client', email: null, role: 'Client',
-      business_id: '1', is_active: true, must_change_password: false,
+      business_id: 1, is_active: true, must_change_password: false,
     };
   });
 

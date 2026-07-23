@@ -11,6 +11,15 @@ x-db-credentials: &db-credentials
   DB_OWNER_USER: ${DB_OWNER_USER:-aida26_owner}
   DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-CambiaEsta_Owner!}
 
+# Every service writes its logs to stdout/stderr and Docker keeps them. Without a cap the
+# json-file driver grows without bound on the host disk, so the retention window is stated
+# explicitly: LOG_MAX_FILE files of LOG_MAX_SIZE each, oldest evicted first.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILE:-5}"
+
 services:
   database:
     image: postgres:18-alpine
@@ -28,6 +37,7 @@ services:
       - ./database/bootstrap.sh:/docker-entrypoint-initdb.d/00-bootstrap.sh:ro
     networks:
       - aida26_network
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
       interval: 10s
@@ -43,13 +53,20 @@ services:
       <<: *db-credentials
       NODE_ENV: ${NODE_ENV:-development}
       PORT: ${PORT:-3000}
-      VERSION: ${VERSION:-1.0.0}
+      # Left empty on purpose: the logger then reads backend/package.json, so there is no
+      # second copy of the version here to drift from it. Set VERSION to pin an image tag.
+      VERSION: ${VERSION:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DB_HOST: ${DB_HOST:-database}
       DB_PORT: ${DB_PORT:-5432}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-yourpassword}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      # Bind mounts from a Windows/macOS host deliver no filesystem events into the container,
+      # so tsx watch only reloads if it polls. Without this the container serves the source it
+      # was built with and every edit needs a rebuild.
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-true}
+      CHOKIDAR_INTERVAL: ${CHOKIDAR_INTERVAL:-300}
     ports:
       - "3000:3000"
     depends_on:
@@ -57,6 +74,9 @@ services:
         condition: service_healthy
     networks:
       - aida26_network
+    logging: *default-logging
+    # Mounted file by file rather than mounting /app: node_modules must stay the container's own
+    # (Linux) install. shared/src is here because the backend imports it by relative path.
     volumes:
       - ./backend/src:/app/backend/src
       - ./backend/package.json:/app/backend/package.json
@@ -77,6 +97,7 @@ services:
       - backend
     networks:
       - aida26_network
+    logging: *default-logging
     environment:
       # Vite proxies /api to the backend service over the compose network.
       - API_PROXY_TARGET=http://backend:3000

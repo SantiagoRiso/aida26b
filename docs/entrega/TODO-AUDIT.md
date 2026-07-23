@@ -1,236 +1,234 @@
+# Auditoría contra TODO.md
+
+Fecha: 2026-07-21. Segunda revisión: la primera parte del documento registra los hallazgos,
+la segunda registra cuáles se corrigieron en esta ronda y cómo se verificó cada corrección.
+
+**Método.** Cada afirmación se verificó leyendo el código, no los mensajes de commit ni los
+comentarios. Los ítems marcados **[vivo]** se reprodujeron contra un servidor levantado desde el
+árbol de trabajo, apuntando a la base docker sembrada con el seed demo. Los conteos de tests
+provienen de correr las suites en serie, no de contar archivos.
+
+**Estado verificado del árbol (todo sin commitear):**
+
+| Chequeo | Antes | Ahora |
+|---|---|---|
+| `npm run typecheck` (backend, tests de backend, frontend) | limpio | limpio |
+| Suite pura de backend | 22 archivos / 249 tests | **32 / 419** |
+| Suite de DB de backend | 32 archivos / 526 tests | **44 / 687** |
+| Suite unitaria de frontend | 78 archivos / 698 tests | **85 / 806** |
+| Specs E2E en disco | 40 archivos / 142 tests | sin cambios (no se corrieron en esta ronda) |
+
+Nota sobre un test intermitente: `frontend/test/api-client.test.ts` falló una vez en una corrida
+completa paralela (8,4 s contra 0,6 s aislado) y pasó en la corrida siguiente y aislado. Se
+reprodujo de forma independiente durante trabajo no relacionado, así que es un intermitente
+preexistente bajo carga paralela, no una regresión introducida.
+
+---
+
 ## Resumen
 
 | Dimensión | Veredicto | Estado en una línea |
 |---|---|---|
-| Single source of truth / Single responsibility | Fuerte | El SSoT (`shared/src/ssot/*`) genera CRUD, authz, validación, labels y rutas; quedan tres fugas de SRP concretas y una duplicación de `ConflictType`. |
-| Filtros, orden, paginación | Parcial | Protocolo compartido + compilador SQL descriptor-driven y UI genérica completos, pero el `limit` de `GenericTable` deja al usuario atrapado y nada se refleja en la URL. |
-| Autenticación, recuperar password | Fuerte | scrypt + sesiones server-side + anti-enumeración + roles declarativos; falta 2FA (opcional) y el "olvidé mi contraseña" self-service. |
-| UX/UI | Parcial | Modales, i18n ES/EN, navegación por rol y overflow bien resueltos; falta por completo el toggle claro/oscuro y el shell staff no es usable en móvil. |
-| Foreign keys | Fuerte | Ningún id se escribe a mano en ningún formulario; el mecanismo `dependsOn` existe pero ningún descriptor lo declara y la dependencia real está hecha a mano. |
-| CRUD genéricos + potestad front/back | Fuerte | Exactamente 4 handlers genéricos para todas las tablas; la estructura vive en `shared/`, el backend es autoridad, el frontend la recibe por bundle, no por endpoint. |
-| Migraciones, queries, inyección SQL | Fuerte | Runner forward-only con checksums y lock; todo valor de usuario viaja como `$N` y todo identificador sale del descriptor. |
-| Validaciones (tipo, FK, fecha, negocio) | Fuerte | Un único motor compartido corre en ambos lados + CHECKs y triggers en DB; la validación de fecha declarativa (capacidad muerta) fue removida y solo un archivo del frontend usa el validador compartido. |
-| Errores + logging | Adecuado | Logger JSON estructurado + `audit_events` append-only y buen render de errores; casi nada se loguea en el frontend y los mensajes crudos en inglés llegan al usuario. |
-| Testing | Fuerte | ~1.300 tests declarados en 4 capas corriendo en CI; el test de GRANTs es vacío en CI y 7 tests E2E pasan sin asertar. |
+| Single source of truth / single responsibility | Fuerte | El SSoT genera SQL, authz, scoping, validación, labels y montaje de rutas; cero SQL a mano fuera de `db/`, cero casos especiales por nombre de tabla en el motor genérico. Esta ronda agregó tres hechos más al SSoT en vez de duplicarlos. |
+| Filtros, orden, paginación | Fuerte | Se cerraron los cuatro defectos del compilador de listas, se unificó el clamp de página y límite, las listas bespoke (auditoría, ledger, saldo, solicitudes) ganaron orden por columna server-side y estado en la URL, y el endpoint de auditoría pasó sus filtros a la gramática `filter_` compartida. |
+| Autenticación, recuperar password | Fuerte | Se cerraron la fuga de credenciales, el login del usuario borrado, la sobre-proyección de datos personales y la ausencia de rate limiting. La recuperación es mediada por un administrador, por decisión explicada abajo, y el callejón sin salida que tenía (un negocio con un solo Admin) quedó cerrado. Sin 2FA. |
+| UX/UI | Fuerte | Tema, i18n, modales y shell móvil ya estaban; se agregó calendario responsive, soporte táctil, estados de error distinguibles del vacío, tematizado completo de FullCalendar, header sticky real, contenido truncado legible en touch y una pasada de accesibilidad (teclado, `aria-*`, `<html lang>`, `aria-current`, reduced-motion, axe en dos temas sobre cinco pantallas). |
+| Errores + logging | Fuerte | El CRUD genérico audita, un body malformado ya no filtra stack trace, todo error se correlaciona con su request, la persistencia del log operativo quedó acotada y documentada, los errores no capturados del navegador van a un endpoint de telemetría, y el frontend muestra el código traducido y las horas del cutoff que el backend manda en `detail`. |
+| Foreign keys | Fuerte | Ningún id se tipea a mano, el servidor refuerza la cascada profesional/servicio y el tenant de toda FK, y las etiquetas resuelven por id fuera de la primera página pidiendo los ids en lote. |
+| CRUD genéricos + potestad front/back | Fuerte | Exactamente 4 handlers para todas las tablas; el backend es autoridad real y ahora audita toda escritura genérica. |
+| Migraciones, queries, inyección SQL | Fuerte | Defensa de inyección cerrada por construcción, sin un solo hallazgo; se restauró la atomicidad de las migraciones y se hizo portable el checksum. |
+| Validaciones | Fuerte | Un motor compartido en ambos lados, más CHECKs y triggers; el mapa de SQLSTATE ahora cubre las reglas que viven solo en la DB. |
+| Testing | Fuerte | ~1.973 tests en cuatro capas; typecheck y lint dan 0 sobre todo el árbol y CI ahora exige lint, type-check de tests/e2e y los umbrales de coverage de la suite de DB. |
 
 ---
 
-## Single source of truth / Single responsibility
+## Correcciones de esta ronda
 
-**Implementado.** `shared/src/ssot/structure.ts:1` es literalmente `{ tables: schedulerTables }`, ensamblado desde 6 módulos de dominio en orden de dependencia de migración (`shared/src/ssot/domain/index.ts:11`). Ese objeto es la única entrada de: generación de SQL genérico, authz/scoping (`backend/src/routes/crud-policy.ts:74-124`), validación y render del frontend.
+Cada fila se verificó de forma independiente después de aplicarse: **[vivo]** contra un servidor
+levantado desde el árbol, **[test]** por una suite que se corrió y se leyó.
 
-- La validación es un solo módulo: `backend/src/validation/validate.ts:5` es textualmente `export * from '../../../shared/src/validation/validate'`, y `validateFullObject` lo invocan tanto `backend/src/routes/post.ts:48` como `frontend/src/components/generic/GenericForm.vue:77`.
-- Las rutas no pueden derivar: `shared/src/ssot/api-paths.ts:83-90` deriva el patrón de montaje de Express invocando los mismos builders con `':id'`; `backend/src/app.ts:38-49` monta desde `CRUD_PATTERNS` y `frontend/src/api/client.ts:2` importa `API_PREFIX` del mismo módulo.
-- Hechos de dominio definidos una vez y reimportados: `ROLES` con tipo y guard derivados (`shared/src/types/roles.ts:4-10`), `BUSINESS_TZ` reexportado en vez de re-tipado (`backend/src/time.ts:5`), `resolveBooking` compartido (`backend/src/services/booking.ts:165`), `canCancelAppointment` importado por el portal (`frontend/src/views/portal/AppointmentsView.vue:141`) y por el panel de staff (`frontend/src/components/calendar/AppointmentDetailPanel.vue:103`).
-- Donde el SQL es inmutable y no puede derivar, hay guardas: `backend/test/schema-ssot-drift.test.ts:53` extrae el `CHECK (role IN (...))` de la migración y lo compara contra `ROLES`; el mismo archivo asserta bounds numéricos (`:92-111`), el default de timezone (`:114-118`), el patrón de moneda (`:159-169`) y que la vista `auth.users_directory` expone todas las columnas del descriptor (`:120-148`).
+### Críticos
 
-**Parcial.** Tres fugas de responsabilidad reales, todas reproducidas:
-
-1. `backend/src/services/series-materialize.ts:16` contiene `SELECT * FROM appointments WHERE series_id = $1 AND occurrence_date = $2`, el único SQL fuera de `backend/src/db/*` (la regla propia del repo).
-2. `backend/src/routes/appointments.ts` tiene 1142 líneas y 16 handlers cubriendo dos superficies: turnos individuales y la API de series recurrentes, contigua en `:753-1102`.
-3. `backend/src/routes/put.ts:33-42` define `AUTH_USERS_PROTECTED` y `:130` ramifica con el literal `physicalTable === 'auth.users'`: el único branch por nombre de tabla dentro del motor genérico.
-
-Además, `ConflictType` está escrito tres veces sin derivar: la unión (`shared/src/ssot/domain/conflict.ts:10`), la lista del decoder (`frontend/src/api/contracts.ts:11`) y el mapa de labels tipado `Record<string, string>` (`frontend/src/composables/useConflictVerdict.ts:8`), de modo que agregar un tipo compila sin label.
-
-`frontend/src/views/staff/CalendarView.vue` no es un god-file (42 composables cargan el peso) pero su script de ~790 líneas incluye 5 rutinas de carga de datos y manipulación de DOM a mano (`:337`, `:406`).
-
-**Faltante.** No hay guarda de drift a nivel columna entre el descriptor y `information_schema` para las tablas físicas que no sean people.
-
----
-
-## Filtros, Orden, paginación
-
-**Implementado (requisito 1).** El protocolo de lista vive una vez: `shared/src/ssot/list-protocol.ts:5-12` (`FILTER_PREFIX 'filter_'`, reservados `page/sort/dir/limit`, `LIST_DEFAULT_LIMIT 50`, `LIST_MAX_LIMIT 500`). `backend/src/routes/list-request.ts:42-66` parsea, lexea la negación `'!'` y clampea page (1..1000) y limit (1..500). `backend/src/db/generic.ts` compila: FK/enum con `=`/`!=` (`:66-73`, con comentario explicando por qué ILIKE sobre un id es incorrecto), strings con ILIKE `%v%` (`:74-79`), rangos numéricos `min,max` incluidos los abiertos (`:80-146`), ORDER BY restringido a columnas sortables (`:160-172`), LIMIT/OFFSET (`:184-185`) y `COUNT(*) OVER()` en el mismo round-trip (`:180`). Los identificadores permitidos salen del SSoT (`shared/src/utils/utils.ts:36-48`). Los flags no son testimoniales: 63 `filterable: true` y 33 `sortable: true` en los seis archivos de dominio.
-
-En el frontend: `GenericTable.vue:77-85` (toggleSort), `:215-226` (solo headers sortables clickeables con indicador), `GenericFilters.vue:60-81` (constructor de filtros derivado del SSoT: texto, exclusión, rango numérico, select de enum), `Pagination.vue:16,29,37`, `frontend/src/api/crud.ts:25-36` (buildQuery). Las rutas bespoke paginan con la misma política (`backend/src/routes/pagination.ts:11-16`, `audit.ts:69-83`, `ledger.ts:164-168`, `appointments.ts:637`).
-
-**Parcial: el defecto de `limit` no es cosmético.** `GenericTable.vue:91` declara `const limit = 20` pero `reload()` (`:99-104`) nunca lo envía, así que el servidor pagina de a 50 (`list-request.ts:59-66`) mientras el widget recibe `:limit="limit"`=20 (`:278-284`) y calcula `totalPages = ceil(total/20)` (`Pagination.vue:16`). Con `total=33` muestra "página 1 de 2", habilita Siguiente, el servidor devuelve cero filas, y como el bloque de paginación es `v-if="!loading && rows.length > 0"` (`:279`) el control desaparece: el usuario queda varado en una tabla vacía sin botón Anterior. Los tests no lo detectan porque `frontend/test/generic-table.test.ts:19-26` reimplementa `buildQuery` localmente y todas las respuestas mockeadas fijan `meta.limit` en 20 (`:110`).
-
-**Parcial: cobertura desigual.** `GenericTable.vue` solo se usa en `ProfessionalsView.vue`, `UsersView.vue` y `CrudSection.vue` (usado por `BusinessView.vue`). La lista más grande de la app, `ClientsView.vue`, no tiene ningún control de paginación y filtra en memoria sobre `listRows('clients', {limit:500})` (`:40-51,56`). Peor: `frontend/e2e/pagination.spec.ts` apunta justamente a esa pantalla y su encabezado (`:4-16`) documenta que no hay UI de paginación; los tests `:31-36`, `:55-58`, `:85-88` hacen `warn` y `return` en vez de fallar, así que tres de cinco son no-ops permanentes. `AuditView.vue` sí es correcto: pasa `limit=50` a la API y al widget (`:32`, `:66-77`). Las listas bespoke tienen ORDER BY fijo y ningún control de orden.
-
-**Faltante (requisito 2): estado de lista en la URL.** Cero `router.replace` y cero `history.replaceState` en todo `frontend/src`; `useRoute()` solo aparece en `SidebarNav.vue:12` y `PlaceholderView.vue:5`. El estado es refs locales (`GenericTable.vue:74-75,87-88`, `GenericFilters.vue:32`, `AuditView.vue:31,35-40`) y el único reset es el watch sobre `tableKey` (`GenericTable.vue:141-149`). `staff-routes.ts:30-50` no declara props ligados a query. Filtros, orden y página se pierden al recargar y no se pueden compartir.
-
----
-
-## Autenticación, recuperar password
-
-**Implementado: usuario + contraseña, endurecido.** scrypt con salt aleatorio de 16 bytes por usuario y `timingSafeEqual` (`backend/src/auth.ts:27-37`). Anti-enumeración real: `backend/src/routes/auth.ts:27-28` define un dummy hash/salt del tamaño correcto que se consume incondicionalmente en `:47-49`, y la respuesta es un único `invalid_credentials` para usuario inexistente, contraseña incorrecta o cuenta inactiva (`:51-61`). Sesiones server-side: token de 32 bytes (`auth.ts:39-41`) del que solo se guarda el sha256 (`auth.ts:43-45`, `db/auth.ts:28-35`), cookie HttpOnly/SameSite=Lax/Secure-en-producción con Max-Age derivado de `SESSION_DAYS=7` (`auth.ts:17,60-69`), revalidada en cada request contra `expires_at > now() AND u.is_active = true` (`db/auth.ts:78-89`). Largo mínimo 8 centralizado (`auth.ts:19-25`).
-
-**Implementado: una sola DB, usuarios en schema `auth`.** `CREATE SCHEMA auth; REVOKE ALL ON SCHEMA auth FROM PUBLIC;` (`database/migrations/20260625_120000_scheduler_schema_cutover.sql:14-15`), `auth.users` en `:26` y `auth.sessions` en `:55`, conviviendo con `businesses` (`:17`). Una sola configuración de conexión con credenciales distintas (`backend/src/db.ts:7-34`). La decisión es coherente y está sostenida por mecanismos concretos: FK real `business_id` a `businesses(id) ON DELETE RESTRICT` (`:30`) con CHECK de que solo un Admin puede tener business nulo (`:49-50`); modelo de persona unificado (`docs/entrega/FEATURES.md:94-95`); y el costo de la colocación se paga explícitamente con la vista sin secretos `auth.users_directory` (`database/migrations/20260702_090000_users_read_view.sql:8-30`, cableada en `shared/src/ssot/domain/people.ts:122` y `:219-220`) más una denylist de columnas en el PUT genérico que cubre role, password_hash, password_salt, is_active, business_id, must_change_password, deleted_at y deleted_by_user_id (`backend/src/routes/put.ts:33-42`). Roles de DB con least-privilege en `database/bootstrap.sh:6-20`.
-
-**Implementado: roles.** Cuatro roles con fuente única en TS (`shared/src/types/roles.ts:4-10`), espejados por un CHECK SQL (`migración :39`) y policiados por drift test (`backend/test/schema-ssot-drift.test.ts:53`). Régimen declarativo: `roleRequired` por operación por tabla, resuelto en un único punto (`crud-policy.ts:94-97`) antes de ANDear scopes de negocio/owner/grant/discriminador (`:99-105`), con semántica de fallo diferenciada a propósito (404 para tabla desconocida o protegida, 405 para op no expuesta, 403 por rol insuficiente: `:46-54`, `:76-91`, `:96`). Régimen procedural donde una lista de roles no alcanza: `assertOwnScheduleAllowed` (`:140-194`) y el ledger, que omite `roleRequired` con la razón escrita en el descriptor (`shared/src/ssot/domain/finance.ts:99-102`). Middleware `requireAuth → requirePasswordReady → requireAdmin` (`backend/src/session.ts:46-68`) con auditoría de la denegación en `:66`. El frontend deriva su gating del mismo descriptor: `frontend/src/router/access.ts:41-73` construye `SCREEN_ACCESS` desde `tableOf(table).roleRequired.read` con overrides que solo pueden restringir, y `descriptorWriteRoles` (`:17-25`) gatea botones.
-
-**Parcial: recuperación de contraseña.** Existen dos caminos, ambos credencializados. Cambio propio autenticado: `POST /auth/change-password` verifica la contraseña actual (`backend/src/routes/auth.ts:107-115`), rechaza reusar la misma (`:117-121`), rehashea con salt nuevo (`:123`) y borra las demás sesiones conservando la actual (`:128-133`, `db/auth.ts:69-75`). Reset por admin: `backend/src/routes/users.ts:225-269` bajo requireAuth+requirePasswordReady+requireAdmin, rechaza el auto-reset (`:242-246`), scopea el UPDATE por business (`db/users.ts:142-146`), marca `must_change_password`, borra sesiones (`:263`) y audita. El bloqueo es real: 403 en toda ruta protegida (`session.ts:55-60`) y el router fija al usuario en /change-password (`frontend/src/router/index.ts:65-67`). Bien cubierto por `backend/test/user-management.test.ts:355-410` (incluido el 404 cross-business) y `:592`.
-
-**Faltante.** No existe el flujo no autenticado: no hay entrada de recuperación en `authPaths` (`shared/src/ssot/api-paths.ts:18-24`), no hay tabla de tokens de reset, no hay link "olvidé mi contraseña" (`LoginView.vue:74-90` va del password al submit) y no hay transporte de mail alguno (grep de nodemailer/smtp en `backend/src` y `backend/package.json` sin resultados). Tampoco hay 2FA en ningún lado (grep de totp/2fa/mfa/authenticator: cero hits), ni rate limiting ni lockout de login.
-
----
-
-## UX/UI
-
-**Faltante: tema claro/oscuro.** `frontend/src/styles/main.css:5` dice textualmente "Semantic surface tokens — light theme only; dark mode layers on later without rework", y el bloque `@theme` (`:4-23`) fija una sola paleta clara. Un grep de `dark:|prefers-color-scheme|data-theme|toggleTheme|darkMode` sobre `frontend/src` devuelve CERO líneas. El store de UI tiene `{language, toasts, sessionExpired}` y nada de tema (`frontend/src/stores/ui.ts:15-35`). Solo existe `.dp--theme-light` (`main.css:26-39`) sin contraparte oscura. `frontend/test/tailwind-theme.test.ts:36-62` solo verifica utilidades claras. La infraestructura sí es favorable: todo usa tokens semánticos.
-
-**Implementado: toggle ES/EN.** Control segmentado de dos botones con `role="group"`, `aria-pressed` y testids (`frontend/src/components/settings/LanguageToggle.vue:22-53`). `ui.setLanguage` es el único punto de mutación: persiste y ajusta el locale de vue-i18n en el mismo paso (`stores/ui.ts:21-26`, `i18n/language.ts:14-22`). No es solo chrome: los labels `LocalizedText` del SSoT se resuelven reactivamente vía `useLabel.ts:6-16`, así que tablas y formularios generados también se retraducen. Montado para staff (`SettingsView.vue:30`) y clientes (`PreferencesView.vue:20`), con paridad de claves 466/466 y E2E que verifica el flip en ambos sentidos (`frontend/e2e/language-toggle.spec.ts:16-31`). Detalles menores: no hay switch en login (por decisión explícita, `LoginView.vue:47`) y `index.html:2` fija `<html lang="es">` sin actualizarlo.
-
-**Implementado: alta/edición en modal.** `DetailPanel.vue:59-145` es un Dialog de Headless UI con backdrop, dos variantes (slide-over lateral y modal anclado arriba con `max-h-[85vh]`), DialogTitle, botón de cierre con aria-label y cuerpo `flex-1 overflow-y-auto`. `CrudSection.vue:103-127` conecta los emits create/edit de la tabla con ese panel envolviendo un `GenericForm`, y empuja el borrado a un `ConfirmDialog` separado (`:118-127`). No hay edición inline: las filas solo emiten (`GenericTable.vue:255-266`) y las celdas son `<td>` de solo lectura. Además hay `Skeleton` y `EmptyState` (`:234-248`).
-
-**Implementado: navegación.** La pregunta se responde distinto por audiencia. Staff: sidebar izquierdo persistente `flex h-screen` + `aside w-56`, con `<main>` como único contenedor scrolleable (`StaffLayout.vue:21-49`), 11 entradas filtradas por rol vía `roleAllowedFor(SCREEN_ROLES[...])` (`SidebarNav.vue:17-35`), highlight de ruta activa y prefetch en pointerenter/focus (`:47-57`). Portal de clientes: shell distinto con nav superior y columna centrada `max-w-4xl`, sin aside, con el motivo comentado (`PortalLayout.vue:20-45`, `PortalNav.vue:6-24`).
-
-**Implementado: overflow.** Filas: paginación server-side. Columnas: `<div class="overflow-x-auto rounded-lg border border-border">` (`GenericTable.vue:211`). Vertical: `h-screen` + sidebar y main con `overflow-y-auto` (`StaffLayout.vue:22-46`), modales con tope de altura y cuerpo scrolleable. Texto: elipsis explícita en eventos de calendario (`CalendarView.vue:54-58`). Costo de pintado acotado con `content-visibility:auto` (`main.css:52-56` aplicado en `GenericTable.vue:258`). Debilidades residuales: las celdas (`:259-260`) no tienen truncate ni max-width, y el `<thead>` (`:213`) no es sticky.
-
-**Parcial: responsive.** Base correcta: viewport meta (`index.html:5`) y Tailwind. Pero el uso de breakpoints es de 28 apariciones en 12 archivos, casi todas colapsos de grilla más `DetailPanel.vue:114` (`sm:pt-[8vh]`) y `PortalLayout.vue:27` (`hidden sm:block`). El shell de staff no es usable en móvil: `StaffLayout.vue:22-23` es `flex h-screen` con `w-56` incondicional, sin breakpoint, colapso ni hamburguesa, así que a ~375px el sidebar se come ~60% del ancho. Las tablas no tienen fallback en tarjetas: degradan a scroll horizontal. `GenericFilters.vue:107` envuelve pero sus inputs son fijos (`:119` w-20, `:154` w-40). Y nada lo verifica: `frontend/e2e/playwright.config.mts:25` fija un único viewport 1280x900 sin proyecto móvil. `LoginView` es fluido solo por ser una tarjeta `max-w-sm` centrada (`:48-49`), no por diseño responsive.
-
----
-
-## Foreign keys
-
-**Implementado: nunca se escribe un id a mano.** `ForeignKeyDef` (table/valueField/labelField, más `dependsOn` opcional) se declara en la columna (`shared/src/types/types.ts:77-85`, referenciado en `:101`). `GenericForm.vue:63-74` ramifica en `col.input === 'select' && col.foreignKey` y renderiza un `<select>` alimentado por `getFkOptions`; `useForeignKeyOptions.ts:47-66` trae `listRows(table)` una vez por tabla referenciada y cachea, con invalidación tras escrituras (`:70-72`), y `labelFor` (`:33-45`) resuelve ids a labels en lectura (`GenericTable.vue:132-139,182-188`). Los formularios bespoke hacen lo mismo: `Selector` para cliente/profesional/servicio y un `<select>` FK para recurso (`AppointmentForm.vue:326-373`), `<select>` de turnos en `LedgerEntryForm.vue:157-170`, lista de checkboxes en `ProfessionalServicesSection.vue:82-90`. No hay ningún input de texto libre para un id en ningún formulario de escritura. El servidor refuerza: `assertRoleCheckedReferences` rechaza con 422 `invalid_reference_role` una FK role-checked que apunte al rol equivocado o a otro tenant (`crud-policy.ts:200-233`, invocado desde `post.ts:54` y `put.ts:113`), y 23503 mapea a 400.
-
-Matiz honesto: ese branch genérico de select FK **no lo ejercita ninguna pantalla enviada**. `GenericForm` solo se monta para `services` (`BusinessView.vue:146-147`), `professionals` (`ProfessionalDetail.vue:208-210`) y `clients` (`ClientDetail.vue:291-293`), y ninguna de las tres tiene una columna FK editable (`people.ts:159-233`, `:239-280`; `catalog.ts:23-51`). `users` sí tiene FKs pero es `protected` y read-only (`people.ts:114-119`). En producción el camino real siempre pasa por los componentes bespoke. Además no toda columna con `foreignKey` declara `input:'select'`: `recurrence.ts:164-197`, `:316-322` y `scheduling.ts:373-379` la omiten (son `editable:false`).
-
-**Parcial: FKs dependientes.** El mecanismo genérico existe y está completo: `dependsOn { field, foreignField }` (`types.ts:81-84`); `useForeignKeyOptions.ts:84-118` devuelve opciones vacías sin valor padre y refetchea `listRows(table, { filters: { [foreignField]: parentValue } })` en cada cambio del padre; `GenericForm.vue:66-70` cablea el getter por columna. Pero **ningún descriptor lo declara**: grep de `dependsOn` en `shared/src` devuelve solo la definición del tipo, y el propio test lo dice y monta una tabla sintética `__cascade_test__` para ejercitar el cableado (`frontend/test/generic-form.test.ts:24-60`).
-
-La dependencia real del dominio (un profesional ofrece solo ciertos servicios) está resuelta a mano y funciona: `offeredServiceIds` (`frontend/src/composables/bookingForm.ts:38-48`) alimenta `availableServices` (`useBookingOptions.ts:116-124`), consumido por ambas pantallas de reserva; `AppointmentForm.vue:143-163` limpia/autoselecciona el servicio al cambiar de profesional; `RequestFlow.vue:79-84` descarta un servicio inválido; `BlockServicesPanel.vue:57-58` lista solo los servicios del profesional del bloque; `LedgerEntryForm.vue:69-80` acota los turnos al cliente en contexto. El backend lo respalda: la disponibilidad solo emite slots de bloques que ofrecen el servicio elegido (`backend/src/db/scheduling.ts:74-93`).
-
-**No aplica: claves compuestas.** No hay ninguna PK compuesta: todas las tablas usan `BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY` (`cutover.sql:18`, `20260707_120000_professional_services.sql:6`); las relaciones multi-columna existen solo como UNIQUE. La antigua FK compuesta `(id, role)` se removió deliberadamente y se reemplazó por el chequeo en app, documentado en `crud-policy.ts:200-203`.
-
-**Limitaciones no mencionadas.** Las opciones FK están capadas (`FK_OPTIONS_LIMIT = 500`, `useForeignKeyOptions.ts:14`; rosters de reserva a 200/500 en `useBookingOptions.ts:44-47`): pasado el tope, un valor válido se vuelve inseleccionable sin fallback. Y los filtros de columnas FK caen a input de texto libre porque `isEnumField` solo mira `col.options` (`GenericFilters.vue:56-57`, `:150-158`) mientras el backend matchea exacto (`db/generic.ts:66-73`).
-
----
-
-## CRUD genéricos + potestad frontend vs backend
-
-**Implementado: una API por operación, no cuatro por tabla.** `mountGenericRoutes` registra exactamente cuatro handlers: `app.get/post` sobre `CRUD_PATTERNS.collection` y `app.put/delete` sobre `.item` (`backend/src/app.ts:48-52`), donde esos patrones son `${API_PREFIX}/:tableName` y `.../:id` (`shared/src/ssot/api-paths.ts:87-90`). `:tableName` se resuelve contra el SSoT (`crud-policy.ts:74-77`) y cada sentencia se compila del descriptor: proyección + JOINs de tablas referenciadas + cláusula de soft-delete compartidas entre list y row (`db/generic.ts:262-325`), y DELETE convertido en UPDATE de archivado únicamente desde `getSoftDeletePolicy` (`:369-408`). El frontend lo espeja con un solo juego `listRows/getRow/createRow/updateRow/deleteRow` genérico sobre `TableKey` (`frontend/src/api/crud.ts:40-83`). Las tablas de workflow se salen vía `protected: true` (`business.ts:89,141`, `finance.ts:91`, `people.ts:117,150`, `recurrence.ts:337`, `scheduling.ts:396,430`) y `resolveCrudAccess` las devuelve como 'hidden' → 404 (`crud-policy.ts:45-54`).
-
-Dos precisiones sobre el alcance de esa afirmación: (a) el motor genérico **sí** tiene un caso especial por nombre de tabla, la denylist `AUTH_USERS_PROTECTED` aplicada con `physicalTable === 'auth.users'` (`put.ts:33-42`, `:130`), declarada en su propio comentario como defensa en profundidad independiente del SSoT; (b) "agregar una tabla no requiere código nuevo" vale para la superficie de API, no para el frontend: sigue haciendo falta una vista, una entrada de ruta (`frontend/src/router/staff-routes.ts:4-71`, 11 rutas escritas a mano) y una entrada en `SCREEN_ACCESS` (`access.ts:41-61`). No existe una pantalla genérica `/staff/:table`.
-
-**Implementado: la estructura no vive en el frontend.** Vive en `shared/src/ssot/` (`structure.ts:1-5` → `domain/index.ts:10-19`), tipada por `ColumnDef` (`types.ts:89-103`) y `TableStructure` (`:142-174`), con los tipos de fila derivados mecánicamente (`derived.ts:1-10`). El backend la importa por ruta relativa (`routes/get.ts:6`, `post.ts:11-20`, `db/core.ts:2`) y el frontend por el alias `@shared` (`vite.config.ts:11`, `tsconfig.json:12-15`).
-
-El backend es la autoridad, y no de forma decorativa: estampa `business_id` desde la sesión y lo agrega a la lista de campos del INSERT (`post.ts:85-90`), rechaza campos server-derived venidos del body (`post.ts:43-45`), recomputa authz y scoping por request (`crud-policy.ts:96-118`) y agrega la denylist independiente del SSoT (`put.ts:33-42`). El frontend cede explícitamente en el código: "Inline errors are advisory only; the backend is authoritative" (`GenericForm.vue:49`) y "Fall through and submit anyway" (`:82`). El gating de UI se deriva de `roleRequired`, no de una lista paralela (`access.ts:16-25`, `GenericTable.vue:50-72`).
-
-**Matiz (no defecto).** El frontend obtiene la estructura por import en tiempo de compilación, no por endpoint: no existe ninguna ruta `/api/structure` (la única referencia del backend a `structure` es `db/core.ts:2`). Consecuencia: el descriptor completo viaja al navegador incluyendo claves estrictamente de backend, como `sqlTable: 'auth.users_directory'` (`people.ts:122`), `sqlTable`/`sqlReadTable`/`roleDiscriminator` (`people.ts:219-221`, `:262-264`) y `businessJoin` (`catalog.ts:108-110`).
-
----
-
-## Migraciones, queries a la DB, inyecciones SQL
-
-**Implementado: cambio de schema.** Hay un runner forward-only real. `runMigrations` toma `pg_advisory_lock(7910)` (`backend/src/migrate.ts:13,19`), crea `schema_migrations(filename, applied_at, checksum)` (`:21-27`) y corre cada archivo no aplicado en su propio BEGIN/COMMIT con ROLLBACK ante fallo (`:49-62`). Las migraciones aplicadas son inmutables: el sha256 registrado se compara en cada corrida y un archivo modificado lanza "was modified after being applied" (`:39-47`, checksum en `migration-files.ts:9-11`), con nombres validados por regex `^\d{8}_\d{6}_[a-z0-9_]+\.sql$` (`:6,17-26`). El caso "agregar un campo" está demostrado: `database/migrations/20260708_120000_client_dni.sql:6` hace `ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS dni TEXT`, agrega índice único parcial (`:8-10`) y redeclara la vista de lectura para proyectar la columna nueva (`:14-32`). Las seis conductas del runner están testeadas (`backend/test/migrate.test.ts:20,43,62,87,108,131`) y el "undo = escribir otra migración" está documentado (`README.md:65-77`).
-
-**Implementado: agregar tablas.** Mismo mecanismo, con ejemplo reciente: `20260718_090000_appointment_series.sql:6-41` crea la tabla con FKs inline a padres ya existentes (`:8-11`) y CHECKs inline (`:31-40`), agrega columnas de enlace en `appointments` (`:44-45`), índices (`:48-51`) y el GRANT de least-privilege reteniendo DELETE a propósito (`:53-62`). Encaja con el modelo de dos roles (`database/bootstrap.sh:11,18-25,29-31`, con el comentario "No broad default privileges; per-table grants are declared in the migrations"). Hay guarda de drift: `backend/test/app-grants-drift.test.ts:17-19,32-37` deriva sus casos del SSoT (toda tabla con `crud.update`) y asserta `has_table_privilege(...,'UPDATE')`. Y hay test de schema fresco: `backend/test/migration-seed-fresh.test.ts:41-45` aplica todas las migraciones más el seed sobre una DB reseteada.
-
-**Implementado: inyección SQL.** Auditado sitio por sitio. Toda ejecución pasa por `backend/src/db/core.ts:28-46` (`query`/`queryOne` reciben `(sql, params)` y los entregan a node-pg como bind vars; `SqlParam` es un tipo cerrado en `:8`). En el motor genérico todo valor de usuario es `$N`: filtros (`generic.ts:70,76,99-146`), LIMIT/OFFSET (`:184-185`), pk (`:309`), INSERT (`:330-341`), UPDATE (`:352-368`), DELETE (`:371-423`). Los únicos identificadores interpolados salen del descriptor: un campo de filtro solo se usa tras resolver contra `getFilterableColumns` (`:58-63`, `utils.ts:36-40`), el sort está gateado por `sortableColumns.includes` (`:161`), y las listas de columnas de INSERT/UPDATE vienen de `getNotDerivableFields`/`updatableColumns` (`post.ts:79-90`, `put.ts:128-131`), nunca de las claves del body. `req.params.tableName` pasa por el allowlist `isKnownTable` o 404 (`crud-policy.ts:75-78`). Los predicados de scope usan plantillas con `?` renumeradas a `$N` (`scope.ts:27-31`) con identificadores de descriptor (`:80,87,95,109,125,146`). El SQL de dominio escrito a mano sigue la misma disciplina (`appointments.ts:225-283`, `audit.ts:53-72`, `scheduling.ts:296-326`, `series.ts:254`, `grants.ts:31`), y `ownerCol` es un ternario del código (`services/scheduling.ts:110`). Donde sí se genera SQL dinámico se usa `format('%I'/'%L')` de Postgres (`bootstrap.sh:18-25`, `seed-demo.ts:1003`, solo invocado desde el CLI de seed). Defensa en profundidad extra: rol de app sin DELETE en tablas soft-delete/append-only (`cutover.sql:284-298`), lecturas por `sqlReadTable` (la vista sin secretos, `get.ts:47-63`), y la denylist de `put.ts:129-134`.
-
-**Gaps menores.** (1) `generic.ts:78` empuja `%${actualVal}%` sin escapar `%`/`_`: el usuario puede ensanchar su propia búsqueda; no es inyección (el valor sigue bindeado). (2) No hay ningún test negativo de inyección: grep de "DROP TABLE"/"injection" en `backend/test` y `frontend/e2e` no devuelve nada, así que la propiedad descansa en convención más allowlists. (3) No hay guarda automática de que una columna nueva del SSoT exista en la tabla física: `schema-ssot-drift.test.ts` compara constantes TS contra el texto de las migraciones, y solo la vista `users_directory` tiene chequeo por columna (`:118`). (4) `app-grants-drift.test.ts` cubre solo UPDATE. (5) El procedimiento "agregar una tabla" (migración + descriptor SSoT + GRANT) es implícito: el README documenta solo la mitad de la migración.
-
----
-
-## Validaciones de tipo, foreign key, fecha, negocio
-
-**Implementado: la regex vive una sola vez.** `ColumnValidator.pattern`/`patternMessage`/`normalize` se declaran en el descriptor de columna (`shared/src/types/types.ts:59-75`), con constantes nombradas como `EMAIL_PATTERN` + `EMAIL_PATTERN_MESSAGE` (`shared/src/ssot/domain/people.ts:20-21`). Un solo motor las compila y testea con caché de RegExp (`shared/src/validation/validate.ts:15-20`, test en `:82-84`, reescritura `normalize` en `:98-103`). El backend reexporta ese módulo y solo agrega un helper de Express (`backend/src/validation/validate.ts:5`, `sendErrorsIfInvalid` en `:8-17`) y el frontend lo importa por alias (`GenericForm.vue:6`, `vite.config.ts:11`). Es decir, no es que el backend "le transmita" la regex: comparten la fuente de autoría, que es la forma más fuerte de la pregunta. Donde la regla sí es per-tenant y dinámica, el backend efectivamente la transmite: `backend/src/routes/scheduling.ts:173-189` computa la ventana de reserva y devuelve `{min_date, max_date}`, `frontend/src/api/scheduling.ts:66-73` la trae, `useBookingWindow.ts:19-30` clampea el picker y `appointments.ts:112-117` la vuelve a exigir en la escritura (422 `outside_booking_window`). Hay drift test del patrón de moneda contra el CHECK SQL (`schema-ssot-drift.test.ts:157-165`).
-
-**Implementado: quién fuerza las validaciones.** Ambos lados, con el servidor explícitamente autoritativo. Cliente advisory y dicho en el código (`GenericForm.vue:49`, `:82`). Servidor revalida cada escritura genérica con las mismas funciones: `validateFullObject` (`post.ts:48`), `validateForUpdate` + `validateOnlyPk` (`put.ts:66,76`), `validateOnlyPk` (`delete.ts:42`); `validate()` rechaza campos extra y faltantes (`shared/src/validation/validate.ts:144-151`) y responde 400 `validation_error` con mapa por campo. Tipo: switch por tipo declarado (`validate.ts:60-71`). FK: referencias role-typed verificadas en app con guarda cross-tenant aplicada incluso a super-admins (`crud-policy.ts:204-233`) más FKs reales cuyo 23503 mapea a 400 (`db/errors.ts:26-27`). Negocio: `assertValidTransition`/`canCancelAppointment`/`canMarkNoShow`/`canCompleteAppointment` son a la vez la puerta del backend (`appointments.ts:413-460`) y el predicado que habilita botones (`AppointmentDetailPanel.vue:90-111`, `portal/AppointmentsView.vue:134-142`); la recurrencia comparte `validateRecurrenceRule` vía `parseRecurrenceRule` (`recurrence.ts:115-118`, usado en `appointments.ts:799,960,1061`, y `seriesRule.ts:78`). Tercera capa en DB: CHECK de estado (`cutover.sql:157-158`), trigger de transición (`phase4:60-62`), triggers de FK role-typed (`cutover.sql:255-275`) e inmutabilidad del ledger (`phase4:65-78`), todo con drift test contra las constantes TS.
-
-**Resuelto: la validación de fecha declarativa era capacidad muerta y fue removida.** Ninguna columna declaraba `minDate`/`minDayOffset`/`maxDayOffset` (grep sobre `shared/src/ssot/domain/*.ts` devolvía cero); los únicos hits eran la declaración del tipo y el motor mismo. `ColumnValidator` (`shared/src/types/types.ts`) y `checkDate` (`shared/src/validation/validate.ts`) ya no declaran/implementan esos tres campos; el motor solo verifica que una columna de fecha sea parseable. Las reglas de fecha reales siguen en código bespoke: ventana de reserva (`backend/src/services/scheduling.ts:75-89`) y cutoff de cancelación (`appointment-lifecycle.ts:70-82`) — ambas per-tenant y calculadas en runtime, por lo que no pueden expresarse como offsets estáticos de descriptor.
-
-**Parcial: el alcance del validador compartido es asimétrico, en ambos lados.** En el backend, las rutas de workflow (protected) no pasan por el validador compartido para la forma del body: chequean a mano con constantes locales `DATE_RE`/`DATE_OR_ISO_RE` (`backend/src/time.ts:8-9`) y condiciones ad hoc, con mensajes en inglés por call site; además existe una tercera regex ISO independiente en `shared/src/ssot/domain/recurrence.ts:66`, sin policiar. En el frontend, exactamente **un** archivo importa el validador compartido: `GenericForm.vue:6`. Todo formulario bespoke reimplementa sus chequeos (`AppointmentForm.vue:306-316`), y `seriesRule.ts:78-81` descarta los mensajes por campo del validador compartido aplanándolos a `t('generic.required')`, perdiendo la regla específica. Y aun en las pantallas genéricas el cliente nunca bloquea: recolecta errores y envía igual (`GenericForm.vue:77-83`).
-
-**Nota de crédito.** El principio de UX de FK del rubro sí está cumplido y se detalla en la sección de Foreign keys.
-
----
-
-## Errores + logging
-
-**Implementado: qué se loguea en el backend y dónde.** Dos sumideros deliberados y distintos.
-
-Log operacional: logger JSON propio, sin dependencias, que emite `{level,time,version,...}` a stdout (`backend/src/logger.ts:38-42`) con `LOG_LEVEL` por llamada (`:27-30`), montado en `backend/src/app.ts:56-58` y con `LOG_LEVEL`/`VERSION` como variables reales del contenedor (`docker-compose.yml:46-47`, `.env.example:8-10`). `requestLogger` (`:52-70`) loguea reqId/method/url/status/ms al terminar cada request y nunca toca el body, así que todo 4xx/5xx queda visible. El mapeo error→HTTP está centralizado: `db/errors.ts:25-35` (23505→409, 23503→400) y `errors.ts:19-31` (`httpError` estructurado), ambos consumidos por `guardRoute`/`guardMiddleware` (`helpers.ts:15-27,41-52`).
-
-Log de seguridad/negocio: tabla `audit_events` con `outcome CHECK IN ('success','failure','denied')` (`cutover.sql:202-216`), hecha append-only por trigger de UPDATE/DELETE y grants INSERT+SELECT (`phase4:79-101`), escrita best-effort para que un fallo de auditoría no rompa el request (`audit.ts:20-54`, try/catch en `:51-53`). Los eventos de fallo/denegación se escriben de verdad en 25 call sites: `routes/auth.ts:56,113`, `session.ts:66`, `routes/users.ts:171,287`, `routes/grants.ts:30,46,82`, `routes/business-closures.ts:48,74,123`, `routes/ledger.ts:111`, `routes/audit.ts:25` y 11 en `routes/appointments.ts`. `/health` hace un `SELECT 1` real y responde 503 con la DB caída (`health.ts:8-15`).
-
-Debilidades reales: `logger.error/warn/debug` están exportados pero **nunca se invocan**; la única emisión estructurada de toda la app es el `logger.info` de `requestLogger` (`logger.ts:59`). Los tres sumideros de error reales son `console.error` (`helpers.ts:26,51`, `audit.ts:52`), sin reqId y fuera del log JSON, así que un 500 no se puede correlacionar con su línea de request y un fallo de escritura de auditoría es invisible. Tampoco hay `pool.on('error')` (`db.ts:13-17`) ni `process.on('uncaughtException'/'unhandledRejection')` (`server.ts:105-109`). La persistencia es stdout, sin archivo, rotación ni agregador.
-
-**Parcial: logging en el frontend.** Hay exactamente un log de error deliberado: violaciones de contrato de API vía `contractFailureReporter`, que por defecto hace `console.error('api_contract_failure', ...)` solo en builds PROD (`contract-validation.ts:8-10`, disparado en `:38` y `:43`). El reporter es un seam intercambiable (`setApiContractFailureReporter`, `:12-16`), o sea que la pregunta de diseño fue considerada, y el INFORME declara la decisión en vez de esconderla: "Pendiente: no hay envío de errores del navegador al servidor" (`docs/entrega/INFORME.md:749`).
-
-Más allá de eso no se loguea nada: `main.ts:9-23` instala pinia/i18n/router sin `app.config.errorHandler`, y un grep de `errorHandler|window.onerror|unhandledrejection|addEventListener('error'` sobre `frontend/src` devuelve cero. No hay endpoint de ingesta en el backend. Y la clase de error más valiosa es invisible: `client.ts:40` hace `await fetch(...)` sin try/catch (el `.catch(() => null)` de `:57` solo cubre el parseo de JSON), y solo tres archivos de todo `frontend/src/{views,components,stores,api}` contienen un `catch` (`LoginView.vue:37-40`, `CalendarView.vue:125,141`, `api/client.ts`). Un fallo de red deja una promesa rechazada sin manejar y la vista colgada en `loading`.
-
-**Implementado: qué errores se muestran y cómo.** Un único sobre `{success:false, error:{code, message, fields?}}` (`status_messages.ts:18-29`) parseado defensivamente en el cliente, rechazando un `fields` malformado (`envelope-parser.ts:31-42`). La estrategia de display es por capas: errores por campo inline con `role="alert"` (`FieldError.vue:8-14`, usado en `GenericForm.vue:103-108`, `AppointmentForm.vue:290-292`, `ExceptionForm.vue:111-113`, `LedgerEntryForm.vue:117-119`, `BlockServicesPanel.vue:198,206`); toasts que guardan una *clave* i18n resuelta con `t('toast.'+key)` (`stores/ui.ts:31-33`, `ToastStack.vue:75`, claves en `i18n/es.ts:42-52`); mapeo de códigos específicos (`too_early` → `completeTooEarly`, `AppointmentDetailPanel.vue:169-170`); toast de 403 opt-in solo para mutaciones interactivas (`client.ts:24,62,66`); 401 tratado suavemente con exención de modo "entry" para que el boot y las credenciales malas no disparen un falso "sesión expirada" (`client.ts:17-21,42-50`); fallos de carga de lista renderizados inline en vez de toast (`AuditView.vue:82-85,197-200`). Lo que deliberadamente no se muestra: los 500 llevan solo "Internal server error" (`helpers.ts:27`) y las violaciones de contrato degradan a `bad_response` sin exponer el diagnóstico.
-
-**Defecto real de localización, más amplio de lo que parece.** No es cierto que "nunca se muestre texto crudo del servidor". El `message` en inglés del backend se renderiza literal al usuario en al menos diez lugares: `CalendarGrantsSection.vue:75`, `BusinessClosuresSection.vue:99,118`, `UsersView.vue:69`, `ProfileView.vue:56`, `ChangePasswordView.vue:42`, `useClientAccount.ts:61`, entre otros, con prosa como "Professional may only manage their own calendar grants" (`routes/grants.ts:47`) o "You cannot deactivate your own account" (`routes/users.ts:204`) en una UI es-AR. A eso se suma el mapa `fields`, cuyas cadenas también son inglés generado por máquina (`shared/src/validation/validate.ts:62-92`) y llegan a la UI por ambos caminos (respuesta del servidor y precheck cliente en `GenericForm.vue:79`).
-
----
-
-## Testing
-
-**Implementado: qué queremos que cumpla la app end to end.** La intención está escrita, no implícita: `docs/entrega/FEATURES.md:458-471` es una tabla "22. Pruebas e integración continua" y F22.7 (`:468`) declara que Playwright corre contra el servidor compilado y la DB sembrada. Hay exactamente 38 spec files con 130 tests. Corren contra un servidor **construido**: `frontend/e2e/reset-and-run.mjs:1-11` documenta reset DB → build front+back → servir dist → Playwright → teardown. Las journeys son reales, no DOM-only: `appointment-transitions.spec.ts:47-84` siembra sus fixtures por la API real de staff y cliente, y `helpers.ts:56-73` hace login tipeando en el formulario real. Los labels de aserción salen del SSoT y del bundle `es` (`helpers.ts:3-20`), así que un cambio de wording no puede producir falsos verdes ni falsos rojos.
-
-**Implementado: qué queremos que cumpla el backend.** Dos suites con contratos distintos: pura (15 archivos en `backend/vitest.config.mts:6`, entorno node, sin DB: invariantes del SSoT, drift SSoT↔SQL, sobres de respuesta, derivación de paths, guardas, mapeo DbError→HTTP, generación de slots, resolución de booking, parseo del protocolo de lista, expansión de recurrencia) y de DB (30 entradas en `backend/vitest.db.config.mts:6`, contra Postgres real, con la DB de test recreada por corrida en `test/helpers.ts:30-42`). Los tests montan el Express real y lo golpean por HTTP. Dos destacados: `conflict-recheck.test.ts:70-95` prueba que los rechecks del mismo owner serializan sobre el advisory lock por owner (la carrera de doble reserva), y `app-grants-drift.test.ts:31-38` deriva sus casos del SSoT (toda tabla con `crud.update`) y verifica `has_table_privilege`.
-
-**Implementado: cómo testear semi-automáticamente la interacción con el frontend.** Dos niveles. Componente: 65 archivos vitest con 550 casos en jsdom (`frontend/vitest.config.ts:8-12`, `test/setup.ts:1-11`), 38 de ellos montando componentes reales con @vue/test-utils, cubriendo tabla/formulario generados, filtros, visibilidad por rol y grant, i18n y la lógica dura del calendario. Navegador: Playwright maneja la UI real, con ergonomía deliberada para el desarrollador (`E2E_HEADLESS=0` corre en modo visible, `playwright.config.mts:29`; `test:e2e:fresh -- <filtro>` y `E2E_REUSE_BUILT=1` para iterar sobre un solo spec, `reset-and-run.mjs:8-11`).
-
-**Conteos verificados.** `backend/test`: 45 archivos, 628 casos declarados. `frontend/test`: 65 archivos, 550 casos. `frontend/e2e`: 38 specs, 130 tests. Total ~1.308. Las cuatro suites corren en orden en `.github/workflows/ci.yml:95-131` contra postgres:18-alpine con `TZ=America/Argentina/Buenos_Aires` (`:15,42`).
-
-**Debilidades concretas.**
-
-- El test de GRANTs es **vacío en CI**: usa `APP_ROLE = process.env.DB_USER` (`app-grants-drift.test.ts:14`) y `ci.yml:28-39` fija `DB_USER=aida26_user == POSTGRES_SUPERUSER == DB_OWNER_USER` con el comentario "single-role (aida26_user is superuser in CI)". Un superusuario pasa `has_table_privilege` incondicionalmente, así que el test no puede fallar en CI; solo tiene dientes en el stack docker local de dos roles. El mismo colapso convierte el `makeAppPool` de `audit.test.ts:7,110-119` en un pool de superusuario.
-- La afirmación de que las rutas de API se ejercitan con el rol de menor privilegio es falsa en general: `makeAppPool` lo importa un solo archivo; el resto monta con el pool superusuario (`api_tests.ts:60`, `auth-authz.test.ts:224,261`, `generic-crud-policy.test.ts:61`). El propio encabezado de `app-grants-drift.test.ts:9-12` lo dice.
-- Siete tests E2E hacen `console.warn` + `return` en vez de fallar o saltarse visiblemente (`pagination.spec.ts:31-36,56,86,121`; `forced-password-change.spec.ts:40,60,81`); `test.skip`/`test.fixme` no aparece en ningún lado de `frontend/e2e`.
-- `playwright.config.mts` no configura `retries`, `trace` ni `reporter`, pero `ci.yml:134-139` sube `frontend/playwright-report/` ante fallo: con el reporter por defecto ese directorio no se produce.
-- `playwright.config.mts:22` usa 2 workers por defecto y `E2E_WORKERS` no se fija en ningún lado, mientras los specs siguen razonando desde el modelo serial: `appointment-transitions.spec.ts:22` dice literalmente "safe under the serial (workers:1) shared-dataset run". Con `fullyParallel:false` solo se garantiza el orden *dentro* del archivo; los archivos corren de a dos contra una única DB sembrada.
-- Las listas `include` de los dos configs de vitest del backend son manuales, no globs: hoy están completas, pero un `*.test.ts` nuevo no correría y CI seguiría verde.
-- `conflict-recheck.test.ts:14` fija `MONDAY='2026-06-29'`, una fecha ya pasada: contraejemplo del principio F22.9 de fechas relativas.
-- No hay medición de cobertura en ninguna de las cuatro suites, ni umbrales, ni dependencia de coverage.
-- Chromium únicamente (`ci.yml:82`); ninguna journey cross-browser ni de viewport móvil, ni regresión visual ni chequeo de accesibilidad (`toHaveScreenshot`, `axe` y `snapshot` no aparecen en `frontend/e2e`).
-- El comentario `ci.yml:126` ("all 8 spec files, workers:1") está desactualizado.
-
----
-
-## Huecos priorizados
-
-### Requisito del TODO no cumplido
-
-| # | Hueco | Próximo paso concreto | Esfuerzo |
+| # | Hueco | Corrección | Verificación |
 |---|---|---|---|
-| 1 | **Estado de lista no reflejado en la URL** (filtros/orden/página). Requisito explícito del rubro, hoy inexistente: cero `router.replace`, cero `history.replaceState`. | Crear un composable que haga binding bidireccional entre el estado de lista y `route.query` (inicializar refs desde `route.query` en mount, `router.replace` en cada cambio), usarlo en `GenericTable.vue` y en `AuditView.vue`. Reutilizar la serialización de `shared/src/ssot/list-protocol.ts` para que URL y query de API sean idénticas. | M |
-| 2 | **Toggle claro/oscuro ausente por completo.** | Agregar `theme` a `useUiStore` siguiendo el patrón de `language` (persistencia en un módulo plano como `i18n/language.ts`, aplicado como clase o `data-theme` en `documentElement`), un set de tokens oscuros en `main.css` bajo `:root[data-theme=dark]`, un `ThemeToggle.vue` junto a `LanguageToggle.vue`, y un bloque `.dp--theme-dark` para vue-datepicker. | M |
-| 3 | **Defecto de paginación que atrapa al usuario** en `GenericTable`: el widget promete una página 2 que devuelve cero filas y luego desaparece. | Pasar `limit` en `reload()` (o derivar el limit del widget desde `meta` de la respuesta) y hacer que `frontend/test/generic-table.test.ts` importe `buildQuery` de `frontend/src/api/crud.ts` en vez de reimplementarlo. | S |
-| 4 | **La lista más grande de la app no pagina**: `ClientsView.vue` trae 500 filas y filtra en memoria, y sus tres tests E2E de paginación son no-ops que avisan y pasan. | Migrar `ClientsView` al filtro server-side `filter_` con `Pagination`, y convertir los 7 tests degradados de `pagination.spec.ts` / `forced-password-change.spec.ts` en `test.skip()` para que el salto sea visible en el reporte. | M |
-| 5 | **Sin recuperación de contraseña self-service.** Un usuario bloqueado depende de contacto fuera de banda. | Tabla `auth.password_reset_tokens` (token hasheado + expiry + used_at, espejando el patrón de `auth.sessions`) en una migración nueva; entradas `requestPasswordReset`/`confirmPasswordReset` en `authPaths` montadas sin autenticación en `routes/auth.ts`, siempre respondiendo 200 para preservar la postura anti-enumeración ya adoptada; transporte de mail (hoy no existe ninguno); vista de solicitud/confirmación junto a `LoginView.vue` más el link en `:88`. Requiere además rate limiting, que tampoco existe. | L |
-| 6 | **Shell de staff no usable en móvil**: `w-56` incondicional sin breakpoint ni hamburguesa. | Agregar el estado colapsado que la propia spec da por verificado (`docs/superpowers/specs/2026-07-12-nav-role-structure-design.md:124`): sidebar oculto por defecto bajo `md` con drawer, y un segundo proyecto de viewport móvil en `playwright.config.mts`. | M |
-| 7 | **Mensajes de error del backend en inglés mostrados al usuario en una UI es-AR**, tanto el `message` de nivel superior (10+ sitios) como el mapa `fields`. | Hacer que el sobre lleve un `code` por campo que el frontend mapee a claves i18n (mismo patrón ya usado para toasts), o que el validador compartido emita claves en vez de prosa; reemplazar los `res.message` crudos por claves. | M |
+| C1 | El PUT/DELETE genérico devolvía `password_hash` y `password_salt` | `writeReturningClause(tableName)` proyecta las columnas declaradas por el descriptor en toda escritura, de toda tabla. Es una proyección, no una denylist: una columna física que ningún descriptor declara es inalcanzable por construcción, también en tablas futuras | **[vivo]** el mismo PUT que filtraba devuelve `id, display_name, email, dni, username, phone, notes` y cero columnas secretas. **[test]** 35 casos puros que recorren todas las tablas más 3 contra la API real |
+| C2 | Un usuario borrado lógicamente seguía autenticándose | `findUserForLogin` y `loadSessionUser` ahora exigen `deleted_at IS NULL`. Un usuario borrado cae por el mismo camino nulo que un usuario inexistente, así que la postura anti enumeración queda intacta | **[test]** 4 casos: login rechazado tras el borrado y sesión existente que deja de validar |
+| C3 | El motor CRUD genérico no escribía ninguna fila de auditoría | `crud-audit.ts` audita éxito y denegación en los tres handlers, con el tipo de evento derivado de la clave SSoT, así que una tabla nueva se audita sola | **[test]** 29 casos que derivan la superficie de escritura del SSoT (25 operaciones sobre 9 tablas) y fallan si aparece una tabla escribible sin cubrir. El guard se verificó por mutación: comentar la llamada de auditoría pone 7 tests en rojo |
+| C4 | Las migraciones no eran atómicas: el `COMMIT;` propio de 13 archivos cerraba la transacción del runner | El lector quita el control de transacción antes de ejecutar, distinguiendo los `BEGIN` de PL/pgSQL dentro de `$$`, y el runner compara `pg_current_xact_id()` antes y después: si el archivo cerró la transacción, la migración falla y no se registra | **[vivo]** el migrador real contra la base docker con las 17 aplicadas responde `No pending migrations`, o sea cero drift de checksum. **[test]** 7 casos puros y 4 de DB, incluido el bug original |
+| C5 | Un body JSON malformado devolvía HTML 400 con stack trace y rutas absolutas | Middleware terminal de 4 argumentos que responde el sobre estándar y loguea por el logger estructurado, más un 404 JSON para rutas `/api` no matcheadas | **[vivo]** devuelve `{"code":"invalid_request"}` como `application/json`, sin HTML ni stack |
 
-### Mejora opcional
+### Altos
 
-| # | Hueco | Próximo paso concreto | Esfuerzo |
+| # | Hueco | Corrección | Verificación |
 |---|---|---|---|
-| 8 | **El test de GRANTs de rol de app es vacío en CI** (`DB_USER` es superusuario allí), y casi todos los tests de DB montan el servidor sobre el pool superusuario. | Correr un job de CI adicional con los dos roles reales, o hacer que `app-grants-drift.test.ts` falle explícitamente si `DB_USER` es superusuario; extenderlo además a SELECT/INSERT/DELETE. | M |
-| 9 | **Fallos de red no se capturan y no se loguea nada del navegador.** | Envolver el `fetch` de `client.ts:40` en try/catch devolviendo `{ok:false, code:'network_error'}`; agregar `app.config.errorHandler` y un listener de `unhandledrejection` en `main.ts`; si se quiere reporte al servidor, un `POST /api/client-errors` con rate limit registrado vía `setApiContractFailureReporter`. | M |
-| 10 | **El logger estructurado nunca emite errores**: los tres sumideros reales son `console.error`. | Enrutar `helpers.ts:26,51` y `audit.ts:52` por `logger.error({reqId, ...})` para poder correlacionar con la línea de request; agregar `pool.on('error')` y `process.on('uncaughtException'/'unhandledRejection')`. | S |
-| 11 | **Fugas de SRP**: SQL en `services/series-materialize.ts:16`, ruta de 1142 líneas con dos superficies, literal `auth.users` dentro del motor genérico. | Mover el `selectMaterialized` a `db/series.ts`; separar `routes/appointments.ts` en `appointments.ts` + `appointment-series.ts` montadas desde los mismos patrones; reemplazar el literal de `put.ts:130` por un flag de descriptor. | M |
-| 12 | **`dependsOn` declarado pero nunca usado**, y ningún formulario genérico tiene siquiera una FK editable. | Declarar `dependsOn` en `client_professional_services.service_id` cuando esa tabla tenga UI, y capar el riesgo de `FK_OPTIONS_LIMIT = 500` con búsqueda server-side en `Selector` para que un valor válido no sea inseleccionable. | M |
-| 13 | **`ConflictType` escrito tres veces sin derivar.** | Agregar `CONFLICT_TYPE_VALUES` en `shared/src/ssot/domain/conflict.ts`, derivar la unión, el `stringEnum` del decoder y el mapa de labels, y tipar `CONFLICT_KEYS` como `Record<ConflictType, string>`. | S |
-| 14 | **Sin guarda de drift columna a columna** entre descriptor y tabla física (solo la vista `users_directory` está cubierta). | Extender `schema-ssot-drift.test.ts` con una aserción genérica de `information_schema.columns` vs. claves y nulabilidad del descriptor; `scheduler-schema.test.ts` ya tiene el helper. | S |
-| 15 | ~~Validación de fecha declarativa muerta: ninguna columna declara `minDate`/`minDayOffset`/`maxDayOffset`.~~ **Resuelto**: campos removidos de `ColumnValidator` y de `validate.ts`; el SSoT ya no promete una capacidad que no entregaba. | — | S |
-| 16 | **El validador compartido solo lo usa un archivo del frontend** y ninguna ruta protected del backend. | Un validador de forma de request compartido (o descriptores de parámetros en el SSoT) consumido por `routes/appointments.ts` y espejado en los formularios bespoke; que `seriesRule.ts:78-81` conserve los mensajes por campo en vez de aplanarlos. | M |
-| 17 | **Sin test negativo de inyección** y sin cobertura medida en ninguna de las cuatro suites. | Un test que envíe `filter_name=x'; DROP TABLE ...` y `sort=id; DROP` en `backend/test/list-request.test.ts`; agregar `@vitest/coverage` con umbrales. | S |
-| 18 | **Diagnóstico de fallos E2E inexistente y paralelismo desalineado con los specs.** | Configurar `retries`, `trace: 'on-first-retry'` y `reporter: 'html'` en `playwright.config.mts`; fijar `workers:1` o aislar el dataset por archivo, y corregir el comentario obsoleto de `ci.yml:126`. | S |
-| 19 | **Documentar el procedimiento "agregar una tabla"** (migración + descriptor SSoT + GRANT), hoy implícito; y cambiar los `include` manuales de vitest por globs. | Checklist corto en README/CLAUDE.md más glob con exclusión explícita entre las dos suites. | S |
-| 20 | **Sin regresión visual ni chequeo de accesibilidad**, celdas sin truncate y `<thead>` no sticky. | Agregar una pasada de axe en una journey representativa, `truncate max-w-*` en las celdas de `GenericTable` y header sticky. | S |
+| A1 | Las lecturas genéricas emitían `SELECT *` | La proyección externa usa las columnas declaradas. La subconsulta interna sigue con `SELECT *` a propósito, porque el WHERE externo necesita columnas que el descriptor no declara (`business_id`, las FK de `businessJoin`, `role`) y derivarlas duplicaría la lógica de scoping | **[vivo]** un Client leyendo `professionals` recibe exactamente `['bio','display_name','id']` |
+| A3 | Sin desempate en el ORDER BY elegido por el usuario | Se agregan siempre las columnas de pk como clave secundaria, también en las listas bespoke de auditoría y ledger | **[test]** paginar un `sort=role` con empates visita cada fila exactamente una vez |
+| A4 | Los filtros `boolean` y `date` se descartaban en silencio | Se implementaron ambos: booleano con `IS [NOT] DISTINCT FROM` para que en una columna nullable el complemento sea exacto, y fecha reusando la gramática `min,max` existente resuelta en `BUSINESS_TZ`. Un valor ilegible ahora compila a `1 = 0` en vez de descartarse | **[vivo]** con los 60 usuarios activos: `true` devuelve 60, `false` devuelve 0, basura devuelve 0 |
+| A5 | El parser de paginación bespoke devolvía 500 | Ambos parsers clampean por `clampPage`/`clampLimit` en `list-protocol.ts`: una sola definición compartida en vez de dos copias que coincidan a mano | **[vivo]** `limit=-5` y `limit=2.5` responden 200 con límites 1 y 2; `page=1e15` cae a 1 |
+| A6 | Metacaracteres de LIKE sin escapar | Se escapan `%`, `_` y el propio escape, con `ESCAPE` declarado | **[vivo]** sobre 42 clientes: `%` y `_` devuelven 0, `Simpson` devuelve 3 |
+| A7 | El mapa de SQLSTATE cubría dos códigos | Se agregaron 23514, 23502, 22001, 22003, 22007 y P0001 como `400 validation_error`, el mismo bucket del validador de la app, más 57014 y 55P03 como `503` transitorios, consecuencia de los timeouts nuevos. Todos los códigos usados ya tenían traducción | **[test]** casos por código |
+| A9 | La cascada profesional/servicio era solo del cliente | El servidor la exige en `resolveAndLoadService`, así que la heredan todas las superficies de reserva. Un profesional sin mapeos se considera no configurado y no restringido, que es lo que hace la UI | **[test]** 6 casos, incluida la decisión de cero mapeos y el servicio de otro tenant |
+| A10 | Las FK que no son de usuario no tenían chequeo de tenant | El chequeo se deriva del descriptor de la tabla referenciada (`businessScoped` o `businessJoin`), sin nombres de tabla en la lógica. Aparecieron seis casos, no los dos reportados | **[test]** enumera los casos desde el SSoT y falla si una FK futura no tiene fixture |
+| A11 | Una carga fallida se veía igual que "no hay datos" | Estado de error distinto del vacío en tabla genérica, Clientes, Saldo, Perfil y los tres dashboards, siguiendo el patrón que ya usaba Auditoría | **[test]** casos de error contra vacío por vista |
+| A12 | Un guardado fallido se tragaba en silencio | Rama `else` que muestra el error por campo resuelto a i18n, con el flag de guardado en `finally` | **[test]** guardado rechazado por servicio |
+| A13 | El calendario no era responsive ni soportaba touch | Cambio a vista de día bajo 768px con la misma consulta `matchMedia` que el shell, `pointercancel` manejado como cancelación y `touch-action: none` en las superficies arrastrables | **[test]** 6 casos de viewport y 4 de cancelación de drag |
+| A14 | Cero `aria-sort`, `aria-invalid` y `aria-describedby`; orden y filas inoperables por teclado | El control de orden es un `<button>` real con `aria-sort`, la fila de Clientes abre por teclado, los campos con error se asocian a su mensaje, y crear o mover un bloque horario tiene camino de teclado | **[verificado]** de 0 a 17 ocurrencias de esos atributos |
+| A15 | Un test de GRANTs reportaba verde cuando debía saltar | Guard compartido que lanza si el rol es superusuario, no existe o es dueño de tablas migradas | **[test]** ambos archivos usan el mismo guard |
+| A16 | Los GRANTs de las 7 tablas de workflow no los cubría nada, y las suites que montan el app corrían como superusuario | Cobertura completa de las cuatro operaciones por tabla, con dos tests de exhaustividad, y las tres suites que montan el app pasaron al pool de menor privilegio | **[test]** 64 aserciones donde había 34; no apareció ningún GRANT faltante |
+| A2 | Sin rate limiting ni lockout, y los intentos contra usuarios inexistentes no dejaban rastro | Ventana deslizante en proceso, con presupuesto doble: 5 por (cliente, usuario) y 20 por cliente cada 15 minutos, más un presupuesto propio para el cambio de contraseña. Un login exitoso libera solo el presupuesto de la identidad, nunca el del cliente, para que tener una cuenta válida no reponga el cupo de barrido. El lockout por cuenta se rechazó a propósito: se lo puede disparar contra cualquier usuario que se sepa nombrar, y su estado solo existiría para cuentas reales, que es justamente el oráculo de existencia que el dummy hash evita. Para registrar los intentos contra usuarios inexistentes, `audit_events.business_id` pasó a admitir NULL: son intentos contra el sistema, no contra un negocio | **[test]** 20 casos, incluido que un usuario real y uno inventado devuelven la misma secuencia de estados y de cuerpos serializados |
+| A8 | Las etiquetas de FK no resolvían más allá de las primeras 500 filas | Resolución por pk, a demanda, agrupada por pasada de render y con caché negativo: un fallo de `labelFor` encola el id, espera la carga de la primera página, descarta lo que ya llegó y pide el resto. Cada id se pide una sola vez, así que una referencia colgada no reintenta en cada render, y una fila invisible por scope o baja lógica cae en una etiqueta neutra en vez de `#id`, que no decía nada y afirmaba que la fila existe | **[test]** 10 casos: resolución fuera de la primera página en celda y en selector, sin reintentos para una referencia rechazada, y el merge de búsqueda intacto |
+| A17 | Sin timeouts ni configuración de pool | `statement_timeout`, `lock_timeout` e `idle_in_transaction` a nivel de rol para la app; el rol dueño queda sin tope de statement porque una migración larga no se debe matar. Pool con `max` explícito y `connectionTimeoutMillis`, que es lo que además acota la espera cuando el pool está lleno | **[test]** casos de configuración de pool y de settings de rol |
+
+### Ítems nuevos surgidos durante las correcciones
+
+| # | Hueco | Corrección | Verificación |
+|---|---|---|---|
+| N1 | Un error lanzado antes del router no se podía correlacionar: el logger de request se montaba después de `express.json()` | El logger de request es ahora el primer middleware de `createApp`, que es el ensamblado único del servidor y de los tests | **[vivo]** la línea de error y la de acceso comparten el mismo uuid |
+| N2 | El backend en docker no recargaba con los cambios | La causa no eran los montajes, que ya existían, sino que `tsx watch` no recibe eventos inotify a través de un bind mount de Docker en Windows. Se activó polling por variable de entorno | **[vivo]** probado en ambos sentidos dentro del contenedor: con polling recarga, sin polling no |
+| N3 | El README documentaba otro proyecto (Alumnos, Materias, Inscripciones) | Reescrito para este sistema, con cada endpoint transcrito desde `api-paths.ts` y su verbo leído de la registración real | Revisión |
+| N4 | Los dos caminos de archivado divergían: el genérico no tocaba `is_active` | Resultó más grave que cosmético. `is_active`, no `deleted_at`, es el predicado de vigencia en al menos cinco guardas (dueño de agenda, oferta de servicios, staff asignable, búsquedas de usuario), y ninguna mira `deleted_at`. Un cliente borrado desde su ficha seguía siendo reservable y se le podía habilitar login o resetear la contraseña. Se agregó `activeColumn` al descriptor de soft delete y se unificó la lista de asignaciones de archivado en una sola función que usan ambos caminos | **[test]** 5 casos de paridad entre ambos caminos |
+| N5 | Las respuestas de escritura eran más angostas que las de lectura | Se resolvió solo, como consecuencia de A1: lectura y escritura proyectan por la misma función derivada del descriptor | **[verificado]** ambos caminos llaman `declaredColumnList` |
+
+### Ronda sobre las dimensiones más flojas del rubro
+
+Las dos preguntas del rubro de "Errores + logging" que antes se respondían "no lo hacemos", más las tres pantallas de UX que quedaban.
+
+| # | Hueco | Corrección | Verificación |
+|---|---|---|---|
+| M2 | El `<thead>` sticky era inerte por vivir dentro de un contenedor `overflow-x-auto` sin tope de altura | El contenedor mide la altura que le queda (alto del scroller menos las distancias a sus bordes, invariante a su propio alto y al scroll) y la aplica; si nada arriba scrollea, no inventa altura | **[test]** 11 casos, incluidas las dos propiedades de invariancia y que cada `th` queda sticky |
+| M3 | El contenido truncado solo se leía por el tooltip `title`, muerto en touch | Clase propia con override `@media (hover: none)` que desactiva el clip donde `title` no puede dispararse, cubriendo también una laptop táctil, no solo el teléfono | **[test]** la regla desactiva las tres propiedades de recorte |
+| M4 | FullCalendar no seguía el tema: en oscuro el popover "+N más" pintaba blanco (~1.6:1) | Un bloque mapea las 22 variables de color de FullCalendar a tokens semánticos, y los 47 literales `rgb()` del calendario pasan a `color-mix` sobre tokens. Los pocos literales que quedan van sobre el color de identidad del profesional, igual en ambos temas, y el test lo fija | **[test]** el test de tokens lee los defaults reales del paquete y exige que cada variable de color esté mapeada y el par del popover supere 4.5:1 en ambos temas |
+| A14+ | Accesibilidad: `<html lang>` no seguía al idioma, la navegación activa era solo color, chrome sin nombre accesible, sin reduced-motion, y axe cubría 2 pantallas en un solo tema | `lang` se estampa en el mismo punto que el tema (correcto ya en el primer pintado); la navegación usa `active-class` de RouterLink para emitir `aria-current`; Skeleton/EmptyState/filtros/TimeField ganaron roles, nombres y operabilidad por teclado; bloque `prefers-reduced-motion`; el landmark `<main>` de las pantallas de auth se agregó y se quitó la supresión de axe que lo tapaba; axe corre sobre 5 pantallas en ambos temas | **[test]** 15 casos de chrome accesible; typecheck y suite de tokens verdes |
+| M14 | El `version` de los logs quedaba en `'unknown'` en cualquier corrida compilada | `resolveVersion()` sube desde `__dirname` hasta el primer `package.json` con versión, que resuelve en ambos layouts; el test ahora compara contra la versión real y rechaza `'unknown'` | **[vivo]** el artefacto compilado con `VERSION` sin setear emite `"version":"1.0.0"` |
+| M15 | Los requests abortados no se logueaban: el logger escuchaba `finish` | Pasó a `res.on('close')`, que dispara siempre, con una sola línea por request y `aborted: true` cuando la respuesta no terminó | **[test]** una línea cuando disparan ambos eventos, y el request abortado queda logueado |
+| Logging: dónde se guarda | stdout sin límite ni explicación | Rotación por config (`json-file`, `max-size` 10m, `max-file` 5) en las tres services, y el README explica dónde cae la línea, cómo leerla, qué la evicta, y que el registro durable de quién hizo qué es `audit_events`, no el stream operativo | **[vivo]** confirmado que el daemon aplica la rotación creando un contenedor descartable desde el bloque renderizado |
+| Errores del navegador | No se enviaba nada y no había endpoint | `POST /api/telemetry/browser-error` recibe errores no capturados, rechazos y violaciones de contrato (no los 4xx, que el servidor ya vio); anónimo a propósito (un crash en el login no tiene sesión), acotado con límite de body de 4 KB, recorte de campos y el throttle ya existente; va al log operativo, nunca a `audit_events` ni a SQL | **[test]** acepta un reporte válido, rechaza uno grande, throttlea, y un payload con sintaxis de log forjada no crea una línea falsa |
+| Listas bespoke | Sin orden por columna ni estado en la URL | Auditoría, ledger, saldo y solicitudes ganaron orden server-side con allowlist por endpoint (una columna desconocida cae al orden default, nunca llega a SQL) y estado en la URL; saldo pasó de "cargar más" a paginación real. Apareció y se corrigió un defecto vivo: `listAppointments` ordenaba por `starts_at` sin desempate, en SQL y en la unión en memoria de ocurrencias virtuales | **[test]** cada columna cambia el orden en ambos sentidos, una columna hostil deja la tabla intacta, y paginar 12 filas con el mismo `created_at` visita cada una una vez |
+| M16 | `backend/package.json` (`main`, `start`) y el `webServer` de Playwright apuntaban a `dist/server.js` en vez de `dist/backend/src/server.js` | Corregido directamente en los tres lugares | **[vivo]** el build deja el artefacto en la ruta corregida y resuelve |
+
+### Ronda sobre integridad de CI y errores mostrados
+
+| # | Hueco | Corrección | Verificación |
+|---|---|---|---|
+| M6 | El camino genérico descartaba el código traducido y caía a un toast genérico | `GenericForm`/`CrudSection` resuelven el código de nivel superior por `apiErrorMessage` cuando no hay error por campo; el genérico queda solo como último fallback | **[test]** un nombre de servicio duplicado (409) muestra "Ya existe un registro", no el genérico |
+| M7 | El mensaje de cutoff perdía el parámetro de horas | Los sitios de `appointments.ts` que embeben un valor de runtime ahora mandan `detail: {key, params}` con las horas; el string i18n interpola `{hours}` | **[test]** el error de cutoff/no-show muestra las horas reales |
+| M8 | `fieldErrorMessages` solo consultaba `fieldDetails` | Consume solo `fieldDetails`, así que un error `fields`-only cae al código traducido de nivel superior; `business-settings` pasó a emitir `fieldDetails` con claves estables | **[test]** un `invalid_reference_role` `fields`-only muestra el código, nunca la prosa en inglés |
+| M10 | Los umbrales de coverage de la suite de DB nunca se ejecutaban en CI | CI corre `test:db:coverage`; el hang de merge documentado no se reprodujo. Umbrales 78/65/85/80 contra 82/71/90/86 medidos | **[vivo]** forzar el umbral a 99 hace salir a vitest con 1 aunque los 692 tests pasen: la cobertura sí es una compuerta |
+| M12 | Un spec autoconsumido podía convertir una falla real en un skip verde | `retries: 0` en ese describe, así que una falla posterior a la mutación falla fuerte en vez de reintentar con la contraseña vieja y saltar | Razonado; el modo de falla quedó cerrado |
+| M13 | Las acciones denegadas del super-admin no dejaban rastro | El writer de auditoría dejó de descartar el evento de un actor autenticado con negocio nulo (se registra con `business_id` nulo); el gate real anti-DoS (`actorId` nulo) se conserva, así que el tráfico anónimo no puede llenar la tabla append-only | **[test]** 4 casos: denegación de super-admin registrada, actor de tenant sin cambios, request no autenticado no escribe nada |
+| M17 | Sin timeout de request en el frontend | El cliente de API abandona un request a los 20 s y lo reporta como `network_error` en vez de colgar la vista; compone con el abort del llamador (un abort del llamador relanza, el timeout devuelve un resultado) | **[test]** un request colgado da `network_error`; un abort del llamador sigue relanzando |
+| M18 | El lint no corría en CI y ~70 archivos de test no se type-checkeaban | CI ganó un paso de lint, `frontend/e2e/**` entró a ESLint, y el `include` de tsconfig pasó de 13 archivos a un glob de todo `test/**`. Eso expuso ~113 problemas preexistentes (28 de lint, 83 de tipos en fixtures que nunca se compilaron), todos corregidos ajustando los fixtures al tipo real, sin `as any` ni suppressions | **[vivo]** `npm run typecheck` y `npm run lint` dan 0 sobre todo el árbol por primera vez |
+| M19 | La carrera de doble reserva no tenía test por HTTP | Nuevo test de DB que monta el app real y dispara dos `POST /schedule` concurrentes al mismo profesional y slot, aseverando exactamente un turno; barrera sobre `ACCESS EXCLUSIVE` en `services` para que ambos pasen la lectura de disponibilidad antes de que cualquiera commitee | **[vivo]** quitar el advisory lock hace que el test dé rojo (dos filas), restaurado byte-exacto; la propiedad se sostiene, sin cambio de código fuente |
+
+---
+
+### Decidido: la recuperación de contraseña queda mediada por un administrador
+
+No es un hueco pendiente sino una decisión tomada, y el motivo que la sostiene es concreto: el
+único componente que faltaba de verdad era el envío de mail, porque todo lo demás ya existía (el
+patrón de token de `auth.sessions`, la postura anti enumeración del login, el throttling, la
+auditoría sin actor y la pantalla de cambio forzado). Agregar un transporte de mail habría sumado
+una dependencia, credenciales de un proveedor y una superficie de tokens de reseteo, a cambio de un
+camino que la vía administrativa ya cubre.
+
+Lo que sí había que arreglar para que esa decisión fuera honesta era el callejón sin salida: un
+super-admin (Admin con negocio nulo) no podía administrar usuarios en ningún negocio, porque toda
+ruta de administración pedía el negocio del **llamador** y respondía 400 cuando no tenía. Con un
+solo Admin en un negocio, olvidar la contraseña dejaba la cuenta irrecuperable salvo con acceso a la
+base y el script `seed-admin`.
+
+Corregido resolviendo el negocio desde la **fila destino** en vez del actor, en las cuatro rutas de
+administración de usuarios (alta, baja, reseteo y habilitación de login). La ampliación se expresa
+como tipo (`UserAdminScope = {kind:'tenant',businessId} | {kind:'all'}`), no como un id que pueda
+venir en null, así que alcanzar todos los negocios hay que pedirlo y no se llega por descuido. El
+alta es la excepción: no tiene fila destino de la cual derivar el negocio, así que un super-admin lo
+nombra explícitamente en `target_business_id`, campo que se **rechaza** si lo manda un Admin con
+negocio propio. Los eventos de auditoría de esas cuatro rutas ahora se atribuyen al negocio del
+destino, que es el afectado, así que las acciones del super-admin dejan rastro.
+
+El runbook de recuperación quedó escrito en el README. Sigue sin haber 2FA.
+
+### Ronda sobre los huecos restantes del top-7
+
+| # | Hueco | Corrección | Verificación |
+|---|---|---|---|
+| Localización última milla | El backend ya mandaba las horas del cutoff en `detail`, pero `portal/AppointmentsView`, `AppointmentDetailPanel`, `useSettleCard` y `BusinessView` mostraban toasts fijos sin consumirlas | Los cuatro consumidores resuelven por `apiErrorMessage`/`fieldErrorMessages`, así que la cantidad de horas real llega al usuario | **[test]** el error de cutoff muestra las horas interpoladas en cada consumidor |
+| Flakiness paralela | `api-client.test.ts` y `fk-by-id-resolution.test.ts` fallaban intermitentemente en la corrida completa | Se encontró la fuga real: el mapa de GETs en vuelo coalescía sobre una promesa vieja (el colgado de 8 s), y el reset del caché de FK no frenaba un `flush` ya agendado. Se agregó `resetApiClientState` y un `dispose` por entrada, más un `afterEach` global; el comportamiento de coalescing no cambió | **[vivo]** la suite completa corre verde 3 veces seguidas |
+| M11 | Acumulación de fixtures en E2E sin limpieza | Cada spec que crea datos ahora los desactiva/borra en `afterAll`; donde el borrado es imposible (auditoría append-only) las aserciones se scopean al actor propio y `professionals-roster` filtra su fila en vez de asumir la página | **[vivo]** `professionals-roster` y `calendar-grants` pasan contra el server ya levantado con la limpieza corriendo |
+| M9 + tenant | El endpoint de auditoría usaba su propia gramática de filtros, y su lista no distinguía de qué negocio venía cada fila | Los filtros pasaron a la gramática `filter_` compartida (el rango de fechas colapsó en un `min,max` sobre `created_at`), con la URL y el request derivando de la misma función. Se agregó `business_id` a la proyección solo para super-admin, al decoder (que tolera claves extra) y como columna en `AuditView` con marcador "Sistema" para filas sin tenant | **[test]** un filtro en gramática compartida narrowea, un campo hostil se descarta, y el super-admin ve la columna con el marcador |
+| Super-admin escrituras de dominio | `business-closures`, `business-settings` y `grants` respondían 400 a un super-admin | Se aplicó el mismo idioma de `UserAdminScope` en un módulo `tenant-scope` compartido, resolviendo el negocio desde la fila destino (o un `target_business_id` explícito en el alta), en las rutas donde es inequívoco; las de `appointments`/`scheduling`/`ledger` quedan clasificadas y explicadas porque su authz corre atómica dentro de la tx de escritura y no admiten un swap mecánico | **[test]** 16 casos: super-admin actúa cross-tenant con el evento atribuido al negocio afectado; un admin de tenant sigue con 404 |
+| M20 | `client_professional_services` tenía CRUD genérico y cero UI | Sección nueva en la ficha del cliente: lista/agrega/edita overrides con selectores de FK (no ids a mano), precio como string validado por el SSoT, y el narrowing profesional→servicio reusando `offeredServiceIds`; sin borrado porque el descriptor no lo permite | **[test]** 9 casos, incluida la validación de precio y el gating por rol |
+
+---
+
+## Huecos abiertos
+
+El tier medio quedó vacío tras esta ronda. Lo que resta es la lista baja y la única decisión de
+alcance (recuperación por email), más un hueco heredado del super-admin en rutas de dominio de
+escritura transaccional (`appointments`/`scheduling`/`ledger`), clasificado arriba: su authz corre
+atómica con la escritura y necesita un análisis por ruta, no una barrida.
+
+### Bajo
+
+`POST` no aplica la denylist de columnas protegidas que sí aplica `PUT` · `/auth/me` y
+`PATCH /auth/me/profile` no pasan por `requirePasswordReady` · `cors()` sin restricción de origen
+y sin CSRF · `<html lang>` fijo en `es` · fechas y montos siempre en `es-AR` salvo dos pantallas
+que localizan el día · sin `aria-current` en la navegación de staff · sin toggle de tema ni idioma
+antes del login · ids de toast por `Date.now()` que colisionan · diagnósticos de contrato logueados
+solo en PROD · el descriptor completo viaja al bundle del browser · `AMOUNT_PATTERN` sin acotar
+contra `NUMERIC(12,2)` y varias columnas sin `maxLength` · el clamp de la ventana de reserva usa el
+reloj del dispositivo y el servidor la zona del negocio · fechas absolutas ya pasadas en 4 fixtures
+de tests de DB · el contenedor del frontend tiene el mismo problema de watcher que tenía el backend,
+pero Vite necesita `server.watch.usePolling`, no la variable de tsx · deriva de documentación en
+`ci.yml` y CLAUDE.md (16 tablas declaradas, 17 reales) · el párrafo de authz de CLAUDE.md no menciona
+el throttling recién agregado · tres entradas muertas en `apiError.code`: `invalid_credentials`,
+`invalid_current_password` y `password_reuse` tienen un único emisor cada una y siempre mandan
+`detail`, y el resolver prueba `detail` antes que `code`, así que esas tres traducciones son
+inalcanzables (la capa `code` en sí no está muerta: la usan los códigos que genera el cliente, como
+`network_error`, y los endpoints que no mandan `detail`, que son la mayoría).
+
+---
+
+## Correcciones al registro anterior
+
+Dos afirmaciones de la primera versión de este documento eran falsas y quedaron desmentidas al
+verificarlas:
+
+- El `README.md` de la raíz **sí existía** y documentaba el procedimiento de agregar una tabla. Su
+  defecto real era otro: título y sección de endpoints heredados de un proyecto académico, ya
+  reescritos.
+- El test negativo de inyección **sí existía**, y es más fuerte que un test E2E porque asevera
+  sobre el texto SQL compilado.
+
+Y una tercera, surgida durante las correcciones: el backend en docker **sí tenía** bind mounts. El
+problema era el watcher, no los montajes.
 
 ---
 
 ## Fortalezas
 
-**El motor SSoT es real, no aspiracional.** Un solo objeto (`shared/src/ssot/structure.ts:1`) es la entrada de la generación de SQL, la autorización, el scoping por tenant, la validación en ambos lados, los labels i18n y hasta los patrones de montaje de Express. El caso extremo: `shared/src/ssot/api-paths.ts:83-90` deriva el patrón de Express invocando los mismos builders que usa el cliente fetch con `':id'`, así que patrón y llamador no pueden divergir por construcción. La validación no está duplicada sino que es literalmente el mismo módulo (`backend/src/validation/validate.ts:5`).
+**El motor SSoT es real, no aspiracional.** Un solo objeto es la entrada de la generación de SQL,
+la autorización, el scoping por tenant, la validación en ambos lados, los labels i18n y los patrones
+de montaje de Express. Esta ronda lo reforzó en vez de esquivarlo: la proyección de columnas, la
+columna de baja lógica y el chequeo de tenant de las FK se resolvieron agregando declaraciones al
+descriptor, no casos especiales en el motor.
 
-**Donde un hecho no puede derivar, hay guarda automática.** Las migraciones son inmutables por diseño, así que las constantes TS y los literales SQL conviven necesariamente. En vez de convivir sin control, `backend/test/schema-ssot-drift.test.ts` asserta roles (`:53`), bounds numéricos (`:92-111`), default de timezone (`:114-118`), patrón de moneda (`:159-169`) y cobertura completa de columnas en la vista de lectura (`:120-148`). Lo mismo con los GRANTs (`app-grants-drift.test.ts:31-38`, aunque en CI colapsa). El drift falla un test, no producción.
+**Donde un hecho no puede derivar, hay guarda automática.** Tres capas independientes: constantes TS
+contra el texto de la migración, existencia y nulabilidad de cada columna contra el catálogo vivo, y
+GRANTs derivados del descriptor. A eso se sumaron guardas que fallan si aparece una tabla nueva sin
+auditar, sin cubrir en los GRANTs, o con una FK sin chequeo de tenant.
 
-**Autorización en dos regímenes, con la elección justificada.** El régimen declarativo cubre lo que una lista de roles puede expresar; donde no alcanza, el código lo dice y usa un régimen procedural: el ledger omite `roleRequired` a propósito con la razón escrita en el descriptor (`shared/src/ssot/domain/finance.ts:99-102`), y `assertOwnScheduleAllowed` (`crud-policy.ts:140-194`) expresa "Receptionist solo con un calendar_grant". La semántica de fallo está diferenciada a propósito para no filtrar existencia: 404 para tabla protegida o desconocida, 405 para operación no expuesta, 403 para rol insuficiente.
+**La superficie de inyección SQL está cerrada por construcción**, auditada sitio por sitio: todo
+valor bindeado, todo identificador desde un allowlist del descriptor, listas IN por `= ANY`.
 
-**El costo de colocar usuarios y datos de negocio en la misma DB se paga explícitamente.** No es una decisión por conveniencia: la vista sin secretos `auth.users_directory` (`20260702_090000_users_read_view.sql:8-30`) es el camino de lectura, las escrituras pasan por una denylist de 8 columnas (`put.ts:33-42`), y los roles de DB son de menor privilegio con DELETE retenido en tablas soft-delete y append-only.
+**Se prefirió unificar antes que policiar.** Donde aparecieron dos copias de un mismo hecho, se
+resolvió con una sola definición compartida en vez de un test de drift: el clamp de página y límite,
+y la lista de asignaciones del archivado lógico.
 
-**Superficie de inyección SQL cerrada por construcción.** Todo valor de usuario es un bind param y todo identificador interpolado sale de un allowlist derivado del descriptor, incluidas las columnas de INSERT/UPDATE (que vienen de `getNotDerivableFields`, no de las claves del body) y el nombre de tabla (allowlist `isKnownTable`). El único SQL dinámico generado usa `format('%I'/'%L')` de Postgres y solo se invoca desde el CLI de seed.
+**Los tests no fijan strings de UI**, las fechas de fixture de E2E son relativas al presente, y la
+separación de tres roles de Postgres en CI es lo que hace que las aserciones de privilegios
+signifiquen algo.
 
-**Concurrencia probada, no asumida.** `conflict-recheck.test.ts:70-95` demuestra que dos rechecks del mismo owner serializan sobre el `pg_advisory_xact_lock`, es decir que la carrera de doble reserva tiene un test que la ejercita en vez de un comentario que la promete.
-
-**Los tests no fijan strings de UI.** Los specs importan el bundle `es` y derivan los labels de estado de `APPOINTMENT_STATES` (`frontend/e2e/helpers.ts:3-20`, con `stateLabelEs` que lanza ante un estado desconocido), y las fechas de fixture son relativas al presente. Un cambio de wording no produce un rojo falso ni, peor, un verde falso.
-
-**El proyecto declara sus propias omisiones.** `docs/entrega/INFORME.md:749` dice explícitamente "Pendiente: no hay envío de errores del navegador al servidor. Corresponde declararlo", y `frontend/e2e/pagination.spec.ts:4-16` documenta en su encabezado que la pantalla objetivo no renderiza UI de paginación. La honestidad documental es en sí misma un punto a favor, aunque el mecanismo elegido para expresarla (warn+return en vez de skip) sea el equivocado.
+**El proyecto declara sus propias omisiones** en lugar de esconderlas, y esta ronda mantuvo esa
+disciplina: cada decisión de no hacer algo quedó escrita con su motivo, incluida la de no revocar
+sesiones desde el motor genérico y la de no agregar un spec E2E móvil sin poder verificarlo.

@@ -1,41 +1,98 @@
 import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { login, DEMO_ACCOUNTS, openScreen, es } from './helpers';
 
-const isPhoneWidth = ({ viewport }: { viewport: { width: number } | null }) =>
-  (viewport?.width ?? 0) >= 768;
-
 /**
- * One representative journey — login, then the Profesionales roster (ProfessionalsView, a direct
- * `<GenericTable>` consumer) — audited with axe-core. GenericTable is the shared widget behind
- * most staff list screens, so an a11y regression there (missing labels, contrast, landmark/heading
- * order) surfaces here without auditing every screen that embeds it.
+ * axe-core coverage over the shared widgets the whole staff app is built from: the login form, a
+ * data table (GenericTable), the filter row (GenericFilters), a dialog + form (DetailPanel +
+ * the create-user form) and the mobile nav drawer. Auditing the shared widget once catches a
+ * regression on every screen that embeds it, without paying to visit every screen.
  *
- * This is a smoke check for automatically detectable violations on the widget itself, not a full
- * manual WCAG audit of the app shell. The pre-login screen already has a known, pre-existing
- * finding (no <main> landmark around LoginView) that is unrelated to GenericTable and out of scope
- * here, so the audited page is the post-login destination, not the login form.
+ * Every audit runs in both themes. Contrast is the one class of violation that is a property of
+ * the palette rather than the markup, so a light-only audit is blind to half the product by
+ * construction. Flipping data-theme is what the app itself does to repaint (see styles/theme.ts),
+ * so it needs no reload: the extra cost is a second axe pass per screen (well under a second),
+ * not a second navigation.
+ *
+ * Cost control: the desktop project audits all five subjects; the phone project re-runs only the
+ * three whose layout genuinely differs at 390px. Navigation, not axe, is what costs wall clock
+ * here, and every screen is reached through one login + one nav click.
  */
+
+const isDesktopWidth = (page: Page) => (page.viewportSize()?.width ?? 0) >= 768;
+
+// Mirrors applyTheme() in src/styles/theme.ts — the attribute is the whole repaint mechanism.
+async function auditBothThemes(
+  page: Page,
+  build: (page: Page) => AxeBuilder = (p) => new AxeBuilder({ page: p }),
+): Promise<void> {
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate((t) => {
+      document.documentElement.dataset.theme = t;
+    }, theme);
+    const results = await build(page).analyze();
+    expect(
+      results.violations,
+      `theme=${theme}\n${JSON.stringify(results.violations, null, 2)}`,
+    ).toEqual([]);
+  }
+}
+
 test.describe('Accessibility (axe-core)', () => {
+  test('the login screen has no automatically detectable violations', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: es.actions.login })).toBeVisible({ timeout: 30_000 });
+
+    await auditBothThemes(page, (p) => new AxeBuilder({ page: p }));
+  });
+
   test('the Profesionales roster (GenericTable) has no automatically detectable violations', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await openScreen(page, es.nav.professionals);
     await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 
-    const results = await new AxeBuilder({ page }).analyze();
-    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+    await auditBothThemes(page);
+  });
+
+  // A referenced-id filter renders a searchable combobox whose only visible name is the field name
+  // beside it, so this is the screen where a broken label association shows up.
+  test('an active filter row (GenericFilters) has no automatically detectable violations', async ({ page }) => {
+    test.skip(!isDesktopWidth(page), 'audited once, at desktop width');
+
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+    await openScreen(page, es.nav.users);
+    await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole('combobox', { name: es.generic.selectColumnAria }).selectOption('business_id');
+    // exact: 'Agregar' is otherwise a substring of the page's 'Agregar usuario' create button.
+    await page.getByRole('button', { name: es.generic.add, exact: true }).click();
+    await expect(page.getByPlaceholder(es.generic.all)).toBeVisible({ timeout: 10_000 });
+
+    await auditBothThemes(page);
+  });
+
+  test('an open dialog with a form has no automatically detectable violations', async ({ page }) => {
+    test.skip(!isDesktopWidth(page), 'audited once, at desktop width');
+
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+    await openScreen(page, es.nav.users);
+    await page.getByRole('button', { name: es.users.addUser }).click();
+    await expect(page.getByRole('dialog', { name: es.users.newUser })).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.locator('#username')).toBeVisible({ timeout: 10_000 });
+
+    await auditBothThemes(page);
   });
 
   // Phone-width only: the drawer replaces the sidebar below the md breakpoint, so at desktop
   // width there is nothing to open and nothing to audit.
   test('the open navigation drawer has no automatically detectable violations', async ({ page }) => {
-    test.skip(isPhoneWidth({ viewport: page.viewportSize() }), 'sidebar is permanent at this width');
+    test.skip(isDesktopWidth(page), 'sidebar is permanent at this width');
 
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await page.getByRole('button', { name: es.nav.openMenu }).click();
     await expect(page.getByRole('dialog', { name: es.nav.menu })).toHaveCount(1);
 
-    const results = await new AxeBuilder({ page }).analyze();
-    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+    await auditBothThemes(page);
   });
 });

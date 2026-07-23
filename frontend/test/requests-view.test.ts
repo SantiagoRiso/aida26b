@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
+import { createRouter, createMemoryHistory } from 'vue-router';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
@@ -8,6 +9,7 @@ import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import type { VirtualOccurrence } from '@shared/ssot/query-types';
 import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
+import { filterParam } from '@shared/ssot/list-protocol';
 
 vi.mock('@/api/appointments', () => ({
   listAppointments: vi.fn(),
@@ -25,6 +27,17 @@ import RequestsView from '@/views/staff/RequestsView.vue';
 
 function makeI18n() {
   return createI18n({ legacy: false, locale: 'es', messages: { es, en } });
+}
+
+// The triage list keeps its professional, order and search in the URL, so it needs a router.
+async function makeRouter(initialUrl = '/') {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/', component: { template: '<div/>' } }],
+  });
+  await router.push(initialUrl);
+  await router.isReady();
+  return router;
 }
 
 const mockedList = vi.mocked(listAppointments);
@@ -93,10 +106,10 @@ describe('RequestsView — virtual filter', () => {
   it('never lists a virtual occurrence among pending requests', async () => {
     mockedList.mockResolvedValue({ ok: true, data: [makeAppt('r1'), makeVirtual()] });
 
-    const wrapper = mount(RequestsView, { global: { plugins: [makeI18n()] } });
+    const wrapper = mount(RequestsView, { global: { plugins: [await makeRouter(), makeI18n()] } });
     await flushPromises();
 
-    expect(wrapper.findAll('li[role="button"]')).toHaveLength(1);
+    expect(wrapper.findAll('tbody tr[role="button"]')).toHaveLength(1);
   });
 });
 
@@ -108,17 +121,82 @@ describe('RequestsView — detail day range', () => {
     mockedList.mockResolvedValue({ ok: true, data: [request] });
 
     const wrapper = mount(RequestsView, {
-      global: { plugins: [makeI18n()], stubs: { CalendarView: true } },
+      global: { plugins: [await makeRouter(), makeI18n()], stubs: { CalendarView: true } },
     });
     await flushPromises();
-    await wrapper.get('li[role="button"]').trigger('click');
+    await wrapper.get('tbody tr[role="button"]').trigger('click');
     await flushPromises();
 
     const day = request.starts_at.slice(0, 10);
     const dayCall = mockedList.mock.calls
       .map(([filters]) => filters)
-      .find((filters) => filters.professional_user_id === request.professional_user_id);
+      .find((filters) => filters?.professional_user_id === request.professional_user_id);
     expect(dayCall?.date_from).toBe(day);
     expect(dayCall?.date_to).toBe(day);
+  });
+});
+
+// Ordering is the server's: the screen never re-sorts what came back, so a header click has to
+// reach the request or it does nothing at all.
+describe('RequestsView — column ordering', () => {
+  function headerFor(wrapper: ReturnType<typeof mount>, label: string) {
+    const th = wrapper.findAll('th').find((cell) => cell.text().startsWith(label));
+    expect(th, `no header for ${label}`).toBeTruthy();
+    return th!;
+  }
+
+  function lastRequestList() {
+    const calls = mockedList.mock.calls.filter(([filters]) => filters?.state === 'requested');
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1][0];
+  }
+
+  it('clicking a sortable header asks the server for that order and reverses on a second click', async () => {
+    mockedList.mockResolvedValue({ ok: true, data: [makeAppt('r1')] });
+    const router = await makeRouter();
+    const wrapper = mount(RequestsView, { global: { plugins: [router, makeI18n()] } });
+    await flushPromises();
+
+    await headerFor(wrapper, es.calendar.priceLabel).get('button').trigger('click');
+    await flushPromises();
+    expect(lastRequestList()).toMatchObject({ sort: 'price', dir: 'asc' });
+    expect(router.currentRoute.value.query).toMatchObject({ sort: 'price', dir: 'asc' });
+
+    await headerFor(wrapper, es.calendar.priceLabel).get('button').trigger('click');
+    await flushPromises();
+    expect(lastRequestList()).toMatchObject({ sort: 'price', dir: 'desc' });
+  });
+
+  it('reports the active column through aria-sort', async () => {
+    mockedList.mockResolvedValue({ ok: true, data: [makeAppt('r1')] });
+    const wrapper = mount(RequestsView, { global: { plugins: [await makeRouter(), makeI18n()] } });
+    await flushPromises();
+
+    expect(headerFor(wrapper, es.calendar.dateLabel).attributes('aria-sort')).toBe('none');
+    await headerFor(wrapper, es.calendar.dateLabel).get('button').trigger('click');
+    await flushPromises();
+    expect(headerFor(wrapper, es.calendar.dateLabel).attributes('aria-sort')).toBe('ascending');
+  });
+
+  it('a pasted link seeds the first request with its order and professional', async () => {
+    mockedList.mockResolvedValue({ ok: true, data: [makeAppt('r1')] });
+    const router = await makeRouter(`/?sort=starts_at&dir=desc&${filterParam('professional_user_id')}=7`);
+    mount(RequestsView, { global: { plugins: [router, makeI18n()] } });
+    await flushPromises();
+
+    expect(lastRequestList()).toMatchObject({
+      sort: 'starts_at',
+      dir: 'desc',
+      professional_user_id: '7',
+      state: 'requested',
+    });
+  });
+
+  it('a column the server does not sort by never reaches the request', async () => {
+    mockedList.mockResolvedValue({ ok: true, data: [makeAppt('r1')] });
+    mount(RequestsView, { global: { plugins: [await makeRouter('/?sort=client_name&dir=asc'), makeI18n()] } });
+    await flushPromises();
+
+    expect(lastRequestList()?.sort).toBeUndefined();
   });
 });

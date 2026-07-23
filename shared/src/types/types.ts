@@ -109,6 +109,10 @@ type CrudPolicy = {
 type SoftDeletePolicy = {
   deletedAtColumn: string;
   deletedByColumn?: string;
+  // Set when the table also carries an activity flag that guards read it as "usable" (auth.users
+  // is_active). Archiving has to clear it, or an archived row stays bookable, grantable and
+  // credential-resettable everywhere those guards look at the flag instead of the archive stamp.
+  activeColumn?: string;
 };
 
 type StatusMeta = {

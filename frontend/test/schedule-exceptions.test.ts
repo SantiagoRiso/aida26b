@@ -6,6 +6,7 @@ function row(overrides: Partial<ExceptionRow> = {}): ExceptionRow {
     id: '1',
     professional_user_id: '10',
     resource_id: null,
+    business_id: null,
     exception_date: '2026-07-15',
     is_unavailable: true,
     start_time: null,

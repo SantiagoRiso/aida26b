@@ -1,4 +1,8 @@
 import type { App } from 'vue';
+import { API_PREFIX, telemetryPaths } from '@shared/ssot/api-paths';
+import { BROWSER_ERROR_MAX_PER_PAGE_LOAD, clipReportField } from '@shared/ssot/telemetry';
+import type { BrowserErrorReport } from '@shared/ssot/telemetry';
+import { setApiContractFailureReporter } from '@/api/contract-validation';
 
 export type UncaughtFailure = { source: 'render' | 'promise'; message: string; info?: string };
 type UncaughtFailureReporter = (failure: UncaughtFailure) => void;
@@ -30,4 +34,60 @@ export function installGlobalErrorHandlers(app: App): void {
   window.addEventListener('unhandledrejection', (event) => {
     uncaughtFailureReporter({ source: 'promise', message: describe(event.reason) });
   });
+}
+
+// One budget per page load, so a component that re-throws on every frame costs one report, not
+// one per frame. Identical failures are collapsed: the second occurrence teaches nobody anything.
+function createBrowserErrorSender(): (report: BrowserErrorReport) => void {
+  const seen = new Set<string>();
+
+  return (report) => {
+    const fingerprint = `${report.source}|${report.message}|${report.path ?? ''}`;
+    if (seen.has(fingerprint) || seen.size >= BROWSER_ERROR_MAX_PER_PAGE_LOAD) return;
+    seen.add(fingerprint);
+
+    const body: BrowserErrorReport = {
+      source: report.source,
+      message: clipReportField(report.message),
+      // Route only. The query string carries filters, search terms and ids.
+      page: window.location.pathname,
+    };
+    if (report.context !== undefined) body.context = clipReportField(report.context);
+    if (report.path !== undefined) body.path = clipReportField(report.path);
+    if (report.status !== undefined) body.status = report.status;
+
+    try {
+      // keepalive: the failures worth reporting are the ones followed by a reload or a navigation.
+      void fetch(`${API_PREFIX}${telemetryPaths.browserError()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'same-origin',
+        keepalive: true,
+      }).catch(() => { /* a report that fails to send must not become a second failure */ });
+    } catch { /* same */ }
+  };
+}
+
+// Ordinary 4xx answers never reach either reporter: the api client returns them as results
+// before the contract validator runs, so what is sent here is only what indicates a defect.
+export function installErrorTelemetry(): () => void {
+  const send = createBrowserErrorSender();
+
+  const restoreUncaught = setUncaughtFailureReporter((failure) => {
+    if (import.meta.env.DEV) console.error('uncaught_error', failure);
+    send({ source: failure.source, message: failure.message, context: failure.info });
+  });
+
+  const restoreContract = setApiContractFailureReporter((failure) => {
+    if (import.meta.env.DEV) console.error('api_contract_failure', failure);
+    send({
+      source: 'contract',
+      message: failure.diagnostic,
+      path: failure.path,
+      status: failure.status,
+    });
+  });
+
+  return () => { restoreContract(); restoreUncaught(); };
 }

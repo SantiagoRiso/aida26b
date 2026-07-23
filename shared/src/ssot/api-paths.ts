@@ -80,6 +80,12 @@ export const closurePaths = {
   detail: (id: Id) => `/business-closures/${id}`,
 };
 
+// Browser error ingest. Anonymous by design: a crash on the login screen is exactly the
+// failure worth seeing, and the user has no session then.
+export const telemetryPaths = {
+  browserError: () => '/telemetry/browser-error',
+};
+
 // Express mount patterns, derived from the builders by substituting ':id' — pattern and
 // builder cannot drift because the pattern IS the builder's output.
 const pattern = (path: string) => `${API_PREFIX}${path}`;
@@ -152,4 +158,8 @@ export const BUSINESS_PATTERNS = {
 export const CLOSURE_PATTERNS = {
   list: pattern(closurePaths.list()),
   detail: pattern(closurePaths.detail(':id')),
+};
+
+export const TELEMETRY_PATTERNS = {
+  browserError: pattern(telemetryPaths.browserError()),
 };

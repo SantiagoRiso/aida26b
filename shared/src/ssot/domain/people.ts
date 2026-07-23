@@ -7,6 +7,13 @@ export const softDelete: SoftDeletePolicy = {
   deletedByColumn: 'deleted_by_user_id',
 };
 
+// Everything backed by auth.users. Scheduling, grants, booking and the admin user flows all ask
+// `is_active` whether an account may still be used, so an archived account has to be inactive too.
+export const userSoftDelete: SoftDeletePolicy = {
+  ...softDelete,
+  activeColumn: 'is_active',
+};
+
 // A receptionist's world is the calendars they were granted, reads and writes alike — the same
 // relationship on every table it scopes. db/grants.ts owns the SQL side of this shape.
 export const receptionistGrantScope: GrantScopeDescriptor = {
@@ -140,7 +147,7 @@ export const peopleTables = {
     // Reads go through a view, never the raw table — the generic SELECT is a literal
     // "SELECT *" and auth.users carries password_hash/password_salt.
     sqlTable: 'auth.users_directory',
-    softDelete,
+    softDelete: userSoftDelete,
   } satisfies TableStructure,
 
   // Session lifecycle is owned by auth; the token is secret and absent here.
@@ -242,7 +249,7 @@ export const peopleTables = {
     roleDiscriminator: { column: 'role', value: 'Client' },
     businessScoped: true,
     crud: { create: false, read: true, update: true, delete: true },
-    softDelete,
+    softDelete: userSoftDelete,
     roleRequired: {
       create: [],
       read:   ['Admin', 'Receptionist', 'Professional', 'Client'],
@@ -285,7 +292,7 @@ export const peopleTables = {
     roleDiscriminator: { column: 'role', value: 'Professional' },
     businessScoped: true,
     crud: { create: false, read: true, update: true, delete: true },
-    softDelete,
+    softDelete: userSoftDelete,
     schedulable: professionalSchedulable,
     roleRequired: {
       create: [],

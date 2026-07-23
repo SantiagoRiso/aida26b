@@ -1,8 +1,7 @@
 import type express from 'express';
 import {
-  LIST_DEFAULT_LIMIT,
-  LIST_MAX_LIMIT,
-  LIST_MAX_PAGE,
+  clampLimit,
+  clampPage,
   INCLUDE_UNRELATED_PARAM,
   INCLUDE_UNRELATED_VALUE,
   isFilterParam,
@@ -54,19 +53,8 @@ export function parseListRequest(query: express.Request['query']): ListRequestSp
 
   const dir: 'asc' | 'desc' = firstOf(query.dir) === 'desc' ? 'desc' : 'asc';
 
-  const page = Math.max(
-    1,
-    Math.min(parseInt(String(firstOf(query.page) || '1'), 10) || 1, LIST_MAX_PAGE),
-  );
-
-  const requestedLimit = firstOf(query.limit);
-  const limit = Math.max(
-    1,
-    Math.min(
-      parseInt(String(requestedLimit || LIST_DEFAULT_LIMIT), 10) || LIST_DEFAULT_LIMIT,
-      LIST_MAX_LIMIT,
-    ),
-  );
+  const page = clampPage(firstOf(query.page));
+  const limit = clampLimit(firstOf(query.limit));
 
   const includeUnrelated = firstOf(query[INCLUDE_UNRELATED_PARAM]) === INCLUDE_UNRELATED_VALUE;
 

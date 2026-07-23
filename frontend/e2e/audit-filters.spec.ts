@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page, Locator } from '@playwright/test';
-import { login, DEMO_ACCOUNTS, openScreen, findProfessionalId, isoDaysFromNow, es } from './helpers';
+import { login, DEMO_ACCOUNTS, openScreen, findProfessionalId, cleanupUsers, isoDaysFromNow, es } from './helpers';
 
 /**
  * AuditView — non-admin access, filters (entity/actor/event/date/outcome) + reset, empty, the
@@ -91,6 +91,14 @@ test.beforeAll(async ({ browser }) => {
   const results = await Promise.all(calls);
   if (!results.every((r) => r.status() === 403)) throw new Error('expected every self-seed call to be denied with 403');
   await actorCtx.close();
+});
+
+// Deactivate the throwaway actor so it stops adding a Receptionist to every roster/user list on
+// re-runs. The 55 audit_events rows it produced are append-only and CANNOT be deleted by design —
+// they're harmless here because every assertion scopes to this actor's id (total === 55 by actor
+// filter), never to a global audit count, so they never accumulate into a wrong answer.
+test.afterAll(async ({ browser }) => {
+  await cleanupUsers(browser, [deniedActorId]);
 });
 
 test.describe('Audit log (admin) — access, filters, denied styling, pagination', () => {

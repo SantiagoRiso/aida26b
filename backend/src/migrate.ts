@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { createOwnerPool } from './db';
 import { DEFAULT_MIGRATIONS_DIR, listMigrationFiles, readMigration } from './migration-files';
 
@@ -11,6 +11,24 @@ dotenv.config();
 // Same advisory-lock key Flyway uses by convention — coexists with any
 // external migration tool that follows the same convention.
 const LOCK_KEY = 7910;
+
+// Assigning a real transaction id up front gives the transaction an identity that survives no
+// matter what the migration body does; a migration that commits lands in a different one.
+async function currentTxId(client: PoolClient): Promise<string> {
+  const { rows } = await client.query<{ id: string }>(
+    'SELECT pg_current_xact_id()::text AS id'
+  );
+  return rows[0].id;
+}
+
+// Null outside a transaction block, since the implicit transaction wrapping this SELECT writes
+// nothing and so is never assigned an id.
+async function currentTxIdIfAssigned(client: PoolClient): Promise<string | null> {
+  const { rows } = await client.query<{ id: string | null }>(
+    'SELECT pg_current_xact_id_if_assigned()::text AS id'
+  );
+  return rows[0].id;
+}
 
 export async function runMigrations(pool: Pool, dir: string): Promise<number> {
   const client = await pool.connect();
@@ -48,7 +66,16 @@ export async function runMigrations(pool: Pool, dir: string): Promise<number> {
 
         await client.query('BEGIN');
         try {
+          const txId = await currentTxId(client);
           await client.query(sql);
+          // The file must not have ended the runner's transaction: everything after that point,
+          // including the schema_migrations row below, would commit without rollback protection.
+          if ((await currentTxIdIfAssigned(client)) !== txId) {
+            throw new Error(
+              'the file ended the runner transaction (a COMMIT/ROLLBACK of its own, ' +
+                'or a procedure that commits). Migrations must not manage transactions.'
+            );
+          }
           await client.query(
             'INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)',
             [file, checksum]

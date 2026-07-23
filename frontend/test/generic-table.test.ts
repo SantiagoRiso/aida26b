@@ -109,7 +109,7 @@ vi.mock('@/api/crud', async (importOriginal) => {
       data: [serviceRow()],
       meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
     }),
-    getRow: vi.fn(),
+    getRow: () => Promise.resolve({ ok: false, status: 404, code: 'not_found', message: 'not found' }),
     createRow: vi.fn(),
     updateRow: vi.fn(),
     deleteRow: vi.fn(),
@@ -162,7 +162,7 @@ describe('GenericTable for services', () => {
     expect(wrapper.text()).toContain('Agregar');
   });
 
-  it('marks only sortable columns with cursor-pointer class', async () => {
+  it('gives only sortable columns a sort control', async () => {
     const { pinia, router, i18n } = makePlugins();
     const wrapper = mount(GenericTable, {
       props: { tableKey: 'services' as TableKey },
@@ -170,16 +170,15 @@ describe('GenericTable for services', () => {
     });
     await flushPromises();
 
-    const clickableThs = wrapper.findAll('th').filter((th) => th.classes().includes('cursor-pointer'));
-    expect(clickableThs.length).toBeGreaterThan(0);
+    const sortableThs = wrapper.findAll('th').filter((th) => th.find('button').exists());
+    expect(sortableThs.length).toBeGreaterThan(0);
 
     const cols = structure.tables.services.columns as Record<string, ColumnDef>;
     const descCol = cols['description'];
     if (descCol && !descCol.sortable) {
-      const nonClickable = wrapper.findAll('th').filter((th) =>
-        !th.classes().includes('cursor-pointer') && th.text().includes('Descripción')
-      );
-      expect(nonClickable.length).toBeGreaterThan(0);
+      const plainHeader = wrapper.findAll('th').find((th) => th.text().includes('Descripción'));
+      expect(plainHeader!.find('button').exists()).toBe(false);
+      expect(plainHeader!.attributes('aria-sort')).toBeUndefined();
     }
   });
 
@@ -254,16 +253,69 @@ describe('GenericTable — sortable header toggles asc/desc and reloads', () => 
 
     const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'));
     expect(nameHeader).toBeTruthy();
+    expect(nameHeader!.attributes('aria-sort')).toBe('none');
 
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
     expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'asc' }));
     expect(nameHeader!.text()).toContain('↑');
+    expect(nameHeader!.attributes('aria-sort')).toBe('ascending');
 
-    await nameHeader!.trigger('click');
+    await nameHeader!.get('button').trigger('click');
     await flushPromises();
     expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'desc' }));
     expect(nameHeader!.text()).toContain('↓');
+    expect(nameHeader!.attributes('aria-sort')).toBe('descending');
+  });
+
+  // A native button is what makes the control reachable by Tab and operable with Enter/Space —
+  // the browser fires click for both, so a keydown handler of our own would be redundant.
+  it('the sort control is a button, so keyboard activation sorts too', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockClear();
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [serviceRow()],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    const nameHeader = wrapper.findAll('th').find((th) => th.text().includes('Nombre'))!;
+    const sortButton = nameHeader.get('button');
+    expect(sortButton.element.tagName).toBe('BUTTON');
+    expect(sortButton.attributes('type')).toBe('button');
+    expect(sortButton.attributes('disabled')).toBeUndefined();
+    expect(nameHeader.attributes('scope')).toBe('col');
+
+    await sortButton.trigger('click');
+    await flushPromises();
+
+    expect(listRows).toHaveBeenLastCalledWith('services', expect.objectContaining({ sort: 'name', dir: 'asc' }));
+    expect(nameHeader.attributes('aria-sort')).toBe('ascending');
+  });
+
+  it('names the table for assistive tech', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: [serviceRow()],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 1 },
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.get('table').attributes('aria-label')).toBe(structure.tables.services.title!.es);
   });
 
   it('a non-sortable header click does not reload or set a sort field', async () => {
@@ -318,8 +370,8 @@ describe('GenericTable — loading skeleton', () => {
   });
 });
 
-describe('GenericTable — empty state also masks a load error', () => {
-  it('a failed list request renders the same empty state as a genuinely empty table, not an error UI', async () => {
+describe('GenericTable — a failed load is not an empty table', () => {
+  it('a failed list request renders the load-error state, never the "no items" one', async () => {
     const { listRows } = await import('@/api/crud');
     (listRows as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: false,
@@ -335,19 +387,38 @@ describe('GenericTable — empty state also masks a load error', () => {
     });
     await flushPromises();
 
-    // loadError is set internally but the template never branches on it — rows.length === 0
-    // always renders the plain "no items" EmptyState, whether the list was empty or the fetch failed.
-    expect(wrapper.findComponent({ name: 'EmptyState' }).exists()).toBe(true);
-    expect(wrapper.text()).not.toMatch(/error|falló|fall[oó]/i);
+    expect(wrapper.text()).toContain(es.emptyState.loadErrorHeading);
+    expect(wrapper.text()).not.toContain(es.emptyState.noItemsBody);
+    // The server's English prose is never rendered.
+    expect(wrapper.text()).not.toContain('boom');
+  });
+
+  it('a genuinely empty list still renders the empty state, not the error one', async () => {
+    const { listRows } = await import('@/api/crud');
+    (listRows as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      data: [],
+      meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 0 },
+    });
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericTable, {
+      props: { tableKey: 'services' as TableKey },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(es.emptyState.noItemsBody);
+    expect(wrapper.text()).not.toContain(es.emptyState.loadErrorHeading);
   });
 });
 
-describe('GenericTable — FK cell shows the referenced label, or #id when unresolved', () => {
+describe('GenericTable — FK cell shows the referenced label, or that it is unavailable', () => {
   beforeEach(() => {
     resetFkOptionsCache();
   });
 
-  it('resolves a known FK id to its label and falls back to #id for one the options list does not contain', async () => {
+  it('resolves a known FK id to its label and names an unreadable one as unavailable', async () => {
     const { listRows } = await import('@/api/crud');
     (listRows as ReturnType<typeof vi.fn>).mockImplementation(async (table: string) => {
       if (table === 'professional_services') {
@@ -378,7 +449,10 @@ describe('GenericTable — FK cell shows the referenced label, or #id when unres
     await flushPromises();
 
     expect(wrapper.text()).toContain('Dra. Cascada');
-    expect(wrapper.text()).toContain('#999');
+    // 999 is not on the cached page and the by-id read is refused: an id would tell an operator
+    // nothing and would assert the row exists.
+    expect(wrapper.text()).toContain(es.generic.unresolvedReference);
+    expect(wrapper.text()).not.toContain('#999');
   });
 });
 
@@ -470,17 +544,24 @@ describe('GenericTable — pagination limit is derived from meta, not a hardcode
 
   it('total not a multiple of the page size — navigating to the last page renders the partial page, not an empty one', async () => {
     const { listRows } = await import('@/api/crud');
-    (listRows as ReturnType<typeof vi.fn>)
-      .mockImplementationOnce(async () => ({
+    // Argument-aware, not a positional queue: rendering the services rows resolves the
+    // business_id FK label, which fires its own listRows('businesses'); a positional
+    // mockImplementationOnce chain would let that call eat the page-2 stub.
+    (listRows as ReturnType<typeof vi.fn>).mockImplementation(async (table: string, opts?: { page?: number }) => {
+      if (table !== 'services') return { ok: true, data: [], meta: { page: 1, limit: 20, total: 0 } };
+      if ((opts?.page ?? 1) >= 2) {
+        return {
+          ok: true,
+          data: Array.from({ length: 13 }, (_, i) => serviceRow(i + 21, `Servicio ${i + 21}`)),
+          meta: { page: 2, limit: 20, total: 33 },
+        };
+      }
+      return {
         ok: true,
         data: Array.from({ length: 20 }, (_, i) => serviceRow(i + 1, `Servicio ${i + 1}`)),
         meta: { page: 1, limit: 20, total: 33 },
-      }))
-      .mockImplementationOnce(async () => ({
-        ok: true,
-        data: Array.from({ length: 13 }, (_, i) => serviceRow(i + 21, `Servicio ${i + 21}`)),
-        meta: { page: 2, limit: 20, total: 33 },
-      }));
+      };
+    });
 
     const { pinia, router, i18n } = makePlugins();
     const wrapper = mount(GenericTable, {

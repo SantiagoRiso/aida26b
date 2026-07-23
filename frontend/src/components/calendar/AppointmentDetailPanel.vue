@@ -17,6 +17,7 @@ import { getMySettings } from '@/api/business';
 import { resolveActionable } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
+import { apiErrorMessage } from '@/i18n/api-errors';
 import { useCurrency } from '@/composables/useCurrency';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useLabel } from '@/composables/useLabel';
@@ -166,11 +167,10 @@ async function doTransition(to: string) {
   saving.value = false;
   if (result.ok) {
     emit('mutated', result.data);
-  } else if (result.code === 'too_early') {
-    toast.error('completeTooEarly');
   } else {
-    // Defensive: the button guard should already exclude illegal transitions the server 422s.
-    toast.error('genericError');
+    // The button guard should already exclude illegal transitions; when the server still 422s, its
+    // detail carries the reason and any runtime value (e.g. the no_show/cancel cutoff hours).
+    toast.error(apiErrorMessage(result, 'toast.genericError'));
   }
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   weekdayToDate, dateToWeekday, overlaps, eventToWeekdayTimes, blockToEvent, decideCreate, decideUpdate,
-  snapToNeighbors,
+  snapToNeighbors, type TemplateBlock,
 } from '@/composables/scheduleTemplateGrid';
 
 describe('scheduleTemplateGrid', () => {
@@ -31,7 +31,7 @@ describe('scheduleTemplateGrid', () => {
   });
 
   it('detects an overlap only within the same weekday, ignoring the edited block', () => {
-    const others = [
+    const others: TemplateBlock[] = [
       { id: '1', professional_user_id: '9', weekday: 'mon', start_time: '09:00', end_time: '12:00' },
       { id: '2', professional_user_id: '9', weekday: 'tue', start_time: '09:00', end_time: '12:00' },
     ];
@@ -43,7 +43,7 @@ describe('scheduleTemplateGrid', () => {
 
   describe('snapToNeighbors', () => {
     // Edges available to snap onto: 09:00, 12:00, 15:00, 18:00.
-    const neighbours = [
+    const neighbours: TemplateBlock[] = [
       { id: '1', professional_user_id: '9', weekday: 'mon', start_time: '09:00', end_time: '12:00' },
       { id: '2', professional_user_id: '9', weekday: 'mon', start_time: '15:00', end_time: '18:00' },
     ];
@@ -82,7 +82,7 @@ describe('scheduleTemplateGrid', () => {
   });
 
   describe('decideCreate', () => {
-    const existing = [
+    const existing: TemplateBlock[] = [
       { id: '1', professional_user_id: '9', weekday: 'mon', start_time: '09:00', end_time: '12:00' },
     ];
 
@@ -108,7 +108,7 @@ describe('scheduleTemplateGrid', () => {
   });
 
   describe('decideUpdate', () => {
-    const existing = [
+    const existing: TemplateBlock[] = [
       { id: '1', professional_user_id: '9', weekday: 'mon', start_time: '09:00', end_time: '12:00' },
       { id: '2', professional_user_id: '9', weekday: 'tue', start_time: '09:00', end_time: '12:00' },
     ];

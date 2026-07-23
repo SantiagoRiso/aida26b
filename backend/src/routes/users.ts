@@ -20,6 +20,8 @@ import {
   findContactOnlyClient,
   enableClientLogin,
 } from '../db/users';
+import type { UserAdminScope } from '../db/users';
+import { getBusinessSettings } from '../db/businesses';
 import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 import type { CreatedUserResult, EnabledLoginResult } from '../../../shared/src/ssot/contracts/users';
 import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
@@ -50,7 +52,62 @@ type CreateUserInput = {
   role: string;
   displayName: string;
   dni: string | null;
+  businessId: number;
 };
+
+// These events are attributed to the tenant they affect (the target's), not the actor's: a
+// super-admin has no business of their own, and an event filed under nothing at all leaves the
+// action untraceable. Null only for a target who is themselves tenantless.
+function numericBusiness(businessId: string | null): number | null {
+  return businessId == null ? null : Number(businessId);
+}
+
+function isSuperAdmin(user: { role: string; business_id: number | null }): boolean {
+  return user.role === 'Admin' && user.business_id == null;
+}
+
+// Which tenants the caller may administer users in. The super-admin exists to act across tenants,
+// so the reach is widened for that role alone; everyone else is confined to their session's
+// business and is refused outright without one.
+function userAdminScope(req: express.Request, res: express.Response): UserAdminScope | null {
+  if (isSuperAdmin(authenticatedUser(req))) return { kind: 'all' };
+  const businessId = requireBusinessContext(req, res);
+  if (businessId == null) return null;
+  return { kind: 'tenant', businessId };
+}
+
+// Creation has no target row to read a tenant off, so a super-admin names it explicitly. For every
+// other caller the tenant is their own and naming one is refused rather than honoured, so no
+// account can be minted outside the caller's business. Null means a response was already sent.
+async function resolveCreationBusiness(
+  pool: Pool,
+  req: express.Request,
+  res: express.Response,
+): Promise<number | null> {
+  const requested = req.body.target_business_id;
+
+  if (!isSuperAdmin(authenticatedUser(req))) {
+    if (requested !== undefined) {
+      sendError(res, 400, 'invalid_request', 'You cannot create users in another business', { detail: { key: 'targetBusinessNotAllowed' } });
+      return null;
+    }
+    return requireBusinessContext(req, res);
+  }
+
+  const businessId = Number(requested);
+  if (!Number.isInteger(businessId) || businessId <= 0) {
+    sendError(res, 400, 'invalid_request', 'A target business is required', { detail: { key: 'targetBusinessRequired' } });
+    return null;
+  }
+
+  // An unknown tenant would otherwise be caught only by the FK, after the rest of the work.
+  if (!(await getBusinessSettings(pool, businessId))) {
+    sendError(res, 400, 'invalid_request', 'Unknown business', { detail: { key: 'targetBusinessNotFound' } });
+    return null;
+  }
+
+  return businessId;
+}
 
 // Contact-only client (walk-in / phone booking): no username or password supplied.
 // Bookable immediately; login is enabled later via /enable-login.
@@ -61,10 +118,7 @@ async function createContactOnlyClient(
   res: express.Response,
   input: CreateUserInput,
 ) {
-  const { emailRaw, displayName, dni, role } = input;
-
-  const businessId = requireBusinessContext(req, res);
-  if (businessId == null) return;
+  const { emailRaw, displayName, dni, role, businessId } = input;
 
   if (!displayName) {
     return sendError(res, 400, 'invalid_request', 'A valid display name is required', { detail: { key: 'displayNameRequired' } });
@@ -83,7 +137,7 @@ async function createContactOnlyClient(
       return Number(inserted.id);
     });
 
-    await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+    await audit(req, 'user_created', 'success', { user_id: newUserId, role }, { businessId });
 
     return sendData(res, { id: newUserId, role } satisfies CreatedUserResult, 201);
   } catch (error) {
@@ -98,16 +152,12 @@ async function createCredentialedUser(
   res: express.Response,
   input: CreateUserInput,
 ) {
-  const { username, emailRaw, password, role, displayName, dni } = input;
+  const { username, emailRaw, password, role, displayName, dni, businessId } = input;
 
   if (!username || !password || !isRole(role)) {
     return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required', { detail: { key: 'usernamePasswordRoleRequired' } });
   }
 
-  // A null business_id means "see/act across all businesses"; stamping it onto a new
-  // user would mint a cross-tenant account. User creation requires a concrete business.
-  const businessId = requireBusinessContext(req, res);
-  if (businessId == null) return;
   // Email is the login identity: an account created with credentials has to be reachable at one.
   // Only a contact-only client may go without, and it is getting credentials here.
   if (role === 'Client' && emailRaw === null) {
@@ -129,7 +179,7 @@ async function createCredentialedUser(
       return Number(inserted.id);
     });
 
-    await audit(req, 'user_created', 'success', { user_id: newUserId, role });
+    await audit(req, 'user_created', 'success', { user_id: newUserId, role }, { businessId });
 
     return sendData(res, { id: newUserId, username, role } satisfies CreatedUserResult, 201);
   } catch (error) {
@@ -150,7 +200,8 @@ export function mountUserAdminRoutes(
   const { audit, requireAuth, requirePasswordReady, requireAdmin } = deps;
 
   // Role is immutable after creation — change requires deactivate + recreate.
-  // business_id comes from the caller's session; any body-supplied value is ignored.
+  // business_id comes from the caller's session; any body-supplied value is ignored. Only a
+  // super-admin, who has no business of their own, names the tenant (target_business_id).
   // Admins create any role; Professionals and Receptionists may only register Clients.
   app.post(
     ADMIN_USER_PATTERNS.create,
@@ -185,7 +236,10 @@ export function mountUserAdminRoutes(
         return sendError(res, 403, 'forbidden', 'Forbidden', { detail: { key: 'insufficientRole' } });
       }
 
-      const input: CreateUserInput = { username, emailRaw, password, role, displayName, dni };
+      const businessId = await resolveCreationBusiness(pool, req, res);
+      if (businessId == null) return;
+
+      const input: CreateUserInput = { username, emailRaw, password, role, displayName, dni, businessId };
 
       if (role === 'Client' && !username && !password) {
         return createContactOnlyClient(pool, audit, req, res, input);
@@ -209,8 +263,8 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id is required', { detail: { key: 'invalidId' } });
       }
 
-      const businessId = requireBusinessContext(req, res);
-      if (businessId == null) return;
+      const scope = userAdminScope(req, res);
+      if (scope == null) return;
 
       // An admin deactivating themselves would lock the business out of its own admin surface.
       if (userId === sessionUser.id) {
@@ -219,7 +273,7 @@ export function mountUserAdminRoutes(
 
       const deactivated = await deactivateUser(pool, {
         userId,
-        businessId,
+        scope,
         actorId: sessionUser.id,
       });
 
@@ -229,9 +283,10 @@ export function mountUserAdminRoutes(
 
       await deleteUserSessions(pool, userId);
 
-      await audit(req, 'user_deactivated', 'success', { user_id: userId });
+      const { business_id: targetBusinessId, ...user } = deactivated;
+      await audit(req, 'user_deactivated', 'success', { user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
 
-      return sendData(res, { user: deactivated });
+      return sendData(res, { user });
     }),
   );
 
@@ -249,8 +304,8 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id and password are required', { detail: { key: 'userIdAndPasswordRequired' } });
       }
 
-      const businessId = requireBusinessContext(req, res);
-      if (businessId == null) return;
+      const scope = userAdminScope(req, res);
+      if (scope == null) return;
 
       // A self-reset forces must_change_password on the admin and kills their sessions,
       // locking them out; admins change their own password via /auth/change-password.
@@ -264,7 +319,7 @@ export function mountUserAdminRoutes(
       // users' passwords, never another business's accounts.
       const reset = await resetUserPassword(pool, {
         userId,
-        businessId,
+        scope,
         passwordHash,
         passwordSalt,
       });
@@ -275,9 +330,10 @@ export function mountUserAdminRoutes(
 
       await deleteUserSessions(pool, userId);
 
-      await audit(req, 'password_reset', 'success', { user_id: userId });
+      const { business_id: targetBusinessId, ...user } = reset;
+      await audit(req, 'password_reset', 'success', { user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
 
-      return sendData(res, { user: reset });
+      return sendData(res, { user });
     }),
   );
 
@@ -307,10 +363,10 @@ export function mountUserAdminRoutes(
         return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required', { detail: { key: 'userCredentialsRequired' } });
       }
 
-      const businessId = requireBusinessContext(req, res);
-      if (businessId == null) return;
+      const scope = userAdminScope(req, res);
+      if (scope == null) return;
 
-      const target = await findContactOnlyClient(pool, { userId, businessId });
+      const target = await findContactOnlyClient(pool, { userId, scope });
       if (!target) {
         return sendError(res, 404, 'not_found', 'Client not found', { detail: { key: 'clientNotFound' } });
       }
@@ -329,7 +385,7 @@ export function mountUserAdminRoutes(
       try {
         const enabled = await enableClientLogin(pool, {
           userId,
-          businessId,
+          scope,
           username,
           email: emailRaw,
           passwordHash,
@@ -340,7 +396,7 @@ export function mountUserAdminRoutes(
           return sendError(res, 404, 'not_found', 'Client not found', { detail: { key: 'clientNotFound' } });
         }
 
-        await audit(req, 'login_enabled', 'success', { user_id: userId });
+        await audit(req, 'login_enabled', 'success', { user_id: userId }, { businessId: numericBusiness(enabled.business_id) });
 
         return sendData(res, { id: enabled.id, username: enabled.username } satisfies EnabledLoginResult);
       } catch (error) {

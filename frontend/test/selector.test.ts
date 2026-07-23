@@ -37,7 +37,10 @@ describe('Selector — searchable (typeahead)', () => {
 
   it('filters by extraSearch so a service name surfaces its professional', async () => {
     const wrapper = mount(Selector, {
-      props: { modelValue: null, options, searchable: true, extraSearch: (o: ProfOpt) => o.services },
+      props: {
+        modelValue: null, options, searchable: true,
+        extraSearch: (o: { value: string }) => options.find((p) => p.value === o.value)?.services ?? '',
+      },
     });
     await openAndQuery(wrapper, 'kinesio');
     const rendered = wrapper.findAll('[role=option]').map((o) => o.text());

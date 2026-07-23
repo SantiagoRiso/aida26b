@@ -2,7 +2,7 @@ import { describe, test, assert, expect } from 'vitest';
 import { Pool } from 'pg';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { runMigrations } from '../src/migrate';
-import { resetTestDb, makeTestPool } from './helpers';
+import { resetTestDb, makeTestPool, APP_ROLE, assertAppRoleIsLeastPrivilege } from './helpers';
 
 async function tableExists(pool: Pool, schema: string, name: string): Promise<boolean> {
   const r = await pool.query<{ exists: boolean }>(
@@ -451,54 +451,45 @@ test('scheduler-schema: FK constraints are valid — businesses and auth.users r
   }
 });
 
-test('scheduler-schema: protected tables have restricted grants for aida26_user', async () => {
+test('scheduler-schema: protected tables have restricted grants for the app role', async () => {
   await resetTestDb();
   const pool = makeTestPool();
   try {
     await runMigrations(pool, DEFAULT_MIGRATIONS_DIR);
 
-    const roleResult = await pool.query<{ rolsuper: boolean }>(
-      `SELECT rolsuper FROM pg_roles WHERE rolname = 'aida26_user'`
-    );
-    const isSuperuser = roleResult.rows.length > 0 && roleResult.rows[0].rolsuper;
-
-    if (isSuperuser) {
-      // Single-role Docker environment: aida26_user IS the connected superuser.
-      // Grants posture check is not meaningful; superusers bypass ALL privilege checks.
-      console.log('INFO: aida26_user is a PostgreSQL superuser — skipping grant posture checks (single-role Docker environment)');
-      return;
-    }
+    await assertAppRoleIsLeastPrivilege(pool);
 
     // calendar_grants: grant/revoke run through explicit endpoints as the app role, so INSERT and
     // DELETE must be granted. UPDATE stays withheld — a grant row is presence-as-access, never mutated.
     const calGrantPerms = await pool.query<{ privilege_type: string }>(
       `SELECT privilege_type
        FROM   information_schema.role_table_grants
-       WHERE  grantee = 'aida26_user'
+       WHERE  grantee = $1
          AND  table_schema = 'public'
          AND  table_name = 'calendar_grants'
          AND  privilege_type IN ('INSERT','UPDATE','DELETE')`,
+      [APP_ROLE],
     );
     const calGrants = new Set(calGrantPerms.rows.map((x) => x.privilege_type));
-    assert.ok(calGrants.has('INSERT'), 'calendar_grants must grant INSERT to aida26_user (grant creation)');
-    assert.ok(calGrants.has('DELETE'), 'calendar_grants must grant DELETE to aida26_user (grant revocation)');
-    assert.ok(!calGrants.has('UPDATE'), 'calendar_grants must not grant UPDATE to aida26_user; grant rows are immutable');
+    assert.ok(calGrants.has('INSERT'), 'calendar_grants must grant INSERT to the app role (grant creation)');
+    assert.ok(calGrants.has('DELETE'), 'calendar_grants must grant DELETE to the app role (grant revocation)');
+    assert.ok(!calGrants.has('UPDATE'), 'calendar_grants must not grant UPDATE to the app role; grant rows are immutable');
 
     // Immutable tables: UPDATE and DELETE must never be granted.
     for (const t of ['ledger_entries', 'audit_events']) {
       const r = await pool.query<{ privilege_type: string }>(
         `SELECT privilege_type
          FROM   information_schema.role_table_grants
-         WHERE  grantee = 'aida26_user'
+         WHERE  grantee = $1
            AND  table_schema = 'public'
-           AND  table_name = $1
+           AND  table_name = $2
            AND  privilege_type IN ('UPDATE','DELETE')`,
-        [t]
+        [APP_ROLE, t]
       );
       assert.equal(
         r.rows.length,
         0,
-        `Immutable table '${t}' must not grant UPDATE/DELETE to aida26_user; found: ${r.rows.map((x) => x.privilege_type).join(',')}`
+        `Immutable table '${t}' must not grant UPDATE/DELETE to the app role; found: ${r.rows.map((x) => x.privilege_type).join(',')}`
       );
     }
 
@@ -506,15 +497,16 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
     const apptDelete = await pool.query<{ privilege_type: string }>(
       `SELECT privilege_type
        FROM   information_schema.role_table_grants
-       WHERE  grantee = 'aida26_user'
+       WHERE  grantee = $1
          AND  table_schema = 'public'
          AND  table_name = 'appointments'
          AND  privilege_type = 'DELETE'`,
+      [APP_ROLE],
     );
     assert.equal(
       apptDelete.rows.length,
       0,
-      `appointments must not grant DELETE to aida26_user`
+      `appointments must not grant DELETE to the app role`
     );
 
     // appointment_series: app writes series rows via bespoke recurrence handlers (SELECT/INSERT/UPDATE);
@@ -522,16 +514,17 @@ test('scheduler-schema: protected tables have restricted grants for aida26_user'
     const seriesPerms = await pool.query<{ privilege_type: string }>(
       `SELECT privilege_type
        FROM   information_schema.role_table_grants
-       WHERE  grantee = 'aida26_user'
+       WHERE  grantee = $1
          AND  table_schema = 'public'
          AND  table_name = 'appointment_series'
          AND  privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')`,
+      [APP_ROLE],
     );
     const seriesGrants = new Set(seriesPerms.rows.map((x) => x.privilege_type));
-    assert.ok(seriesGrants.has('SELECT'), 'appointment_series must grant SELECT to aida26_user');
-    assert.ok(seriesGrants.has('INSERT'), 'appointment_series must grant INSERT to aida26_user');
-    assert.ok(seriesGrants.has('UPDATE'), 'appointment_series must grant UPDATE to aida26_user');
-    assert.ok(!seriesGrants.has('DELETE'), 'appointment_series must not grant DELETE to aida26_user');
+    assert.ok(seriesGrants.has('SELECT'), 'appointment_series must grant SELECT to the app role');
+    assert.ok(seriesGrants.has('INSERT'), 'appointment_series must grant INSERT to the app role');
+    assert.ok(seriesGrants.has('UPDATE'), 'appointment_series must grant UPDATE to the app role');
+    assert.ok(!seriesGrants.has('DELETE'), 'appointment_series must not grant DELETE to the app role');
   } finally {
     await pool.end();
   }

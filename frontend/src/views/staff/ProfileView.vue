@@ -30,14 +30,20 @@ const formError = ref('');
 const form = reactive({ display_name: '', bio: '', email: '', phone: '' });
 
 onMounted(async () => {
-  const res = await getMyProfile();
-  if (res.ok) {
-    const p = res.data.profile;
-    Object.assign(form, {
-      display_name: p.display_name, bio: p.bio ?? '', email: p.email ?? '', phone: p.phone ?? '',
-    });
+  try {
+    const res = await getMyProfile();
+    if (res.ok) {
+      const p = res.data.profile;
+      Object.assign(form, {
+        display_name: p.display_name, bio: p.bio ?? '', email: p.email ?? '', phone: p.phone ?? '',
+      });
+    } else {
+      // Blank fields would read as an empty profile and overwrite it on the next save.
+      formError.value = apiErrorMessage(res, 'profile.loadError');
+    }
+  } finally {
+    loading.value = false;
   }
-  loading.value = false;
 });
 
 async function saveProfile() {
@@ -72,36 +78,52 @@ async function changePassword() {
 
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
 
-interface SvcOverride { id: string; service_id: string; min: number | ''; max: number | ''; saving: boolean }
+interface SvcOverride { id: string; service_id: string; min: number | ''; max: number | ''; saving: boolean; error: string }
 const svcRows = ref<SvcOverride[]>([]);
 const svcLoading = ref(true);
+const svcLoadError = ref('');
 
 async function loadServices() {
   const uid = auth.user?.id;
   if (uid == null) { svcLoading.value = false; return; }
-  const res = await listRows('professional_services', { filters: { professional_user_id: String(uid) }, limit: 500 });
-  if (res.ok) {
-    svcRows.value = res.data.map((r) => ({
-      id: String(r.id),
-      service_id: String(r.service_id),
-      min: r.min_booking_days ?? '',
-      max: r.max_booking_days ?? '',
-      saving: false,
-    }));
+  svcLoadError.value = '';
+  try {
+    const res = await listRows('professional_services', { filters: { professional_user_id: String(uid) }, limit: 500 });
+    if (res.ok) {
+      svcRows.value = res.data.map((r) => ({
+        id: String(r.id),
+        service_id: String(r.service_id),
+        min: r.min_booking_days ?? '',
+        max: r.max_booking_days ?? '',
+        saving: false,
+        error: '',
+      }));
+    } else {
+      // An empty list would read as "no services assigned", which is a different fact.
+      svcRows.value = [];
+      svcLoadError.value = apiErrorMessage(res, 'profile.servicesLoadError');
+    }
+  } finally {
+    svcLoading.value = false;
   }
-  svcLoading.value = false;
 }
 onMounted(loadServices);
 
 async function saveSvc(row: SvcOverride) {
   row.saving = true;
+  row.error = '';
   const body: Partial<TableRecordMap['professional_services']> = {
     min_booking_days: row.min === '' ? null : Number(row.min),
     max_booking_days: row.max === '' ? null : Number(row.max),
   };
-  const res = await updateRow('professional_services', row.id, body);
-  row.saving = false;
-  if (res.ok) success('saved');
+  try {
+    const res = await updateRow('professional_services', row.id, body);
+    // The edited value stays on screen either way, so a rejected write has to say so.
+    if (res.ok) success('saved');
+    else row.error = apiErrorMessage(res, 'profile.serviceSaveError');
+  } finally {
+    row.saving = false;
+  }
 }
 </script>
 
@@ -147,6 +169,7 @@ async function saveSvc(row: SvcOverride) {
           {{ t('profile.bookingWindowHint') }}
         </p>
         <div v-if="svcLoading" class="text-sm text-neutral">…</div>
+        <FieldError v-else-if="svcLoadError" :message="svcLoadError" />
         <p v-else-if="svcRows.length === 0" class="text-sm text-neutral">
           {{ t('profile.noServices') }}
         </p>
@@ -162,6 +185,9 @@ async function saveSvc(row: SvcOverride) {
             <AppButton variant="neutral" :loading="row.saving" @click="saveSvc(row)">
               {{ t('actions.save') }}
             </AppButton>
+            <div v-if="row.error" class="col-span-4">
+              <FieldError :message="row.error" />
+            </div>
           </template>
         </div>
       </section>

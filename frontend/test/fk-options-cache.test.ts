@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
-import { listRows } from '@/api/crud';
+import { listRows, getRow } from '@/api/crud';
 import {
   useForeignKeyOptions,
   invalidateFkOptions,
@@ -11,9 +11,12 @@ import {
 } from '@/composables/useForeignKeyOptions';
 import type { ForeignKeyDef } from '@shared/types/types';
 
-vi.mock('@/api/crud', () => ({ listRows: vi.fn() }));
+vi.mock('@/api/crud', () => ({ listRows: vi.fn(), getRow: vi.fn() }));
 
 const mockedListRows = listRows as ReturnType<typeof vi.fn>;
+const mockedGetRow = getRow as ReturnType<typeof vi.fn>;
+
+const NOT_FOUND = { ok: false, status: 404, code: 'not_found', message: 'not found' };
 
 const professionalsFk: ForeignKeyDef = { table: 'professionals', valueField: 'id', labelField: 'display_name' };
 
@@ -26,6 +29,8 @@ beforeEach(() => {
   resetFkOptionsCache();
   mockedListRows.mockReset();
   mockedListRows.mockResolvedValue({ ok: true, data: rows });
+  mockedGetRow.mockReset();
+  mockedGetRow.mockResolvedValue(NOT_FOUND);
 });
 
 describe('useForeignKeyOptions — shared cache', () => {

@@ -5,7 +5,10 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import { createI18n } from 'vue-i18n';
 import { es } from '@/i18n/es';
 import { en } from '@/i18n/en';
+import { i18n as globalI18n } from '@/i18n';
+import { useUiStore } from '@/stores/ui';
 import type { TableKey } from '@shared/ssot/derived';
+import type { ApiResult } from '@/api/client';
 import {
   resetFkOptionsCache,
   FK_SEARCH_LIMIT,
@@ -125,6 +128,53 @@ describe('GenericForm — advisory validateField on blur', () => {
   });
 });
 
+describe('GenericForm — the error is announced with its field, not just coloured', () => {
+  it('marks the field invalid and points it at the message it belongs to', async () => {
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericForm, {
+      props: { tableKey: 'services' as TableKey, mode: 'create' },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    const nameInput = wrapper.find('input#name');
+    expect(nameInput.attributes('aria-invalid')).toBeUndefined();
+    expect(nameInput.attributes('aria-describedby')).toBeUndefined();
+
+    await nameInput.trigger('blur');
+    await flushPromises();
+
+    const describedBy = nameInput.attributes('aria-describedby');
+    expect(nameInput.attributes('aria-invalid')).toBe('true');
+    expect(describedBy).toBeTruthy();
+
+    const message = wrapper.find(`#${describedBy}`);
+    expect(message.exists()).toBe(true);
+    expect(message.attributes('role')).toBe('alert');
+    expect(message.text()).toBe(es.fieldError.required);
+  });
+
+  it('drops both attributes once the value validates', async () => {
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericForm, {
+      props: { tableKey: 'services' as TableKey, mode: 'create' },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    const nameInput = wrapper.find('input#name');
+    await nameInput.trigger('blur');
+    await flushPromises();
+
+    await nameInput.setValue('Corte simple');
+    await nameInput.trigger('blur');
+    await flushPromises();
+
+    expect(nameInput.attributes('aria-invalid')).toBeUndefined();
+    expect(nameInput.attributes('aria-describedby')).toBeUndefined();
+  });
+});
+
 describe('GenericForm — backend field error mapping', () => {
   const messageFor = (wrapper: ReturnType<typeof mount>, field: string) => {
     const input = wrapper.find(`#${field}`);
@@ -134,7 +184,7 @@ describe('GenericForm — backend field error mapping', () => {
       .find((msg) => typeof msg === 'string' && msg.length > 0 && input.exists());
   };
 
-  async function submitWith(failure: Record<string, unknown>) {
+  async function submitWith(failure: Extract<ApiResult<never>, { ok: false }>) {
     const { createRow } = await import('@/api/crud');
     (createRow as ReturnType<typeof vi.fn>).mockResolvedValueOnce(failure);
 
@@ -163,9 +213,13 @@ describe('GenericForm — backend field error mapping', () => {
     expect(wrapper.text()).not.toContain('name is required');
   });
 
-  // An endpoint that reports a field without naming the rule still gets a readable message.
-  it('falls back to a generic field message when the server names no rule', async () => {
-    const wrapper = await submitWith({
+  // `fields` is the English diagnostic layer (logs, non-browser callers), never rendered. An
+  // endpoint that names a field but no localizable rule must not fabricate a generic field
+  // fallback — that masked the more specific top-level code. The code is surfaced instead.
+  it('does not fabricate a field fallback from the English fields layer; surfaces the code', async () => {
+    globalI18n.global.locale.value = 'es';
+    const { createRow } = await import('@/api/crud');
+    (createRow as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: false,
       status: 422,
       code: 'validation_error',
@@ -173,7 +227,24 @@ describe('GenericForm — backend field error mapping', () => {
       fields: { name: 'name is required' },
     });
 
-    expect(messageFor(wrapper, 'name')).toBe(es.fieldError.fallback);
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericForm, {
+      props: { tableKey: 'services' as TableKey, mode: 'create' },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    // Valid values for every required field so advisory client-side validation stays quiet and only
+    // the server result drives the field state.
+    await wrapper.find('input#name').setValue('Corte simple');
+    await wrapper.find('input#default_duration_minutes').setValue(30);
+    await wrapper.find('input#default_price_ars').setValue('1500.00');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(messageFor(wrapper, 'name')).toBeUndefined();
+    expect(wrapper.text()).not.toContain('name is required');
+    expect(useUiStore().toasts.at(-1)?.messageKey).toBe(es.apiError.code.validation_error);
   });
 });
 

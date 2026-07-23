@@ -11,6 +11,13 @@ import { DEMO_ACCOUNTS, es } from './helpers';
  * this as part of the full sequential suite (workers:1) which seeds once up front.
  * The seed:demo script's ON CONFLICT DO UPDATE does NOT reset password_hash, to avoid
  * overwriting legitimate production passwords.
+ *
+ * Retries are forced off for this describe (below), overriding the CI-wide retries:2.
+ * The mutation is one-way: once the third test changes demo_reset's password, the seed
+ * precondition is gone. With retries on, a failure AFTER that change would retry, the
+ * retry would log in with the now-stale seed password, `ok` would be false, and
+ * test.skip(!ok) would launder the real failure into a skip — a green build over a
+ * genuine regression in the forced-change flow. No retry means such a failure fails loudly.
  */
 
 async function loginAsDemoReset(page: Page) {
@@ -41,6 +48,10 @@ const STALE_SEED_HINT =
   'In CI this spec always starts fresh (ephemeral Postgres per job).';
 
 test.describe('Forced password change', () => {
+  // A one-way password mutation makes retries unsafe here: a retry after the change would
+  // re-log-in with the stale seed password and skip, converting a real failure into a pass.
+  test.describe.configure({ retries: 0 });
+
   test('demo_reset logs in and is immediately routed to ChangePasswordView', async ({ page }) => {
     const ok = await loginAsDemoReset(page);
     expect(ok, STALE_SEED_HINT).toBe(true);

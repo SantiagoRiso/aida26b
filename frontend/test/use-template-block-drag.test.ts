@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { useTemplateBlockDrag } from '@/composables/useTemplateBlockDrag';
-import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
+import type { TemplateBlock, WeekdayTimes } from '@/composables/scheduleTemplateGrid';
 import type { TimegridGeometry } from '@/composables/useTimegridGeometry';
 import { dateToWeekday } from '@/composables/scheduleTemplateGrid';
 
@@ -37,15 +37,15 @@ function pointer(type: string, clientY: number, tgt: EventTarget): void {
 }
 
 describe('useTemplateBlockDrag', () => {
-  let onCommit: ReturnType<typeof vi.fn>;
-  let onBegin: ReturnType<typeof vi.fn>;
-  let onEnd: ReturnType<typeof vi.fn>;
+  let onCommit: Mock<(id: string, times: WeekdayTimes) => void>;
+  let onBegin: Mock<() => void>;
+  let onEnd: Mock<() => void>;
   let el: HTMLElement;
 
   beforeEach(() => {
-    onCommit = vi.fn();
-    onBegin = vi.fn();
-    onEnd = vi.fn();
+    onCommit = vi.fn<(id: string, times: WeekdayTimes) => void>();
+    onBegin = vi.fn<() => void>();
+    onEnd = vi.fn<() => void>();
     el = makeBlockEl();
   });
 

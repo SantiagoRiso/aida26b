@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   heading?: string;
   body?: string;
   icon?: object;
@@ -11,7 +11,12 @@ const props = withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center py-12 text-center text-neutral">
+  <!-- role="status" so a list that goes from results to empty announces the change instead of
+       falling silent for a screen-reader user. -->
+  <div
+    class="flex flex-col items-center justify-center py-12 text-center text-neutral"
+    role="status"
+  >
     <component
       :is="icon"
       v-if="icon"
