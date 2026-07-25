@@ -21,6 +21,13 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'owner')\gexec
 SELECT format('CREATE ROLE %I WITH LOGIN PASSWORD %L', :'app', :'app_pw')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app')\gexec
 
+-- The owner runs migrations, one of which sets per-role session timeouts (ALTER ROLE ... SET) on the
+-- app role. In PostgreSQL 16+ altering a role requires the executor to administer it, so the owner
+-- needs CREATEROLE plus ADMIN OPTION on the app role. It stays NOSUPERUSER / NOBYPASSRLS — this is
+-- the narrowest grant that lets an owner-run migration configure the app role. Idempotent on re-run.
+ALTER ROLE :"owner" WITH CREATEROLE;
+GRANT :"app" TO :"owner" WITH ADMIN OPTION;
+
 SELECT format('CREATE DATABASE %I OWNER %I', :'dbname', :'owner')
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'dbname')\gexec
 
