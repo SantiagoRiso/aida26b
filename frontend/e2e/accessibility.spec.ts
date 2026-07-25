@@ -27,6 +27,14 @@ async function auditBothThemes(
   page: Page,
   build: (page: Page) => AxeBuilder = (p) => new AxeBuilder({ page: p }),
 ): Promise<void> {
+  // Flipping data-theme repaints through `transition-colors`, so a colour animates from its light
+  // value to its dark one over the transition window. axe reads the computed colour the instant the
+  // attribute is set and would otherwise catch a control (e.g. the accent submit button) mid-fade and
+  // report a contrast ratio that no settled state ever shows. Kill transitions so each repaint is
+  // instantaneous and axe only ever sees a final, real colour pair.
+  await page.addStyleTag({
+    content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
+  });
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate((t) => {
       document.documentElement.dataset.theme = t;
