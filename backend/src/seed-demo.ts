@@ -337,7 +337,6 @@ async function upsertAppointment(
     durationMinutes: number;
     state: string;
     price: string;
-    name?: string | null;
     description?: string | null;
     staffNote?: string | null;
     overrideConflict?: boolean;
@@ -352,16 +351,18 @@ async function upsertAppointment(
     [opts.professionalUserId, opts.clientUserId, opts.serviceId, opts.startsAt],
   );
   if (existing) return existing;
+  // No name: an untitled turno renders through the app's own title derivation (client, resource,
+  // service, plus the sobreturno designation), so demo titles stay localized and never drift.
   const r = await pool.query<{ id: string }>(
     `INSERT INTO appointments
        (client_user_id, professional_user_id, resource_id, service_id, starts_at,
-        duration_minutes, state, price, name, description, staff_note,
+        duration_minutes, state, price, description, staff_note,
         override_conflict, override_actor_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [
       opts.clientUserId, opts.professionalUserId, opts.resourceId ?? null, opts.serviceId, opts.startsAt,
-      opts.durationMinutes, opts.state, opts.price, opts.name ?? null,
+      opts.durationMinutes, opts.state, opts.price,
       opts.description ?? null, opts.staffNote ?? null,
       opts.overrideConflict ?? false, opts.overrideActorId ?? null,
     ],
@@ -599,93 +600,93 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     clientUserId: uids['demo_client'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: shift('2026-06-02T10:00:00-03:00'), durationMinutes: 50,
-    state: 'completed', price: '6500.00', name: 'Sesión 1 - Homero',
+    state: 'completed', price: '6500.00',
   });
   const appt2 = await upsertAppointment(pool, {
     clientUserId: uids['demo_client_overdue'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: shift('2026-06-02T11:00:00-03:00'), durationMinutes: 50,
-    state: 'completed', price: '8000.00', name: 'Sesión 1 - Bart',
+    state: 'completed', price: '8000.00',
   });
   const appt3 = await upsertAppointment(pool, {
     clientUserId: uids['demo_client2'], professionalUserId: uids['demo_pro3'],
     resourceId: room2, serviceId: svcNutricion,
     startsAt: shift('2026-06-03T09:00:00-03:00'), durationMinutes: 40,
-    state: 'completed', price: '5500.00', name: 'Consulta nutricional - Marge',
+    state: 'completed', price: '5500.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client3'], professionalUserId: uids['demo_pro4'],
     resourceId: room3, serviceId: svcKineso,
     startsAt: shift('2026-06-04T14:00:00-03:00'), durationMinutes: 60,
-    state: 'completed', price: '10000.00', name: 'Kinesiología - Apu',
+    state: 'completed', price: '10000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client4'], professionalUserId: uids['demo_pro2'],
     serviceId: svcSesion,
     startsAt: shift('2026-06-09T10:00:00-03:00'), durationMinutes: 50,
-    state: 'completed', price: '8000.00', name: 'Sesión - Lenny',
+    state: 'completed', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client5'], professionalUserId: uids['demo_pro5'],
     serviceId: svcSesion,
     startsAt: shift('2026-06-10T14:00:00-03:00'), durationMinutes: 50,
-    state: 'completed', price: '8000.00', name: 'Sesión cognitiva - Carl',
+    state: 'completed', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client6'], professionalUserId: uids['demo_pro6'],
     serviceId: svcMedico,
     startsAt: shift('2026-06-11T09:00:00-03:00'), durationMinutes: 30,
-    state: 'completed', price: '5000.00', name: 'Consulta médica - Selma',
+    state: 'completed', price: '5000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client7'], professionalUserId: uids['demo_pro'],
     serviceId: svcSesion,
     startsAt: shift('2026-06-16T10:00:00-03:00'), durationMinutes: 50,
-    state: 'no_show', price: '8000.00', name: 'Sesión - Patty (no asistió)',
+    state: 'no_show', price: '8000.00',
     staffNote: 'Paciente no se presentó sin aviso',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client8'], professionalUserId: uids['demo_pro2'],
     serviceId: svcSesion,
     startsAt: shift('2026-06-17T11:00:00-03:00'), durationMinutes: 50,
-    state: 'no_show', price: '8000.00', name: 'Sesión - Skinner (no asistió)',
+    state: 'no_show', price: '8000.00',
   });
   const apptRejected = await upsertAppointment(pool, {
     clientUserId: uids['demo_client9'], professionalUserId: uids['demo_pro3'],
     serviceId: svcNutricion,
     startsAt: shift('2026-06-24T09:00:00-03:00'), durationMinutes: 40,
-    state: 'rejected', price: '7000.00', name: 'Consulta rechazada - Nelson',
+    state: 'rejected', price: '7000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: shift('2026-07-07T10:00:00-03:00'), durationMinutes: 50,
-    state: 'scheduled', price: '6500.00', name: 'Sesión - Homero',
+    state: 'scheduled', price: '6500.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client_overdue'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: shift('2026-07-07T11:00:00-03:00'), durationMinutes: 50,
-    state: 'scheduled', price: '8000.00', name: 'Sesión - Bart',
+    state: 'scheduled', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client2'], professionalUserId: uids['demo_pro3'],
     resourceId: room2, serviceId: svcNutricion,
     startsAt: shift('2026-07-07T09:00:00-03:00'), durationMinutes: 40,
-    state: 'scheduled', price: '5500.00', name: 'Nutrición - Marge',
+    state: 'scheduled', price: '5500.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client10'], professionalUserId: uids['demo_pro4'],
     resourceId: room3, serviceId: svcKineso,
     startsAt: shift('2026-07-07T14:00:00-03:00'), durationMinutes: 60,
-    state: 'scheduled', price: '9000.00', name: 'Kinesiología - Milhouse',
+    state: 'scheduled', price: '9000.00',
   });
   // Sobreturno: intentionally overlaps an existing slot; requires admin conflict override.
   const apptSobreturno = await upsertAppointment(pool, {
     clientUserId: uids['demo_client3'], professionalUserId: uids['demo_pro'],
     resourceId: room1, serviceId: svcSesion,
     startsAt: shift('2026-07-07T10:00:00-03:00'), durationMinutes: 50,
-    state: 'scheduled', price: '6500.00', name: 'Sesión sobreturno - Apu',
+    state: 'scheduled', price: '6500.00',
     overrideConflict: true, overrideActorId: uids['demo_admin'],
     description: 'Turno extra autorizado por admin; se superpone intencionalmente',
   });
@@ -693,31 +694,31 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     clientUserId: uids['demo_client4'], professionalUserId: uids['demo_pro2'],
     serviceId: svcSesion,
     startsAt: shift('2026-07-13T10:00:00-03:00'), durationMinutes: 50,
-    state: 'scheduled', price: '8000.00', name: 'Sesión - Lenny (semana próxima)',
+    state: 'scheduled', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client5'], professionalUserId: uids['demo_pro5'],
     serviceId: svcSesion,
     startsAt: shift('2026-07-14T14:00:00-03:00'), durationMinutes: 50,
-    state: 'scheduled', price: '8000.00', name: 'Sesión cognitiva - Carl (semana próxima)',
+    state: 'scheduled', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client11'], professionalUserId: uids['demo_pro'],
     serviceId: svcSesion,
     startsAt: shift('2026-07-21T10:00:00-03:00'), durationMinutes: 50,
-    state: 'requested', price: '8000.00', name: 'Solicitud - Ralph',
+    state: 'requested', price: '8000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client12'], professionalUserId: uids['demo_pro3'],
     serviceId: svcNutricion,
     startsAt: shift('2026-07-22T09:00:00-03:00'), durationMinutes: 40,
-    state: 'requested', price: '7000.00', name: 'Solicitud nutricional - Wiggum',
+    state: 'requested', price: '7000.00',
   });
   await upsertAppointment(pool, {
     clientUserId: uids['demo_client13'], professionalUserId: uids['demo_pro2'],
     serviceId: svcSesion,
     startsAt: shift('2026-07-23T11:00:00-03:00'), durationMinutes: 50,
-    state: 'requested', price: '8000.00', name: 'Solicitud - Bob',
+    state: 'requested', price: '8000.00',
   });
 
   const nowMs = Date.now();
@@ -763,7 +764,7 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
       clientUserId: uids[req.client], professionalUserId: uids['demo_pro'],
       resourceId: null, serviceId: svcSesion,
       startsAt: `${req.date}T${req.start}:00-03:00`, durationMinutes: 50,
-      state: 'requested', price: '8000.00', name: 'Solicitud de turno',
+      state: 'requested', price: '8000.00',
     });
   }
 
@@ -804,7 +805,7 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
       clientUserId: clients[(cfg.offset + 3) % clients.length],
       professionalUserId: uids[cfg.pro], resourceId: null, serviceId: svcId[primary.service],
       startsAt, durationMinutes: dur,
-      state: 'scheduled', price: effPrice(primary), name: 'Sobreturno',
+      state: 'scheduled', price: effPrice(primary),
       overrideConflict: true, overrideActorId: uids['demo_admin'],
       description: 'Sobreturno autorizado por admin (se superpone con el turno regular)',
     });
