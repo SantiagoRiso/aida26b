@@ -4,7 +4,9 @@
 // missing or stray name is a type error) and the views gate the URL and the header controls against
 // the same names, which is what keeps the two ends from disagreeing about what is sortable.
 
-export const AUDIT_SORT_FIELDS = ['created_at', 'event_type', 'entity_type', 'actor_user_id', 'outcome'] as const;
+// The actor column sorts by username because that is what it shows; ordering by the underlying id
+// would scatter the visible names.
+export const AUDIT_SORT_FIELDS = ['created_at', 'event_type', 'entity_type', 'actor_username', 'outcome'] as const;
 export type AuditSortField = (typeof AUDIT_SORT_FIELDS)[number];
 
 export const LEDGER_SORT_FIELDS = ['created_at', 'entry_type', 'amount_ars'] as const;

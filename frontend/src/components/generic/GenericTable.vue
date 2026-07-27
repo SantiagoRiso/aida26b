@@ -12,6 +12,7 @@ import type { ForeignKeyValue } from '@/composables/useForeignKeyOptions';
 import { useListQuerySync } from '@/composables/useListQuerySync';
 import { structure } from '@shared/ssot/structure';
 import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
+import { isInternalColumn } from '@shared/utils/utils';
 import type { ColumnDef, ColumnValue, TableStructure } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import type { Wire } from '@shared/ssot/query-types';
@@ -47,9 +48,11 @@ const columns = computed(() => {
   return Object.entries(cols).map(([key, col]) => ({ key, col }));
 });
 
-// Surrogate keys carry no business meaning to a viewer — hide them from display.
+// Surrogate keys and tenant scoping carry no business meaning to a viewer — hide them from
+// display. Shared with GenericForm's read-only block via isInternalColumn so the two renderers
+// can't drift on what counts as internal.
 const visibleColumns = computed(() =>
-  columns.value.filter(({ key }) => key !== tableSpec.value.pk && key !== 'business_id'),
+  columns.value.filter(({ key }) => !isInternalColumn(props.tableKey, key)),
 );
 
 const userRole = computed(() => auth.user?.role);
@@ -250,9 +253,9 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
     if (v == null || v === '') return props.emptyValue ?? i18n.global.t('generic.emptyValue');
     const resolver = fkResolvers.value[col.foreignKey.table];
     const label = resolver?.labelFor(String(v));
-    if (label) return label;
-    if (resolver?.isUnresolved(String(v))) return i18n.global.t('generic.unresolvedReference');
-    return `#${v}`;
+    // Whether declined by the server (isUnresolved) or simply not on the cached page yet, a raw
+    // id says nothing to an operator and would assert the row exists — never print it.
+    return label ?? i18n.global.t('generic.unresolvedReference');
   }
   return formatCell(cellValue(row, key));
 }

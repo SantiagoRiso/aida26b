@@ -132,7 +132,7 @@ const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', 
 const { labelFor: resourceLabelFor } = useForeignKeyOptions({ table: 'resources', valueField: 'id', labelField: 'name' });
 
 function clientName(a: Appointment): string {
-  return clientLabelFor(a.client_user_id) ?? a.name ?? t('portal.appointmentFallback', { id: a.id });
+  return clientLabelFor(a.client_user_id) ?? a.name ?? t('portal.appointmentFallback');
 }
 function professionalName(a: Appointment): string {
   return professionalLabelFor(a.professional_user_id) ?? t('generic.emptyValue');

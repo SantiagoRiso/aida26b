@@ -11,6 +11,8 @@ import {
   getProfessionalScheduleOwnerFk,
   getResourceScheduleOwnerFk,
   ownerHasResourceColumn,
+  isInternalColumn,
+  getPkFields,
 } from '../../shared/src/utils/utils';
 import {
   computeServiceSlots,
@@ -772,6 +774,36 @@ describe('owner-scheduled tables are derived from schedulable capabilities', () 
     expect(isOwnerScheduledTable('schedule_exceptions')).toBe(true);
     expect(isOwnerScheduledTable('appointments')).toBe(false);
     expect(isOwnerScheduledTable('services')).toBe(false);
+  });
+});
+
+describe('isInternalColumn: the single predicate both generic renderers hide columns by', () => {
+  it('flags the pk and business_id, and only those, on a table that carries both', () => {
+    for (const key of Object.keys(structure.tables.services.columns)) {
+      expect(isInternalColumn('services', key), key).toBe(key === 'id' || key === 'business_id');
+    }
+  });
+
+  it('flags only the pk on a table with no business_id column', () => {
+    for (const key of Object.keys(structure.tables.professionals.columns)) {
+      expect(isInternalColumn('professionals', key), key).toBe(key === 'id');
+    }
+    // The genuinely useful editable:false fields on clients (email, username) are not internal.
+    expect(isInternalColumn('clients', 'email')).toBe(false);
+    expect(isInternalColumn('clients', 'username')).toBe(false);
+    expect(isInternalColumn('clients', 'id')).toBe(true);
+  });
+
+  // No table in the live SSOT currently declares a composite pk, but the predicate is written
+  // against getPkFields (which returns every part of an array pk), not a single `pk` string
+  // comparison — so a future composite-pk table is covered without touching either renderer.
+  it('derives from every part of a composite pk via getPkFields, not a single `pk` string', () => {
+    for (const key of Object.keys(structure.tables) as TableKey[]) {
+      const pkFields = getPkFields(key);
+      for (const field of pkFields) {
+        expect(isInternalColumn(key, field), `${key}.${field}`).toBe(true);
+      }
+    }
   });
 });
 

@@ -6,7 +6,7 @@ const { t } = useI18n();
 const navItems = [
   { name: 'portal-appointments', labelKey: 'nav.myAppointments' },
   { name: 'portal-balance', labelKey: 'nav.myBalance' },
-  { name: 'portal-preferences', labelKey: 'nav.preferences' },
+  { name: 'portal-preferences', labelKey: 'nav.settings' },
 ] as const;
 </script>
 

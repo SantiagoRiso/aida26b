@@ -114,8 +114,14 @@ describe('GenericFilters — every filter control has an accessible name', () =>
     }));
   });
 
+  // Super-admin: the business column exercised below is only offered to a viewer who spans tenants.
   function mountFilters(tableKey: TableKey) {
-    setActivePinia(createPinia());
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useAuthStore(pinia).user = {
+      id: 1, username: 'admin', email: null, role: 'Admin',
+      business_id: null, is_active: true, must_change_password: false,
+    };
     return mount(GenericFilters, { props: { tableKey }, global: { plugins: [i18nPlugin()] } });
   }
 

@@ -255,6 +255,35 @@ describe('GET /api/audit filters (parameterized values)', () => {
     }
   });
 
+  test('every row carries the actor username, resolved from the directory', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_actor_user_id=${proId}`);
+    const rows = dataOf(res);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.actor_username).toBe('audit_pro');
+    }
+  });
+
+  test('?filter_actor_username=name selects the same events as that actor\'s id', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const byName = await auditReq<AuditRow[]>('GET', '/api/audit?filter_actor_username=audit_pro');
+    expect(byName.status).toBe(200);
+    const byId = await auditReq<AuditRow[]>('GET', `/api/audit?filter_actor_user_id=${proId}`);
+    expect(dataOf(byName).map((r) => r.id)).toEqual(dataOf(byId).map((r) => r.id));
+    expect(metaOf(byName).total).toBe(metaOf(byId).total);
+  });
+
+  // The paged rows and the reported total have to agree — a filter that only the page applies
+  // would report a count the caller can never page through.
+  test('a username filter matching nobody reports a total of zero, not the unfiltered count', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_actor_username=nobody_at_all');
+    expect(res.status).toBe(200);
+    expect(dataOf(res)).toEqual([]);
+    expect(metaOf(res).total).toBe(0);
+  });
+
   test('?filter_created_at range narrows results to the given window', async () => {
     currentUser = asUser(adminId, 'Admin');
     // Use a window anchored near now that covers the seeded rows (which were just inserted).

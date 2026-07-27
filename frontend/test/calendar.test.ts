@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ref } from 'vue';
 import { i18n } from '@/i18n';
+import { es } from '@/i18n/es';
 import { colorForProfessional, scopeProfessionalOptions, useAppointmentCalendar } from '@/composables/useFullCalendar';
 import { useConflictVerdict } from '@/composables/useConflictVerdict';
 import type { Appointment } from '@/api/appointments';
@@ -307,6 +308,41 @@ describe('useAppointmentCalendar hides non-events', () => {
     const element = mountAppointmentEvent(calendarOptions.value, conflicted);
     expect(element.hasAttribute('data-in-conflict')).toBe(false);
     expect(element.getAttribute('title') ?? '').not.toContain('conflict');
+  });
+});
+
+describe('useAppointmentCalendar event title fallback', () => {
+  const viewer = ref<AuthUser | null>(null);
+  const handlers = {
+    onSelect: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onSelect'],
+    onEventClick: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventClick'],
+    onEventDrop: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventDrop'],
+    onEventResize: (() => {}) as Parameters<typeof useAppointmentCalendar>[2]['onEventResize'],
+  };
+
+  function untitledAppt(id: string): Appointment {
+    return {
+      id, client_user_id: '1', professional_user_id: '1', resource_id: null, service_id: '1',
+      starts_at: '2026-07-06T10:00:00Z', duration_minutes: 30, ends_at: '2026-07-06T10:30:00Z',
+      state: 'scheduled', name: null, description: null, price: '100.00',
+      override_conflict: false, override_actor_id: null, staff_note: null, conflict_ignored: false,
+      created_at: '2026-07-06T10:00:00Z', updated_at: '2026-07-06T10:00:00Z',
+      series_id: null, occurrence_date: null,
+    };
+  }
+
+  afterEach(() => {
+    i18n.global.locale.value = 'es';
+  });
+
+  it('titles an unnamed event with the bare i18n fallback, never the raw id, when no decorator supplies one', () => {
+    const appointments = ref<Appointment[]>([untitledAppt('42')]);
+    const { calendarOptions } = useAppointmentCalendar(appointments, viewer, handlers);
+    const event = (calendarOptions.value.events as { title: string }[])[0]!;
+
+    expect(event.title).toBe(es.portal.appointmentFallback);
+    expect(event.title).not.toContain('42');
+    expect(event.title).not.toContain('#');
   });
 });
 

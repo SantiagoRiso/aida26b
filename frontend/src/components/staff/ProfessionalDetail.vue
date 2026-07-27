@@ -67,8 +67,8 @@ const UPCOMING_LIMIT = 8;
 const visibleUpcoming = computed(() => upcoming.value.slice(0, UPCOMING_LIMIT));
 const extraUpcoming = computed(() => Math.max(0, upcoming.value.length - UPCOMING_LIMIT));
 
-const clientName = (id: number | string) => clientLabelFor(id) ?? `#${id}`;
-const serviceName = (id: number | string) => serviceNames.value.get(String(id)) ?? `#${id}`;
+const clientName = (id: number | string) => clientLabelFor(id) ?? t('generic.unresolvedReference');
+const serviceName = (id: number | string) => serviceNames.value.get(String(id)) ?? t('generic.unresolvedReference');
 
 async function loadProfile() {
   const res = await getRow('professionals', professionalId);

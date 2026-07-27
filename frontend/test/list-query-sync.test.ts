@@ -402,17 +402,16 @@ describe('AuditView — its own list state is URL-bound too', () => {
     expect(plugins.router.currentRoute.value.query).toEqual({});
   });
 
-  it('a garbage actor id in the URL is not sent to the API and does not break the view', async () => {
+  // A shared link outlives the filters it names, so an unoffered one is dropped rather than passed
+  // through to an endpoint that would answer it.
+  it('a filter the view does not offer is ignored and does not break it', async () => {
     const plugins = await makePlugins(`/?${filterParam('actor_user_id')}=abc`);
     const wrapper = mountAudit(plugins);
     await flushPromises();
 
-    expect(listAuditMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ actor_user_id: undefined }),
-      1,
-      LIST_DEFAULT_LIMIT,
-      { sort: undefined, dir: 'asc' },
-    );
+    const sentFilters = listAuditMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(sentFilters).not.toHaveProperty('actor_user_id');
+    expect(sentFilters.actor_username).toBeUndefined();
     expect(wrapper.text()).toContain(es.audit.title);
   });
 });
@@ -445,7 +444,7 @@ describe('AuditView — column ordering is server-side and URL-bound', () => {
     listAuditMock.mockResolvedValue({
       ok: true,
       data: [{
-        id: '1', actor_user_id: '7', event_type: 'appointment_requested',
+        id: '1', actor_user_id: '7', actor_username: 'recep_ana', event_type: 'appointment_requested',
         entity_type: 'appointments', entity_id: '3', outcome: 'success',
         ip: null, details: null, created_at: '2026-01-01T12:00:00.000Z',
       }],

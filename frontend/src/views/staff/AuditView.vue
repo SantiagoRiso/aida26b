@@ -40,7 +40,7 @@ const total = ref(0);
 // created_at carries the shared `min,max` date range; the two date pickers edit its two halves.
 const BLANK_FILTERS = {
   entity_type: '',
-  actor_user_id: '',
+  actor_username: '',
   event_type: '',
   created_at: '',
   outcome: '',
@@ -117,16 +117,23 @@ function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
 
 const OUTCOMES = AUDIT_OUTCOMES;
 
+// The id stands in when a purged actor leaves the username unresolvable — an audit row must stay
+// readable. No actor at all is the system acting on its own.
+function actorLabel(event: AuditEvent): string {
+  if (event.actor_username != null) return event.actor_username;
+  if (event.actor_user_id != null) return `#${event.actor_user_id}`;
+  return t('generic.emptyValue');
+}
+
 async function load() {
   if (!isAdmin.value) return;
   loading.value = true;
   loadFailed.value = false;
   const active = filters.value;
-  const actorId = Number(active.actor_user_id);
   const result = await listAudit(
     {
       entity_type: active.entity_type || undefined,
-      actor_user_id: Number.isFinite(actorId) && actorId > 0 ? actorId : undefined,
+      actor_username: active.actor_username || undefined,
       event_type: active.event_type || undefined,
       created_at: active.created_at || undefined,
       outcome: active.outcome || undefined,
@@ -197,11 +204,10 @@ if (isAdmin.value) {
         </select>
 
         <input
-          v-model="filters.actor_user_id"
-          type="number"
-          min="1"
+          v-model="filters.actor_username"
+          type="text"
           class="rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          :placeholder="t('audit.actorIdPlaceholder')"
+          :placeholder="t('audit.actorPlaceholder')"
         />
 
         <input
@@ -278,7 +284,7 @@ if (isAdmin.value) {
               <SortableHeader field="created_at" :label="t('calendar.dateLabel')" :active="sort" :dir="dir" @sort="toggleSort" />
               <SortableHeader field="event_type" :label="t('audit.colEvent')" :active="sort" :dir="dir" @sort="toggleSort" />
               <SortableHeader field="entity_type" :label="t('audit.colEntity')" :active="sort" :dir="dir" @sort="toggleSort" />
-              <SortableHeader field="actor_user_id" :label="t('audit.colActor')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <SortableHeader field="actor_username" :label="t('audit.colActor')" :active="sort" :dir="dir" @sort="toggleSort" />
               <SortableHeader field="outcome" :label="t('audit.outcome')" :active="sort" :dir="dir" @sort="toggleSort" />
             </tr>
           </thead>
@@ -305,8 +311,8 @@ if (isAdmin.value) {
                 {{ event.entity_type }}
                 <span v-if="event.entity_id" class="ml-1 text-xs opacity-60">#{{ event.entity_id }}</span>
               </td>
-              <td class="px-4 py-3 tabular-nums text-neutral">
-                {{ event.actor_user_id ?? t('generic.emptyValue') }}
+              <td class="px-4 py-3 text-neutral">
+                {{ actorLabel(event) }}
               </td>
               <td class="px-4 py-3">
                 <span

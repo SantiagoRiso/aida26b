@@ -870,6 +870,53 @@ describe('GET /api/appointments/:id — staff detail read', () => {
 
     await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
   });
+
+  test('detail read joins the referenced service/professional/client names onto the payload', async () => {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId, FAR_FUTURE_TS],
+    );
+    const id = Number(r.rows[0].id);
+
+    currentUser = asUser(proId, 'Professional');
+    const res = await apptReq<AppointmentResponse>('GET', `/api/appointments/${id}`);
+    expect(res.status).toBe(200);
+    const row = dataOf(res);
+    expect(row.service_name).toBe('Consulta');
+    expect(row.professional_name).toBe('appt_pro1');
+    expect(row.client_name).toBe('appt_client1');
+
+    await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
+  });
+
+  // The name joins are inner, which is only safe because auth.users_directory carries every user.
+  // Users are deactivated, never deleted, so a turno of a deactivated client must still be readable:
+  // narrowing that view to active users would silently drop turnos from every list instead of
+  // merely blanking a name.
+  test('a deactivated participant still yields the turno, name and all', async () => {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+       VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+       RETURNING id`,
+      [clientId, proId, svcId, FAR_FUTURE_TS],
+    );
+    const id = Number(r.rows[0].id);
+    await pool.query(`UPDATE auth.users SET is_active = false, deleted_at = now() WHERE id = $1`, [clientId]);
+
+    try {
+      currentUser = asUser(proId, 'Professional');
+      const res = await apptReq<AppointmentResponse>('GET', `/api/appointments/${id}`);
+      expect(res.status).toBe(200);
+      expect(dataOf(res).client_name).toBe('appt_client1');
+    } finally {
+      await pool.query(`UPDATE auth.users SET is_active = true, deleted_at = NULL WHERE id = $1`, [clientId]);
+      await pool.query(`DELETE FROM appointments WHERE id = $1`, [id]);
+    }
+  });
 });
 
 describe('GET /api/appointments — paginated list', () => {
@@ -901,6 +948,21 @@ describe('GET /api/appointments — paginated list', () => {
       expect(row).not.toHaveProperty('staff_note');
       expect(row).not.toHaveProperty('override_actor_id');
     }
+  });
+
+  // Settles whether a portal Client can actually read the referenced names: roleRequired.read on
+  // both `services` and `professionals` already lists 'Client' (shared/src/ssot/domain), and this
+  // proves it end-to-end on the list response itself — a Client's own appointment list must never
+  // depend on a separate FK-options fetch (which races the first render) to know whose turno it is.
+  test('client list carries real service/professional/client names, not blank or raw ids', async () => {
+    currentUser = asUser(clientId, 'Client');
+    const res = await apptReq<AppointmentResponse[]>('GET', '/api/appointments');
+    expect(res.status).toBe(200);
+    const row = dataOf(res).find((r) => Number(r.professional_user_id) === proId);
+    expect(row).toBeDefined();
+    expect(row!.service_name).toBe('Consulta');
+    expect(row!.professional_name).toBe('appt_pro1');
+    expect(row!.client_name).toBe('appt_client1');
   });
 
   test('client2 list returns no rows from client1 appointments', async () => {

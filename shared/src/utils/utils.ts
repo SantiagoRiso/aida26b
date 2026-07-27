@@ -33,6 +33,14 @@ export function getEntityName(tableKey: TableKey): string {
   return String(tableOf(tableKey).uiName.en);
 }
 
+// Surrogate pk and tenant-scope columns are internal plumbing, never a viewer-facing fact —
+// every generic renderer (list columns, edit-form read-only block) must hide the same set, so
+// this is the one place that decides what "internal" means. Composite pks are handled: all
+// parts are internal, not just a single `pk` string.
+export function isInternalColumn(tableKey: TableKey, key: string): boolean {
+  return getPkFields(tableKey).includes(key) || key === BUSINESS_ID_COLUMN;
+}
+
 // Only SSOT-declared `filterable` columns may be used to build WHERE identifiers.
 export function getFilterableColumns(tableKey: TableKey): Record<string, ColumnDef> {
   return Object.fromEntries(

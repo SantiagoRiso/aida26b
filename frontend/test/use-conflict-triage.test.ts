@@ -65,6 +65,9 @@ function makeVirtual(overrides: Partial<VirtualOccurrence> = {}): VirtualOccurre
     description: null,
     is_virtual: true,
     in_conflict: true,
+    service_name: 'Servicio',
+    professional_name: 'Profesional',
+    client_name: 'Cliente',
     ...overrides,
   };
 }

@@ -71,8 +71,8 @@ const {
 
 const { labelFor: professionalLabelFor } = useForeignKeyOptions({ table: 'professionals', valueField: 'id', labelField: 'display_name' });
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
-const professionalName = (id: number | string) => professionalLabelFor(id) ?? `#${id}`;
-const serviceName = (id: number | string) => serviceLabelFor(id) ?? `#${id}`;
+const professionalName = (id: number | string) => professionalLabelFor(id) ?? t('generic.unresolvedReference');
+const serviceName = (id: number | string) => serviceLabelFor(id) ?? t('generic.unresolvedReference');
 
 const loading = ref(true);
 const contentLoading = ref(true);

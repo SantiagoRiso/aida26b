@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { listAppointments } from '@/api/appointments';
-import { listAudit } from '@/api/audit';
 import type { Appointment, AppointmentListFilters } from '@/api/appointments';
 import type { VirtualOccurrence } from '@shared/ssot/query-types';
 import { useAuthStore } from '@/stores/auth';
@@ -12,10 +11,8 @@ import { useReceptionistDashboard } from '@/composables/useReceptionistDashboard
 // Stat tiles / summary lists on the three staff dashboards — each patched to drop virtual
 // (un-materialized recurring) occurrences from the server's mixed list response.
 vi.mock('@/api/appointments', () => ({ listAppointments: vi.fn() }));
-vi.mock('@/api/audit', () => ({ listAudit: vi.fn() }));
 
 const mockedList = vi.mocked(listAppointments);
-const mockedAudit = vi.mocked(listAudit);
 
 const NOW = new Date();
 
@@ -64,6 +61,9 @@ function makeVirtual(overrides: Partial<VirtualOccurrence> = {}): VirtualOccurre
     description: null,
     is_virtual: true,
     in_conflict: false,
+    service_name: 'Servicio',
+    professional_name: 'Profesional',
+    client_name: 'Cliente',
     ...overrides,
   };
 }
@@ -71,7 +71,6 @@ function makeVirtual(overrides: Partial<VirtualOccurrence> = {}): VirtualOccurre
 beforeEach(() => {
   setActivePinia(createPinia());
   mockedList.mockReset();
-  mockedAudit.mockReset();
 });
 
 describe('useAdminDashboard — virtual filter', () => {
@@ -80,7 +79,6 @@ describe('useAdminDashboard — virtual filter', () => {
       if (filters?.state === 'requested') return Promise.resolve({ ok: true, data: [], meta: { page: 1, limit: 50, total: 4 } });
       return Promise.resolve({ ok: true, data: [makeAppt('1'), makeAppt('2'), makeVirtual()] });
     });
-    mockedAudit.mockResolvedValue({ ok: true, data: [] });
 
     const { adminTodayCount, adminPendingCount, loadAdmin } = useAdminDashboard();
     await loadAdmin();
@@ -126,7 +124,6 @@ describe('staff dashboards — "today" is the business day', () => {
     vi.useFakeTimers();
     vi.setSystemTime(LATE_EVENING_IN_ARGENTINA);
     mockedList.mockResolvedValue({ ok: true, data: [] });
-    mockedAudit.mockResolvedValue({ ok: true, data: [] });
   });
   afterEach(() => {
     vi.useRealTimers();

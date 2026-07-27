@@ -14,7 +14,7 @@ import { login, DEMO_ACCOUNTS, openScreen, findProfessionalId, cleanupUsers, iso
  * total varies by what else has run. Rather than depend on that, this spec self-seeds a single
  * fresh Receptionist and drives 55 denied GET /api/audit calls as that actor in beforeAll: each is a
  * real, deterministic 'permission_denied'/'denied' audit row, isolated to an actor no other spec
- * touches, so filtering by that actor's id guarantees total === 55 regardless of run order.
+ * touches, so filtering by that actor guarantees total === 55 regardless of run order.
  *
  * The entity-type filter is exercised on two values: 'appointments' (always populated by seed
  * activity) and 'calendar_grants' — the latter proves the "Permisos de calendario" option now sends
@@ -95,7 +95,7 @@ test.beforeAll(async ({ browser }) => {
 
 // Deactivate the throwaway actor so it stops adding a Receptionist to every roster/user list on
 // re-runs. The 55 audit_events rows it produced are append-only and CANNOT be deleted by design —
-// they're harmless here because every assertion scopes to this actor's id (total === 55 by actor
+// they're harmless here because every assertion scopes to this actor (total === 55 by actor
 // filter), never to a global audit count, so they never accumulate into a wrong answer.
 test.afterAll(async ({ browser }) => {
   await cleanupUsers(browser, [deniedActorId]);
@@ -143,7 +143,7 @@ test.describe('Audit log (admin) — access, filters, denied styling, pagination
   test('actor + event type + outcome + date range narrow to exactly the self-seeded denied events, styled and paginated', async ({ page }) => {
     await openAudit(page);
 
-    await page.getByPlaceholder(es.audit.actorIdPlaceholder).fill(String(deniedActorId));
+    await page.getByPlaceholder(es.audit.actorPlaceholder).fill(deniedActorUsername);
     await page.getByPlaceholder(es.audit.eventTypePlaceholder).fill('permission_denied');
     await page.getByRole('combobox', { name: es.audit.outcome }).selectOption('denied');
     await fillAuditDate(fromDiv(page), isoDaysFromNow(0));
@@ -182,22 +182,22 @@ test.describe('Audit log (admin) — access, filters, denied styling, pagination
   test('reset clears every filter and reloads unfiltered', async ({ page }) => {
     await openAudit(page);
 
-    await page.getByPlaceholder(es.audit.actorIdPlaceholder).fill(String(deniedActorId));
+    await page.getByPlaceholder(es.audit.actorPlaceholder).fill(deniedActorUsername);
     await page.getByRole('combobox', { name: es.audit.outcome }).selectOption('denied');
 
     const resetResp = page.waitForResponse((r) => r.url().includes('/api/audit') && r.request().method() === 'GET', { timeout: 10_000 });
     await page.getByRole('button', { name: es.audit.clear }).click();
     const url = (await resetResp).url();
-    expect(url).not.toContain('actor_user_id');
+    expect(url).not.toContain('actor_username');
     expect(url).not.toContain('outcome=denied');
 
-    await expect(page.getByPlaceholder(es.audit.actorIdPlaceholder)).toHaveValue('');
+    await expect(page.getByPlaceholder(es.audit.actorPlaceholder)).toHaveValue('');
   });
 
   test('a filter combo with no matches shows the empty state', async ({ page }) => {
     await openAudit(page);
 
-    await page.getByPlaceholder(es.audit.actorIdPlaceholder).fill(String(deniedActorId));
+    await page.getByPlaceholder(es.audit.actorPlaceholder).fill(deniedActorUsername);
     await page.getByPlaceholder(es.audit.eventTypePlaceholder).fill('e2e_nonexistent_event_type');
     const resp = page.waitForResponse((r) => r.url().includes('/api/audit') && r.request().method() === 'GET', { timeout: 10_000 });
     await page.getByRole('button', { name: es.audit.search }).click();

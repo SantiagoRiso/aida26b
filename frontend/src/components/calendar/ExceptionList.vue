@@ -58,16 +58,16 @@ async function confirmDelete() {
         :data-testid="`exception-row-${row.id}`"
         class="flex items-center justify-between gap-2 rounded border border-border px-3 py-2 text-sm"
       >
-        <div class="flex flex-col">
+        <div class="min-w-0 flex flex-col">
           <span class="font-medium">
             {{ formatDate(row.exception_date) }} · {{ t(`exception.kind.${classifyException(row)}`) }}
             <template v-if="row.start_time && row.end_time">
               · {{ row.start_time }}-{{ row.end_time }}
             </template>
           </span>
-          <span v-if="row.reason" class="text-xs text-neutral">{{ row.reason }}</span>
+          <span v-if="row.reason" class="truncate text-xs text-neutral">{{ row.reason }}</span>
         </div>
-        <span class="flex items-center gap-3">
+        <span class="flex shrink-0 items-center gap-3">
           <button
             v-if="showEdit"
             type="button"

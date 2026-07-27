@@ -28,7 +28,7 @@ function guardRoute(
     } catch (error) {
       const mapped = httpForDbError(error);
       if (mapped) {
-        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
+        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message, { detail: mapped.detail });
         return;
       }
       // App errors that carry their own HTTP mapping
@@ -54,7 +54,7 @@ function guardMiddleware(
     } catch (error) {
       const mapped = httpForDbError(error);
       if (mapped) {
-        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message);
+        if (!res.headersSent) sendError(res, mapped.status, mapped.code, mapped.message, { detail: mapped.detail });
         return;
       }
       const structured = httpForStructuredError(error);

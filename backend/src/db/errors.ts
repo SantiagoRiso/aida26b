@@ -1,3 +1,5 @@
+import { CONSTRAINT_DETAIL_KEYS } from '../../../shared/src/ssot/domain/constraint-messages';
+
 export class DbError extends Error {
   constructor(
     message: string,
@@ -52,8 +54,18 @@ export const PG_ERROR_MAP: Record<string, { status: number; code: string; messag
 export function httpForDbError(
   // eslint-disable-next-line no-restricted-syntax -- catch-boundary: caller passes through whatever was thrown
   err: unknown,
-): { status: number; code: string; message: string } | null {
+): { status: number; code: string; message: string; detail?: { key: string } } | null {
   const pgCode = err instanceof DbError ? err.pgCode : (err as { code?: string } | null)?.code;
-  return pgCode && PG_ERROR_MAP[pgCode] ? PG_ERROR_MAP[pgCode] : null;
+  const mapped = pgCode && PG_ERROR_MAP[pgCode] ? PG_ERROR_MAP[pgCode] : null;
+  if (!mapped) return null;
+
+  // The constraint name, when present, says exactly which rule fired — swap in a precise
+  // detail.key for the ones it's safe to name everywhere (see constraint-messages.ts for the
+  // reachability analysis; auth.users' own unique constraints are deliberately excluded here and
+  // handled instead by routes/users.ts, the only surfaces where naming them can't leak identity
+  // across tenants or roles). Unmapped/unknown constraints fall through to today's generic message.
+  const constraint = err instanceof DbError ? err.constraint : undefined;
+  const key = constraint ? CONSTRAINT_DETAIL_KEYS[constraint] : undefined;
+  return key ? { ...mapped, detail: { key } } : mapped;
 }
 

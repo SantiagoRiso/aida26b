@@ -107,13 +107,14 @@ async function revoke(id: string) {
           :key="g.id"
           class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
         >
-          <span class="flex items-center gap-2 text-sm">
-            <span class="font-medium">{{ g.grantee_username }}</span>
-            <span class="rounded bg-surface px-2 py-0.5 text-xs text-neutral">{{ roleLabel(g.grantee_role) }}</span>
+          <span class="flex min-w-0 items-center gap-2 text-sm">
+            <span class="truncate font-medium">{{ g.grantee_username }}</span>
+            <span class="shrink-0 rounded bg-surface px-2 py-0.5 text-xs text-neutral">{{ roleLabel(g.grantee_role) }}</span>
           </span>
           <AppButton
             variant="destructive"
             size="md"
+            class="shrink-0"
             :loading="revokingId === g.id"
             @click="revoke(g.id)"
           >

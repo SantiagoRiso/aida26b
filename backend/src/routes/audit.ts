@@ -63,6 +63,8 @@ export function mountAuditRoutes(
       if (Number.isInteger(actorId) && actorId > 0) actorUserId = { value: actorId, negated: actorRaw.negated };
     }
 
+    const actorUsername = filterValues.get('actor_username');
+
     let outcome: { value: string; negated: boolean } | undefined;
     const outcomeRaw = filterValues.get('outcome');
     if (outcomeRaw !== undefined) {
@@ -106,6 +108,7 @@ export function mountAuditRoutes(
       sort,
       entityType,
       actorUserId,
+      actorUsername,
       eventType,
       outcome,
       dateFrom,

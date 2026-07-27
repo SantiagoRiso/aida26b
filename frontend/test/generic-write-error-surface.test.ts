@@ -186,3 +186,51 @@ describe('apiErrorMessage — appointment detail keys interpolate their runtime 
     expect(msg).toBe(es.apiError.completeTooEarly);
   });
 });
+
+// A duplicate-constraint conflict used to collapse to the generic "Ya existe un registro con esos
+// datos." (apiError.code.conflict) no matter which rule fired — see
+// shared/src/ssot/domain/constraint-messages.ts for the backend side of this mapping. These prove
+// the specific detail.key wins over the coarse code, for every surface the maintainer asked to be
+// precise (admin user creation) plus a sample of the swept adjacent cases.
+describe('apiErrorMessage — constraint-conflict detail keys resolve to a precise message, not the generic conflict text (M9)', () => {
+  beforeEach(() => {
+    globalI18n.global.locale.value = 'es';
+  });
+
+  it.each([
+    ['usernameTaken', es.apiError.usernameTaken],
+    ['emailTaken', es.apiError.emailTaken],
+    ['dniTaken', es.apiError.dniTaken],
+    ['grantAlreadyExists', es.apiError.grantAlreadyExists],
+    ['serviceAlreadyOffered', es.apiError.serviceAlreadyOffered],
+    ['clientPriceOverrideExists', es.apiError.clientPriceOverrideExists],
+    ['blockServiceAlreadyOffered', es.apiError.blockServiceAlreadyOffered],
+    ['chargeAlreadyPosted', es.apiError.chargeAlreadyPosted],
+    ['scheduleOwnerExactlyOne', es.apiError.scheduleOwnerExactlyOne],
+    ['exceptionGranularityRequired', es.apiError.exceptionGranularityRequired],
+  ] as const)('detail.key %s resolves to its own apiError string, not the generic conflict text', (key, expected) => {
+    const msg = apiErrorMessage({
+      ok: false, status: 409, code: 'conflict', message: 'Resource already exists',
+      detail: { key },
+    });
+    expect(msg).toBe(expected);
+    expect(msg).not.toBe(es.apiError.code.conflict);
+  });
+
+  it('an unmapped constraint (no detail) still falls back to the generic conflict text', () => {
+    const msg = apiErrorMessage({
+      ok: false, status: 409, code: 'conflict', message: 'Resource already exists',
+    });
+    expect(msg).toBe(es.apiError.code.conflict);
+  });
+
+  it('en locale resolves the same keys to the English strings', () => {
+    globalI18n.global.locale.value = 'en';
+    const msg = apiErrorMessage({
+      ok: false, status: 409, code: 'conflict', message: 'Resource already exists',
+      detail: { key: 'usernameTaken' },
+    });
+    expect(msg).toBe(en.apiError.usernameTaken);
+    expect(msg).not.toBe(en.apiError.code.conflict);
+  });
+});

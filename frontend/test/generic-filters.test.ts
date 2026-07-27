@@ -7,16 +7,24 @@ import { en } from '@/i18n/en';
 import { structure } from '@shared/ssot/structure';
 import type { TableKey } from '@shared/ssot/derived';
 import { listRows } from '@/api/crud';
+import { useAuthStore } from '@/stores/auth';
+import { isInternalColumn } from '@shared/utils/utils';
 import { resetFkOptionsCache } from '@/composables/useForeignKeyOptions';
 import GenericFilters from '@/components/generic/GenericFilters.vue';
 
 vi.mock('@/api/crud', () => ({ listRows: vi.fn().mockResolvedValue({ ok: true, data: [] }) }));
 
-// GenericFilters needs no auth/router: Pinia backs useLabel() (SSOT column labels follow
-// ui.language), and vue-i18n backs the chrome strings (Agregar, excluir, mín/máx…).
-function mountFilters(tableKey: TableKey) {
+// GenericFilters needs no router: Pinia backs useLabel() (SSOT column labels follow ui.language)
+// and the session, and vue-i18n backs the chrome strings (Agregar, excluir, mín/máx…).
+// A null business is the super-admin, the only viewer offered the business column.
+function mountFilters(tableKey: TableKey, businessId: number | null = null) {
   const pinia = createPinia();
   setActivePinia(pinia);
+  const auth = useAuthStore(pinia);
+  auth.user = {
+    id: 1, username: 'admin', email: null, role: 'Admin',
+    business_id: businessId, is_active: true, must_change_password: false,
+  };
   const i18n = createI18n({ legacy: false, locale: 'es', messages: { es, en } });
   return mount(GenericFilters, { props: { tableKey }, global: { plugins: [pinia, i18n] } });
 }
@@ -244,13 +252,36 @@ describe('GenericFilters — foreign key column', () => {
 });
 
 describe('GenericFilters — SSOT-driven column set', () => {
+  function addableOptions(wrapper: ReturnType<typeof mountFilters>): string[] {
+    return wrapper.findAll('option').map((o) => o.text()).filter((t) => t !== es.generic.addFilterPlaceholder);
+  }
+
+  const servicesCols = () =>
+    Object.entries(structure.tables.services.columns as Record<string, { filterable?: boolean; label?: { es: string } }>);
+
   it('only lists filterable columns as addable', () => {
-    const wrapper = mountFilters('services' as TableKey);
-    const cols = structure.tables.services.columns as Record<string, { filterable?: boolean; label?: { es: string } }>;
-    const filterableLabels = Object.values(cols).filter((c) => c.filterable).map((c) => c.label?.es);
-    const options = wrapper.findAll('option').map((o) => o.text()).filter((t) => t !== es.generic.addFilterPlaceholder);
-    for (const label of filterableLabels) {
+    const options = addableOptions(mountFilters('services' as TableKey));
+    const offered = servicesCols()
+      .filter(([key, c]) => c.filterable && !isInternalColumn('services' as TableKey, key))
+      .map(([, c]) => c.label?.es);
+    for (const label of offered) {
       expect(options).toContain(label);
     }
+  });
+
+  // The pk is filterable so an API caller holding ids can ask for exactly those rows, but the UI
+  // never shows an id, so offering it would ask for a value the viewer cannot know.
+  it('never offers the primary key, filterable though it is', () => {
+    const pkLabel = servicesCols().find(([key]) => key === 'id')?.[1].label?.es;
+    expect(pkLabel).toBeTruthy();
+    expect(addableOptions(mountFilters('services' as TableKey))).not.toContain(pkLabel);
+  });
+
+  it('offers the business column to a tenant-spanning admin and withholds it from a business-bound one', () => {
+    const businessLabel = servicesCols().find(([key]) => key === 'business_id')?.[1].label?.es;
+    expect(businessLabel).toBeTruthy();
+
+    expect(addableOptions(mountFilters('services' as TableKey, null))).toContain(businessLabel);
+    expect(addableOptions(mountFilters('services' as TableKey, 7))).not.toContain(businessLabel);
   });
 });

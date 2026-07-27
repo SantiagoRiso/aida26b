@@ -1,6 +1,11 @@
 import { businessTables, AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES } from './business';
-import { peopleTables, ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS } from './people';
+import { peopleTables, ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS, PASSWORD_REUSE_KEY, isPasswordReused } from './people';
 import { catalogTables } from './catalog';
+import {
+  CONSTRAINT_DETAIL_KEYS,
+  USER_IDENTITY_CONSTRAINT_DETAIL_KEYS,
+  INTENTIONALLY_GENERIC_CONSTRAINTS,
+} from './constraint-messages';
 import { recurrenceTables } from './recurrence';
 import { schedulingTables } from './scheduling';
 import { financeTables } from './finance';
@@ -87,4 +92,5 @@ export type { SeriesRule } from './recurrence-expand';
 export { seriesOccupancyForDate } from './recurrence-occupancy';
 export { AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES };
 export type { AuditOutcome } from './business';
-export { ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS };
+export { ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS, PASSWORD_REUSE_KEY, isPasswordReused };
+export { CONSTRAINT_DETAIL_KEYS, USER_IDENTITY_CONSTRAINT_DETAIL_KEYS, INTENTIONALLY_GENERIC_CONSTRAINTS };

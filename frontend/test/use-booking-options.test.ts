@@ -208,6 +208,9 @@ describe('useBookingOptions — recency ranking', () => {
         description: null,
         is_virtual: true,
         in_conflict: false,
+        service_name: 'Servicio',
+        professional_name: 'Profesional',
+        client_name: 'Cliente',
       }],
     });
     const { rankedProfessionals } = useBookingOptions({ rankByRecency: true });

@@ -1,8 +1,21 @@
 import { query, queryOne } from './core';
 import type { Queryable, SqlParam } from './core';
 import { grantedProfessionalScope } from './grants';
-import type { AppointmentRow, AppointmentSeriesInsert, AppointmentSeriesRow } from '../../../shared/src/ssot/query-types';
+import type {
+  AppointmentRow, AppointmentSeriesInsert, AppointmentSeriesRow, AppointmentSeriesRowWithNames,
+} from '../../../shared/src/ssot/query-types';
 import { ACTIVE_SERIES_STATUS, ENDED_SERIES_STATUS, UNTIL_END_KIND } from '../../../shared/src/ssot/domain/recurrence';
+
+// Same projection appointments.ts joins onto a real row: service_id/professional_user_id/
+// client_user_id are all NOT NULL FKs, so an INNER JOIN never drops a series. Names come from the
+// secret-free auth.users_directory view, never auth.users. Used only by the getActiveSeriesFor*
+// queries that feed virtual-occurrence expansion (series-listing.ts) — a virtual occurrence has no
+// row of its own to join at read time, so the names travel with the series instead.
+const SERIES_NAME_JOINS = `
+       JOIN services svc ON svc.id = s.service_id
+       JOIN auth.users_directory prof ON prof.id = s.professional_user_id
+       JOIN auth.users_directory cli ON cli.id = s.client_user_id`;
+const SERIES_NAME_COLUMNS = `svc.name AS service_name, prof.display_name AS professional_name, cli.display_name AS client_name`;
 
 // appointment_series carries no business_id column; business is derived via the owning
 // professional, exactly as appointments.ts scopes appointments through auth.users.
@@ -39,18 +52,19 @@ export function getActiveSeriesForOwner(
   professionalUserId: string,
   windowStart: string,
   windowEnd: string,
-): Promise<AppointmentSeriesRow[]> {
+): Promise<AppointmentSeriesRowWithNames[]> {
   const params: SqlParam[] = [professionalUserId, windowEnd, windowStart, ACTIVE_SERIES_STATUS];
   let businessFilter = '';
   if (businessId !== null) {
     params.push(businessId);
     businessFilter = `AND u.business_id = $${params.length}`;
   }
-  return query<AppointmentSeriesRow>(
+  return query<AppointmentSeriesRowWithNames>(
     db,
-    `SELECT s.*
+    `SELECT s.*, ${SERIES_NAME_COLUMNS}
        FROM appointment_series s
        JOIN auth.users u ON u.id = s.professional_user_id
+       ${SERIES_NAME_JOINS}
       WHERE s.professional_user_id = $1
         AND s.status = $4
         AND s.start_date <= $2
@@ -99,18 +113,19 @@ export function getActiveSeriesForClient(
   clientUserId: string,
   windowStart: string,
   windowEnd: string,
-): Promise<AppointmentSeriesRow[]> {
+): Promise<AppointmentSeriesRowWithNames[]> {
   const params: SqlParam[] = [clientUserId, windowEnd, windowStart, ACTIVE_SERIES_STATUS];
   let businessFilter = '';
   if (businessId !== null) {
     params.push(businessId);
     businessFilter = `AND u.business_id = $${params.length}`;
   }
-  return query<AppointmentSeriesRow>(
+  return query<AppointmentSeriesRowWithNames>(
     db,
-    `SELECT s.*
+    `SELECT s.*, ${SERIES_NAME_COLUMNS}
        FROM appointment_series s
        JOIN auth.users u ON u.id = s.professional_user_id
+       ${SERIES_NAME_JOINS}
       WHERE s.client_user_id = $1
         AND s.status = $4
         AND s.start_date <= $2
@@ -128,12 +143,13 @@ export function getActiveSeriesForBusiness(
   businessId: string,
   windowStart: string,
   windowEnd: string,
-): Promise<AppointmentSeriesRow[]> {
-  return query<AppointmentSeriesRow>(
+): Promise<AppointmentSeriesRowWithNames[]> {
+  return query<AppointmentSeriesRowWithNames>(
     db,
-    `SELECT s.*
+    `SELECT s.*, ${SERIES_NAME_COLUMNS}
        FROM appointment_series s
        JOIN auth.users u ON u.id = s.professional_user_id
+       ${SERIES_NAME_JOINS}
       WHERE u.business_id = $1
         AND s.status = $4
         AND s.start_date <= $2
@@ -151,12 +167,13 @@ export function getActiveSeriesForGrantee(
   granteeUserId: string,
   windowStart: string,
   windowEnd: string,
-): Promise<AppointmentSeriesRow[]> {
-  return query<AppointmentSeriesRow>(
+): Promise<AppointmentSeriesRowWithNames[]> {
+  return query<AppointmentSeriesRowWithNames>(
     db,
-    `SELECT s.*
+    `SELECT s.*, ${SERIES_NAME_COLUMNS}
        FROM appointment_series s
        JOIN auth.users u ON u.id = s.professional_user_id
+       ${SERIES_NAME_JOINS}
       WHERE u.business_id = $1
         AND ${grantedProfessionalScope('s.professional_user_id', '$2')}
         AND s.status = $5

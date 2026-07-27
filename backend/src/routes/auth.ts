@@ -17,7 +17,7 @@ import {
 } from '../db/auth';
 import { getSelfProfile, updateSelfProfile } from '../db/users';
 import { AUTH_PATTERNS } from '../../../shared/src/ssot/api-paths';
-import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
+import { EMAIL_PATTERN, PASSWORD_REUSE_KEY, isPasswordReused } from '../../../shared/src/ssot/domain/people';
 import { AuthThrottle, loginIdentityLimits, loginLimits, passwordChangeLimits } from '../auth-throttle';
 
 const EMAIL_RE = new RegExp(EMAIL_PATTERN);
@@ -145,10 +145,11 @@ export function mountAuthRoutes(
 
     throttle.clear(limits);
 
-    // Reusing the current password defeats a forced reset, so reject it.
-    const sameAsCurrent = await auth.verifyPassword(newPassword, current.password_salt, current.password_hash);
-    if (sameAsCurrent) {
-      return sendError(res, 400, 'password_reuse', 'New password must be different from the current password', { detail: { key: 'passwordReuse' } });
+    // Reusing the current password defeats a forced reset, so reject it. `currentPassword` was
+    // just proven correct above, so comparing it to the proposed new one is the same rule the
+    // client pre-checks with — one shared function, not a second hash-verify of the new password.
+    if (isPasswordReused(newPassword, currentPassword)) {
+      return sendError(res, 400, 'password_reuse', 'New password must be different from the current password', { detail: { key: PASSWORD_REUSE_KEY } });
     }
 
     const { passwordHash, passwordSalt } = await auth.hashPassword(newPassword);

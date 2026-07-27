@@ -51,16 +51,35 @@ beforeEach(() => {
     meta: { page: 1, limit: LIST_DEFAULT_LIMIT, total: 2 },
     data: [
       {
-        id: '1', business_id: '42', actor_user_id: '7', event_type: 'appointment_scheduled',
+        id: '1', business_id: '42', actor_user_id: '7', actor_username: 'recep_ana',
+        event_type: 'appointment_scheduled',
         entity_type: 'appointments', entity_id: '3', outcome: 'success', ip: null,
         details: null, created_at: '2026-01-01T12:00:00.000Z',
       },
       {
-        id: '2', business_id: null, actor_user_id: null, event_type: 'login_failed_unknown_username',
+        id: '2', business_id: null, actor_user_id: null, actor_username: null,
+        event_type: 'login_failed_unknown_username',
         entity_type: null, entity_id: null, outcome: 'failure', ip: null,
         details: null, created_at: '2026-01-01T12:00:01.000Z',
       },
+      {
+        id: '3', business_id: '42', actor_user_id: '99', actor_username: null,
+        event_type: 'appointment_canceled',
+        entity_type: 'appointments', entity_id: '4', outcome: 'success', ip: null,
+        details: null, created_at: '2026-01-01T12:00:02.000Z',
+      },
     ],
+  });
+});
+
+describe('AuditView — the actor column reads as a person', () => {
+  it('shows the username, and falls back to the id only when it cannot be resolved', async () => {
+    const wrapper = await mountAudit(7);
+    const actorCells = wrapper.findAll('tbody tr').map((tr) => tr.findAll('td')[3].text());
+
+    expect(actorCells[0]).toBe('recep_ana');
+    expect(actorCells[1]).toBe(es.generic.emptyValue);
+    expect(actorCells[2]).toBe('#99');
   });
 });
 

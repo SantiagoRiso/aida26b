@@ -7,7 +7,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountLedgerRoutes } from '../src/routes/ledger';
 import type { AuthUser } from '../src/auth';
-import { makeApiClient, dataOf, metaOf } from './api_client';
+import { makeApiClient, dataOf, metaOf, errorOf } from './api_client';
 import type { JsonBody } from './api_client';
 import type { LedgerEntryRow, Wire } from '../../shared/src/ssot/query-types';
 import type { BalanceResult } from '../../shared/src/ssot/contracts/ledger';
@@ -243,6 +243,7 @@ describe('POST /api/ledger — Admin write matrix', () => {
     });
     expect(first.status).toBe(201);
     expect(second.status).toBe(409);
+    expect(errorOf(second).detail?.key).toBe('chargeAlreadyPosted');
   });
 
   test('an unlinked charge (no appointment_id) is unconstrained — several can coexist', async () => {

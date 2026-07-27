@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useLabel } from '@/composables/useLabel';
+import { useAuthStore } from '@/stores/auth';
 import { i18n } from '@/i18n';
 import { structure } from '@shared/ssot/structure';
+import { isInternalColumn, BUSINESS_ID_COLUMN } from '@shared/utils/utils';
 import type { ColumnDef, ForeignKeyDef } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -12,6 +14,7 @@ const props = defineProps<{ tableKey: TableKey; initial?: Record<string, string>
 const emit = defineEmits<{ change: [filters: Record<string, string>] }>();
 
 const { label } = useLabel();
+const auth = useAuthStore();
 // Chrome literals below use the global i18n instance (not useI18n()) — mounted by many
 // consumers, not all of which register the i18n plugin in their tests.
 
@@ -23,10 +26,22 @@ interface FilterEntry {
   max: string;
 }
 
+// Only an Admin with no business of their own spans tenants. Fail closed: an unknown viewer is
+// never treated as one.
+const spansTenants = computed(() => auth.user?.role === 'Admin' && auth.user.business_id == null);
+
+// A column may be filterable for API callers and still be wrong to offer here. The pk asks the
+// viewer for a raw id they are never shown, and a session-bound business can only narrow a list to
+// what it already contains — only a tenant-spanning viewer has a business worth choosing.
+function offerable(key: string): boolean {
+  if (key === BUSINESS_ID_COLUMN) return spansTenants.value;
+  return !isInternalColumn(props.tableKey, key);
+}
+
 const filterableColumns = computed(() => {
   const cols = structure.tables[props.tableKey].columns as Record<string, ColumnDef>;
   return Object.entries(cols)
-    .filter(([, col]) => col.filterable)
+    .filter(([key, col]) => col.filterable && offerable(key))
     .map(([key, col]) => ({ key, col }));
 });
 

@@ -6,7 +6,7 @@ import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { hashPassword } from '../src/auth';
 import type { Pool } from 'pg';
-import { makeApiClient, dataOf } from './api_client';
+import { makeApiClient, dataOf, errorOf } from './api_client';
 import type {
   CalendarGrantCreatedRow,
   CalendarGrantRow,
@@ -213,6 +213,7 @@ describe('Grant creation (POST /api/calendar-grants)', () => {
       body: { professional_user_id: p2UserId, grantee_user_id: p1UserId },
     });
     expect(res.status).toBe(409);
+    expect(errorOf(res).detail?.key).toBe('grantAlreadyExists');
   });
 
   test('Missing body fields → 400', async () => {

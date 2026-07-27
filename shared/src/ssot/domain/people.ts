@@ -28,6 +28,17 @@ export const EMAIL_PATTERN = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
 export const EMAIL_PATTERN_MESSAGE = 'must be a valid email address';
 export const EMAIL_PATTERN_KEY = 'emailFormat';
 
+// A new password identical to the current one defeats the point of changing it. The forced
+// (post-login) and in-session change-password flows both reject it, and both the client's live
+// pre-check and the server's post-verification check test the same equality — the client compares
+// what the user just typed, the server compares against a `current_password` it already proved
+// correct, so at that point in the request the two comparisons are the same rule.
+export const PASSWORD_REUSE_KEY = 'passwordReuse';
+
+export function isPasswordReused(newPassword: string, currentPassword: string): boolean {
+  return newPassword !== '' && newPassword === currentPassword;
+}
+
 // Role choices for the users.role column and any UI role picker. The set comes from the single
 // ROLES source; Record<Role,…> forces a label for every role, so adding one is an edit in
 // roles.ts plus its label here (nowhere else).

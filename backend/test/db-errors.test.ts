@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'vitest';
 import { DbError, httpForDbError, PG_ERROR_MAP } from '../src/db/errors';
+import {
+  CONSTRAINT_DETAIL_KEYS,
+  USER_IDENTITY_CONSTRAINT_DETAIL_KEYS,
+} from '../../shared/src/ssot/domain/constraint-messages';
 
 describe('DbError.from', () => {
   test('wraps a raw pg-shaped error, carrying code and constraint', () => {
@@ -63,6 +67,50 @@ describe('httpForDbError — newly mapped SQLSTATEs', () => {
       expect(entry.code).not.toMatch(/^[0-9A-Z]{5}$/); // not a raw SQLSTATE standing in for a code
       expect(entry.message.toLowerCase()).not.toContain('postgres');
       expect(pgCode).toMatch(/^[0-9A-Z]{5}$/); // sanity: keys are SQLSTATEs
+    }
+  });
+});
+
+// A duplicate-key collapsed to the generic `conflict` code no matter which unique/check
+// constraint fired, discarding the constraint name DbError.from already carries. These prove the
+// constraint-name → detail.key lookup (shared/src/ssot/domain/constraint-messages.ts) actually
+// wires through httpForDbError, and that the SQLSTATE→status/code mapping stays the fallback.
+describe('httpForDbError — constraint name resolves a precise detail.key', () => {
+  test.each(Object.entries(CONSTRAINT_DETAIL_KEYS))(
+    '%s -> detail.key %s, status/code unchanged from the plain SQLSTATE mapping',
+    (constraint, key) => {
+      const bare = httpForDbError(new DbError('x', '23505'));
+      const withConstraint = httpForDbError(new DbError('x', '23505', undefined, constraint));
+      expect(withConstraint).toEqual({ ...bare, detail: { key } });
+    },
+  );
+
+  test('a CHECK-violation constraint (23514) resolves through the same lookup', () => {
+    const mapped = httpForDbError(
+      new DbError('x', '23514', undefined, 'schedule_blocks_time_order'),
+    );
+    expect(mapped).toEqual({ status: 400, code: 'validation_error', message: expect.any(String), detail: { key: 'endAfterStart' } });
+  });
+
+  test('an unrecognized constraint name falls through to the generic SQLSTATE mapping, no detail', () => {
+    const mapped = httpForDbError(new DbError('x', '23505', undefined, 'some_future_migration_constraint'));
+    expect(mapped).toEqual({ status: 409, code: 'conflict', message: expect.any(String) });
+    expect(mapped).not.toHaveProperty('detail');
+  });
+
+  test('no constraint at all still falls through to the generic SQLSTATE mapping, no detail', () => {
+    const mapped = httpForDbError(new DbError('x', '23505'));
+    expect(mapped).not.toHaveProperty('detail');
+  });
+
+  // The security-sensitive exclusion: auth.users' own unique constraints must NEVER be resolved
+  // by the shared, route-agnostic httpForDbError — only routes/users.ts's admin/staff-only surface
+  // may name them (see constraint-messages.ts for the cross-tenant/self-service enumeration risk).
+  test('auth.users identity constraints (username/email/DNI) are never mapped by the shared lookup', () => {
+    for (const constraint of Object.keys(USER_IDENTITY_CONSTRAINT_DETAIL_KEYS)) {
+      expect(CONSTRAINT_DETAIL_KEYS).not.toHaveProperty(constraint);
+      const mapped = httpForDbError(new DbError('x', '23505', undefined, constraint));
+      expect(mapped).not.toHaveProperty('detail');
     }
   });
 });

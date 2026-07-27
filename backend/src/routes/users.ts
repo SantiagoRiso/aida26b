@@ -25,6 +25,7 @@ import { getBusinessSettings } from '../db/businesses';
 import { ADMIN_USER_PATTERNS } from '../../../shared/src/ssot/api-paths';
 import type { CreatedUserResult, EnabledLoginResult } from '../../../shared/src/ssot/contracts/users';
 import { EMAIL_PATTERN } from '../../../shared/src/ssot/domain/people';
+import { USER_IDENTITY_CONSTRAINT_DETAIL_KEYS } from '../../../shared/src/ssot/domain/constraint-messages';
 
 const EMAIL_RE = new RegExp(EMAIL_PATTERN);
 
@@ -33,16 +34,27 @@ function isUniqueViolation(error: unknown): error is DbError {
   return error instanceof DbError && error.pgCode === '23505';
 }
 
-// Single unique-violation → 409 responder. The per-business DNI constraint is shared by
-// every user write, so it is named here; the fallback names the field the caller was
-// inserting (email vs username) so the form can react to the right input.
-// Anything else rethrows for guardRoute to map (unexpected DbError → mapped code, else 500).
+// English log prose per identity constraint; the client never reads this — it resolves the
+// localized message from `detail.key` below (USER_IDENTITY_CONSTRAINT_DETAIL_KEYS, the SSoT map
+// shared with the drift guard). Kept off the global httpForDbError map deliberately: these three
+// are the only unique constraints allowed a precise message on this admin/staff-only surface — see
+// constraint-messages.ts for why the self-service email/DNI paths must stay generic.
+const IDENTITY_CONSTRAINT_LOG_MESSAGE: Readonly<Record<string, string>> = Object.freeze({
+  users_username_key: 'Username already exists',
+  users_email_unique: 'Email already exists',
+  uq_users_business_dni: 'DNI already exists',
+});
+
+// Single unique-violation → 409 responder for the admin/staff user-creation surfaces
+// (POST /api/admin/users, POST /api/admin/users/:id/enable-login). Anything else rethrows for
+// guardRoute to map (unexpected DbError → mapped code, else 500).
 // eslint-disable-next-line no-restricted-syntax -- Catch-boundary value is narrowed before any database fields are read.
 function sendUniqueConflict(res: express.Response, error: unknown, fallbackMessage: string) {
   if (!isUniqueViolation(error)) throw error;
-  const message =
-    error.constraint === 'uq_users_business_dni' ? 'DNI already exists' : fallbackMessage;
-  return sendError(res, 409, 'conflict', message);
+  const constraint = error.constraint;
+  const message = (constraint && IDENTITY_CONSTRAINT_LOG_MESSAGE[constraint]) || fallbackMessage;
+  const key = constraint ? USER_IDENTITY_CONSTRAINT_DETAIL_KEYS[constraint] : undefined;
+  return sendError(res, 409, 'conflict', message, key ? { detail: { key } } : {});
 }
 
 type CreateUserInput = {

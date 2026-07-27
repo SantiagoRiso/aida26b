@@ -5,6 +5,7 @@ import { test } from 'vitest';
 import { app, pool } from '../src/server';
 import { hashPassword } from '../src/auth';
 import { isAuthUser } from '../../shared/src/ssot/contracts/auth';
+import { PASSWORD_REUSE_KEY } from '../../shared/src/ssot/domain/people';
 
 class FakeDb {
   constructor(users) {
@@ -311,6 +312,60 @@ test('must_change_password blocks write routes and clears after change', async (
 
     const logoutRes = await request(baseUrl, '/api/auth/logout', { method: 'POST', cookie: tempCookie });
     assert.equal(logoutRes.status, 204);
+  });
+});
+
+// This is the single endpoint both the forced (post-login) and the in-session change-password
+// screens call — there is no second server-side copy of the rule to drift out of sync. The
+// detail key it sends is the same PASSWORD_REUSE_KEY constant the frontend's live pre-check reads
+// its message from, so a rename of one side would fail this assertion instead of silently drifting.
+test('change-password rejects a new password identical to the current one', async () => {
+  const db = await makeDb();
+  await withServer(db, async (baseUrl) => {
+    const adminCookie = await login(baseUrl, 'admin', 'adminpass');
+    await request(baseUrl, '/api/admin/users', {
+      method: 'POST', cookie: adminCookie,
+      body: { username: 'reusetest', password: 'oldpassword1', role: 'Client', email: 'reusetest@test.com' },
+    });
+    const cookie = await login(baseUrl, 'reusetest', 'oldpassword1');
+
+    const rejected = await request(baseUrl, '/api/auth/change-password', {
+      method: 'POST',
+      cookie,
+      body: { current_password: 'oldpassword1', new_password: 'oldpassword1' },
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error.code, 'password_reuse');
+    assert.equal(rejected.body.error.detail.key, PASSWORD_REUSE_KEY);
+
+    // The account's password is untouched — the user can still log in with the original.
+    const stillWorks = await request(baseUrl, '/api/auth/login', {
+      method: 'POST',
+      body: { username: 'reusetest', password: 'oldpassword1' },
+    });
+    assert.equal(stillWorks.status, 200);
+  });
+});
+
+test('change-password accepts a password that differs from the current one', async () => {
+  const db = await makeDb();
+  await withServer(db, async (baseUrl) => {
+    const adminCookie = await login(baseUrl, 'admin', 'adminpass');
+    await request(baseUrl, '/api/admin/users', {
+      method: 'POST', cookie: adminCookie,
+      body: { username: 'differtest', password: 'oldpassword1', role: 'Client', email: 'differtest@test.com' },
+    });
+    const cookie = await login(baseUrl, 'differtest', 'oldpassword1');
+
+    const changed = await request(baseUrl, '/api/auth/change-password', {
+      method: 'POST',
+      cookie,
+      body: { current_password: 'oldpassword1', new_password: 'brandnewpass2' },
+    });
+    assert.equal(changed.status, 200);
+
+    const newCookie = await login(baseUrl, 'differtest', 'brandnewpass2');
+    assert.ok(newCookie.startsWith('aida_session='));
   });
 });
 

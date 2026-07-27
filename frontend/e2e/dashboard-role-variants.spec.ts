@@ -75,14 +75,12 @@ async function isFlagged(page: Page, apptId: number): Promise<boolean> {
 }
 
 test.describe('Dashboard — role variants', () => {
-  test('admin sees the three stat tiles, quick actions, and recent activity', async ({ page }) => {
+  test('admin sees the stat tiles and quick actions', async ({ page }) => {
     await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
     await expect(page).toHaveURL(/\/staff\/dashboard/);
 
     await expect(page.getByText(es.dashboard.appointmentsToday)).toBeVisible();
     await expect(page.getByText(es.dashboard.pendingRequests)).toBeVisible();
-    await expect(page.getByText(es.dashboard.recentAuditEvents)).toBeVisible();
-    await expect(page.getByRole('heading', { name: es.dashboard.recentActivity })).toBeVisible();
 
     // Quick action navigates to the audit screen.
     await page.getByRole('button', { name: es.dashboard.viewAudit }).click();

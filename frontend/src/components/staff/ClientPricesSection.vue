@@ -195,9 +195,9 @@ onMounted(load);
         <tbody class="divide-y divide-border bg-card">
           <tr v-for="row in overrides" :key="row.id" class="virtualized-row" :data-testid="`client-price-row-${row.id}`">
             <td class="px-4 py-3">
-              {{ professionalName.get(String(row.professional_user_id)) ?? `#${row.professional_user_id}` }}
+              {{ professionalName.get(String(row.professional_user_id)) ?? t('generic.unresolvedReference') }}
             </td>
-            <td class="px-4 py-3">{{ serviceName.get(String(row.service_id)) ?? `#${row.service_id}` }}</td>
+            <td class="px-4 py-3">{{ serviceName.get(String(row.service_id)) ?? t('generic.unresolvedReference') }}</td>
             <td class="px-4 py-3 text-right tabular-nums">{{ formatARS(row.price_ars) }}</td>
             <td v-if="canUpdate" class="px-4 py-3 text-right">
               <button

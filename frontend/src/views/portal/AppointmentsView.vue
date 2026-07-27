@@ -249,7 +249,7 @@ const past = computed(() =>
                   {{ t('portal.pendingApproval') }}
                 </p>
                 <p class="text-sm">
-                  {{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}
+                  {{ professionalNameFor(appt) ?? t('portal.appointmentFallback') }}
                   <span v-if="appt.name"> · {{ appt.name }}</span>
                 </p>
                 <p class="text-xs text-neutral">{{ t('portal.price') }}: {{ formatARS(appt.price) }}</p>
@@ -306,7 +306,7 @@ const past = computed(() =>
             <div class="flex items-center gap-3 flex-wrap">
               <StatusBadge :state="appt.state" />
               <span class="text-sm">{{ formatWeekday(appt.starts_at) }} {{ formatDateTime(appt.starts_at) }}</span>
-              <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? t('portal.appointmentFallback', { id: appt.id }) }}</span>
+              <span class="text-sm text-neutral">{{ professionalNameFor(appt) ?? t('portal.appointmentFallback') }}</span>
               <span class="text-sm text-neutral">{{ formatARS(appt.price) }}</span>
             </div>
           </li>
@@ -346,7 +346,7 @@ const past = computed(() =>
       </div>
       <div>
         <p class="text-xs text-neutral">{{ t('portal.professional') }}</p>
-        <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? t('portal.appointmentFallback', { id: selectedAppt.id }) }}</p>
+        <p class="font-semibold">{{ professionalNameFor(selectedAppt) ?? t('portal.appointmentFallback') }}</p>
       </div>
       <div v-if="serviceNameFor(selectedAppt)">
         <p class="text-xs text-neutral">{{ t('portal.service') }}</p>

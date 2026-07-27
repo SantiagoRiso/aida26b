@@ -118,6 +118,20 @@ describe('ClientPricesSection', () => {
     expect(row.text()).toContain('4.200,00');
   });
 
+  // A professional/service the roster no longer carries (archived, cross-tenant, or otherwise
+  // unreadable) must read as the shared "unavailable" label, never a bare `#<id>`.
+  it('shows the shared unresolved-reference label, not a raw id, for a professional/service that failed to resolve', async () => {
+    const w = mountAs('Admin', [
+      { id: 'cps-2', client_user_id: String(CLIENT_ID), professional_user_id: '999', service_id: '888', price_ars: '1000.00' },
+    ]);
+    await flushPromises();
+
+    const row = w.get('[data-testid="client-price-row-cps-2"]');
+    expect(row.text()).toContain(es.generic.unresolvedReference);
+    expect(row.text()).not.toContain('#999');
+    expect(row.text()).not.toContain('#888');
+  });
+
   it('shows an empty state when the client has no overrides', async () => {
     const w = mountAs('Admin', []);
     await flushPromises();

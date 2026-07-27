@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n';
 import LanguageToggle from '@/components/settings/LanguageToggle.vue';
 import ThemeToggle from '@/components/settings/ThemeToggle.vue';
+import ChangePasswordSection from '@/components/settings/ChangePasswordSection.vue';
 
 const { t } = useI18n();
 </script>
@@ -42,6 +43,19 @@ const { t } = useI18n();
           </div>
           <ThemeToggle />
         </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-semibold text-heading mb-4">
+        {{ t('actions.changePassword') }}
+      </h2>
+      <div class="rounded-lg border border-border bg-card p-5">
+        <ChangePasswordSection
+          current-password-id="settings-pw-current"
+          new-password-id="settings-pw-new"
+          submit-id="settings-pw-save"
+        />
       </div>
     </section>
   </div>

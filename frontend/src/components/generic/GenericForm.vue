@@ -7,6 +7,7 @@ import { apiErrorMessage, fieldErrorMessage, fieldErrorMessages } from '@/i18n/a
 import { createRow, updateRow } from '@/api/crud';
 import { useToast } from '@/composables/useToast';
 import { structure } from '@shared/ssot/structure';
+import { isInternalColumn } from '@shared/utils/utils';
 import type { ColumnDef, ColumnValue } from '@shared/types/types';
 import type { TableKey, TableRecordMap } from '@shared/ssot/derived';
 import type { Wire } from '@shared/ssot/query-types';
@@ -40,6 +41,16 @@ const editableColumns = computed(() => {
     if (col.editable === false) return false;
     return true;
   });
+});
+
+// editable:false columns that are still worth showing (email, timestamps, …) — internal plumbing
+// (pk, business_id) is excluded via the same isInternalColumn predicate GenericTable uses, so
+// this list can never drift from what the table hides.
+const readOnlyColumns = computed(() => {
+  const cols = tableSpec.value.columns as Record<string, ColumnDef>;
+  return Object.entries(cols).filter(
+    ([field, col]) => col.editable === false && !isInternalColumn(props.tableKey, field),
+  );
 });
 
 // Column names are dynamic (from the SSOT columns map), so the row is read by name.
@@ -222,7 +233,7 @@ async function onSubmit() {
 
     <template v-if="mode === 'edit'">
       <div
-        v-for="[field, col] in Object.entries(tableSpec.columns as Record<string, ColumnDef>).filter(([, c]) => c.editable === false)"
+        v-for="[field, col] in readOnlyColumns"
         :key="`ro-${field}`"
         class="flex flex-col gap-1"
       >

@@ -9,13 +9,23 @@ import type { ListSort, SortColumns } from './sort';
 import type { AppointmentSortField } from '../../../shared/src/ssot/list-sort';
 import type { AppointmentRow, AppointmentWallClock } from '../../../shared/src/ssot/query-types';
 
+// Referenced-name projection shared by loadAppointment/listAppointments: service_id/professional_user_id/
+// client_user_id are all NOT NULL FKs, so an INNER JOIN never drops a row. Names come from the
+// secret-free auth.users_directory view (never auth.users) per the read-surface split in CLAUDE.md.
+const APPOINTMENT_NAME_JOINS = `
+       JOIN services svc ON svc.id = a.service_id
+       JOIN auth.users_directory prof ON prof.id = a.professional_user_id
+       JOIN auth.users_directory cli ON cli.id = a.client_user_id`;
+const APPOINTMENT_NAME_COLUMNS = `svc.name AS service_name, prof.display_name AS professional_name, cli.display_name AS client_name`;
+
 // Null when absent or cross-tenant — both surface as 404 to hide existence.
 export function loadAppointment(db: Queryable, id: number, businessId: number): Promise<AppointmentRow | null> {
   return queryOne<AppointmentRow>(
     db,
-    `SELECT a.*
+    `SELECT a.*, ${APPOINTMENT_NAME_COLUMNS}
        FROM appointments a
        JOIN auth.users u ON u.id = a.professional_user_id
+       ${APPOINTMENT_NAME_JOINS}
       WHERE a.id = $1 AND u.business_id = $2`,
     [id, businessId],
   );
@@ -270,9 +280,10 @@ export async function listAppointments(
     // separate count query to keep in sync with it.
     const rows = await query<AppointmentRow>(
       db,
-      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict
+      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict, ${APPOINTMENT_NAME_COLUMNS}
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
+         ${APPOINTMENT_NAME_JOINS}
         WHERE ${where}
         ORDER BY ${orderBy}`,
       [...params, f.tz],
@@ -283,12 +294,15 @@ export async function listAppointments(
   const limitPh = `$${params.length + 2}`;
   const offsetPh = `$${params.length + 3}`;
 
+  // The count query only needs the business-scoping join, never the name joins — it never
+  // projects those columns, so adding them would be pure overhead with no consistency benefit.
   const [rows, count] = await Promise.all([
     query<AppointmentRow>(
       db,
-      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict
+      `SELECT a.*, ${appointmentInConflictSql(flagTz)} AS in_conflict, ${APPOINTMENT_NAME_COLUMNS}
          FROM appointments a
          JOIN auth.users u ON u.id = a.professional_user_id
+         ${APPOINTMENT_NAME_JOINS}
         WHERE ${where}
         ORDER BY ${orderBy}
         LIMIT ${limitPh} OFFSET ${offsetPh}`,

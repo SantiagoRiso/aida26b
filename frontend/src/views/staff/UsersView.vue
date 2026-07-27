@@ -123,6 +123,7 @@ async function submitReset() {
     const result = await resetPassword(resetUserId.value, resetPassword_.value);
     if (result.ok) {
       resetPanelOpen.value = false;
+      reloadKey.value++;
     } else {
       resetError.value = apiErrorMessage(result, 'users.resetError');
     }

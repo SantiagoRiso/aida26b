@@ -287,6 +287,9 @@ describe('Rollback safety (no orphan auth.users row)', () => {
       body: { username: 'rollbacktest', password: 'testpass2', role: 'Client', email: 'rollbacktest2@test.com' },
     });
     expect(second.status).toBe(409);
+    // Precise message, not the generic "Ya existe un registro" conflict text — this is the
+    // customer-reported issue: creating a user with a taken username must say so specifically.
+    expect(errorOf(second).detail?.key).toBe('usernameTaken');
 
     const countAfter = await testPool.query<{ count: string }>(
       `SELECT COUNT(*) AS count FROM auth.users WHERE username = 'rollbacktest'`
@@ -696,6 +699,7 @@ describe('contact-only clients', () => {
       body: { username: 'testadmin', password: 'attemptpass1' },
     });
     expect(enableRes.status).toBe(409);
+    expect(errorOf(enableRes).detail?.key).toBe('usernameTaken');
   });
 
   test('enable-login on an unknown/foreign/already-active user returns 404', async () => {
@@ -775,6 +779,24 @@ describe('optional client email', () => {
       body: { role: 'Client', display_name: 'Email Copycat', email: 'uniqueclient1@test.com' },
     });
     expect(duplicate.status).toBe(409);
+    expect(errorOf(duplicate).detail?.key).toBe('emailTaken');
+  });
+
+  test('duplicate DNI within the same business is a precise 409, not the generic conflict text', async () => {
+    const first = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'DNI Owner', email: 'dniowner1@test.com', dni: '30111222' },
+    });
+    expect(first.status).toBe(201);
+
+    const duplicate = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'DNI Copycat', email: 'dnicopycat1@test.com', dni: '30111222' },
+    });
+    expect(duplicate.status).toBe(409);
+    expect(errorOf(duplicate).detail?.key).toBe('dniTaken');
   });
 
   test('staff roles still require an email — the CHECK constraint rejects a null one', async () => {

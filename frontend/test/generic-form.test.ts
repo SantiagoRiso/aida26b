@@ -8,6 +8,7 @@ import { en } from '@/i18n/en';
 import { i18n as globalI18n } from '@/i18n';
 import { useUiStore } from '@/stores/ui';
 import type { TableKey } from '@shared/ssot/derived';
+import { tableOf } from '@shared/utils/utils';
 import type { ApiResult } from '@/api/client';
 import {
   resetFkOptionsCache,
@@ -430,5 +431,76 @@ describe('GenericForm — a referenced id beyond the first page stays selectable
     });
     const rendered = wrapper.findAll('[role=option]').map((o) => o.text());
     expect(rendered.some((t) => t.includes('Clínica Zaráte'))).toBe(true);
+  });
+});
+
+// The readonlyOnEdit tests above cover fields dropped entirely; these cover the read-only block
+// specifically: internal plumbing (pk, business_id) must never render there, while a genuinely
+// useful editable:false field (email, username) still does.
+describe('GenericForm — internal identity/tenant columns never appear in the read-only block', () => {
+  const readOnlyLabels = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('span.text-sm.font-semibold.text-neutral').map((s) => s.text());
+
+  it('renders neither pk nor business_id for a table whose descriptor carries both', async () => {
+    // services: pk + business_id, no other editable:false column — the read-only block must be
+    // entirely empty, not just missing a label.
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericForm, {
+      props: {
+        tableKey: 'services' as TableKey,
+        mode: 'edit',
+        initial: {
+          id: 'svc-internal-77',
+          business_id: 'biz-internal-42',
+          name: 'Corte',
+          description: null,
+          default_duration_minutes: 30,
+          default_price_ars: '1500.00',
+        },
+      },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(readOnlyLabels(wrapper)).toEqual([]);
+    expect(wrapper.text()).not.toContain('svc-internal-77');
+    expect(wrapper.text()).not.toContain('biz-internal-42');
+  });
+
+  it('hides the pk while still rendering the genuinely read-only email and username fields', async () => {
+    // clients: pk plus two legitimate editable:false fields (email, username) — only the pk
+    // is internal plumbing, so the other two must survive the filter.
+    const clientsSpec = tableOf('clients');
+    const labelOf = (field: string) => {
+      const col = clientsSpec.columns[field];
+      if (!col?.label) throw new Error(`clients.${field} has no label`);
+      return col.label.es;
+    };
+    const emailLabel = labelOf('email');
+    const usernameLabel = labelOf('username');
+
+    const { pinia, router, i18n } = makePlugins();
+    const wrapper = mount(GenericForm, {
+      props: {
+        tableKey: 'clients' as TableKey,
+        mode: 'edit',
+        initial: {
+          id: 'client-internal-501',
+          display_name: 'Juan Pérez',
+          email: 'juan@example.com',
+          dni: null,
+          username: 'juanp',
+          phone: null,
+          notes: null,
+        },
+      },
+      global: { plugins: [pinia, router, i18n] },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('client-internal-501');
+    expect(readOnlyLabels(wrapper)).toEqual([emailLabel, usernameLabel]);
+    expect(wrapper.text()).toContain('juan@example.com');
+    expect(wrapper.text()).toContain('juanp');
   });
 });

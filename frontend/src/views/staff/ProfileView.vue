@@ -9,9 +9,9 @@ import { listRows, updateRow } from '@/api/crud';
 import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
-import PasswordInput from '@/components/shared/PasswordInput.vue';
 import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 import MyExceptionsSection from '@/components/settings/MyExceptionsSection.vue';
+import ChangePasswordSection from '@/components/settings/ChangePasswordSection.vue';
 import { useLabel } from '@/composables/useLabel';
 import { structure } from '@shared/ssot/structure';
 import type { TableRecordMap } from '@shared/ssot/derived';
@@ -62,18 +62,6 @@ async function saveProfile() {
   } else {
     formError.value = apiErrorMessage(res, 'profile.saveError');
   }
-}
-
-const pw = reactive({ current: '', next: '' });
-const pwError = ref('');
-const pwSaving = ref(false);
-async function changePassword() {
-  pwError.value = '';
-  pwSaving.value = true;
-  const res = await auth.changePassword(pw.current, pw.next);
-  pwSaving.value = false;
-  if (res.ok) { pw.current = ''; pw.next = ''; success('saved'); }
-  else { pwError.value = apiErrorMessage(res, 'profile.changePasswordError'); }
 }
 
 const { labelFor: serviceLabelFor } = useForeignKeyOptions({ table: 'services', valueField: 'id', labelField: 'name' });
@@ -173,7 +161,7 @@ async function saveSvc(row: SvcOverride) {
         <p v-else-if="svcRows.length === 0" class="text-sm text-neutral">
           {{ t('profile.noServices') }}
         </p>
-        <div v-else class="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 gap-y-2 text-sm">
+        <div v-else class="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-2 text-sm">
           <div></div>
           <div class="w-20 text-center text-xs font-medium text-neutral">{{ t('profile.minCol') }}</div>
           <div class="w-20 text-center text-xs font-medium text-neutral">{{ t('profile.maxCol') }}</div>
@@ -194,20 +182,11 @@ async function saveSvc(row: SvcOverride) {
 
       <section class="rounded-lg border border-border bg-card p-5 space-y-4">
         <h2 class="text-lg font-semibold text-heading">{{ t('actions.changePassword') }}</h2>
-        <div class="flex flex-col gap-1">
-          <label for="pf-cur" class="text-sm font-semibold">{{ t('auth.currentPasswordLabel') }}</label>
-          <PasswordInput id="pf-cur" v-model="pw.current"
-            input-class="w-full max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="pf-new" class="text-sm font-semibold">{{ t('auth.newPasswordLabel') }}</label>
-          <PasswordInput id="pf-new" v-model="pw.next"
-            input-class="w-full max-w-md rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
-        </div>
-        <FieldError :message="pwError" />
-        <AppButton id="pf-pw-save" variant="primary" :loading="pwSaving" @click="changePassword">
-          {{ t('actions.changePassword') }}
-        </AppButton>
+        <ChangePasswordSection
+          current-password-id="pf-cur"
+          new-password-id="pf-new"
+          submit-id="pf-pw-save"
+        />
       </section>
 
       <section v-if="auth.user?.role === 'Professional'" class="rounded-lg border border-border bg-card p-5 space-y-4">

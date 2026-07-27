@@ -99,6 +99,13 @@ export type AppointmentRow = {
   // Always absent/false on a real row — distinguishes it from a VirtualOccurrence when both share
   // a ListAppointment[] response.
   is_virtual?: boolean;
+  // Referenced names, joined in from services / auth.users_directory so the client never has to
+  // resolve a title from a separate FK-options fetch (which races the first render). Present on
+  // every list/detail GET (loadAppointment/listAppointments); absent on a mutation response, which
+  // returns the bare RETURNING * row — same "present only on some reads" contract as in_conflict.
+  service_name?: string;
+  professional_name?: string;
+  client_name?: string;
 };
 
 // Client-role responses deliberately omit staff-only fields; staff responses include them.
@@ -124,6 +131,21 @@ export type VirtualOccurrence = {
   description: null;
   is_virtual: true;
   in_conflict: boolean;
+  // Always present: expanded from an active appointment_series, itself joined to services/
+  // auth.users_directory at the source (see AppointmentSeriesRowWithNames) — unlike a real
+  // AppointmentRow, a virtual occurrence is never built from a bare mutation RETURNING row.
+  service_name: string;
+  professional_name: string;
+  client_name: string;
+};
+
+// appointment_series rows enriched with the referenced service/professional/client display names,
+// for expanding into VirtualOccurrence — a plain `AppointmentSeriesRow` (RETURNING * from an insert/
+// update) never carries these, so this is a distinct type rather than added fields on the base row.
+export type AppointmentSeriesRowWithNames = AppointmentSeriesRow & {
+  service_name: string;
+  professional_name: string;
+  client_name: string;
 };
 
 // The appointments list response shape: real rows (some carrying series_id when materialized)
@@ -246,6 +268,9 @@ export type AuditEventRow = {
   id: string;
   business_id?: string | null;
   actor_user_id: string | null;
+  // Null when the event has no actor, and when the actor row is gone — audit rows outlive the
+  // users they name.
+  actor_username: string | null;
   event_type: string;
   entity_type: string | null;
   entity_id: string | null;

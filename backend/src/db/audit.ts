@@ -43,7 +43,7 @@ export const AUDIT_SORT_COLUMNS: SortColumns<AuditSortField> = {
   created_at: 'a.created_at',
   event_type: 'a.event_type',
   entity_type: 'a.entity_type',
-  actor_user_id: 'a.actor_user_id',
+  actor_username: 'u.username',
   outcome: 'a.outcome',
 };
 
@@ -53,7 +53,7 @@ export const AUDIT_DEFAULT_SORT: ListSort<AuditSortField> = { column: 'created_a
 // The endpoint's own filter allowlist. Audit is bespoke, so the field names a filter may name come
 // from here rather than an SSoT descriptor; anything else the route drops. `created_at` reads the
 // shared `min,max` range grammar; the rest are exact-match identity fields.
-export const AUDIT_FILTER_FIELDS = ['entity_type', 'actor_user_id', 'event_type', 'outcome', 'created_at'] as const;
+export const AUDIT_FILTER_FIELDS = ['entity_type', 'actor_user_id', 'actor_username', 'event_type', 'outcome', 'created_at'] as const;
 export type AuditFilterField = (typeof AUDIT_FILTER_FIELDS)[number];
 
 // An exact-match filter carries its `!` negation so the endpoint can honor the shared grammar
@@ -66,6 +66,7 @@ export type AuditListFilter = {
   sort: ListSort<AuditSortField>;
   entityType?: AuditEqFilter;
   actorUserId?: AuditEqFilter<number>;
+  actorUsername?: AuditEqFilter;
   eventType?: AuditEqFilter;
   outcome?: AuditEqFilter;
   dateFrom?: string;
@@ -98,6 +99,7 @@ export async function listAuditEvents(
 
   if (f.entityType != null) { conditions.push(`a.entity_type ${matchOp(f.entityType.negated)} $${p++}`); params.push(f.entityType.value); }
   if (f.actorUserId != null) { conditions.push(`a.actor_user_id ${matchOp(f.actorUserId.negated)} $${p++}`); params.push(f.actorUserId.value); }
+  if (f.actorUsername != null) { conditions.push(`u.username ${matchOp(f.actorUsername.negated)} $${p++}`); params.push(f.actorUsername.value); }
   if (f.eventType != null) { conditions.push(`a.event_type ${matchOp(f.eventType.negated)} $${p++}`); params.push(f.eventType.value); }
   if (f.outcome != null) { conditions.push(`a.outcome ${matchOp(f.outcome.negated)} $${p++}`); params.push(f.outcome.value); }
 
@@ -112,12 +114,19 @@ export async function listAuditEvents(
   // business and gets the same projection they always did.
   const businessCol = f.scope.kind === 'all' ? 'a.business_id, ' : '';
 
+  // Outer-joined so an event whose actor was purged still appears — dropping it would edit the
+  // record. Shared with the count query: a username filter only one of them applied would report a
+  // total the page can't produce.
+  const from = `FROM audit_events a
+       LEFT JOIN auth.users_directory u ON u.id = a.actor_user_id`;
+
   const pageRows = await query<AuditEventRow & { total_count: string }>(
     db,
-    `SELECT a.id, ${businessCol}a.actor_user_id, a.event_type, a.entity_type, a.entity_id,
+    `SELECT a.id, ${businessCol}a.actor_user_id, u.username AS actor_username,
+            a.event_type, a.entity_type, a.entity_id,
             a.outcome, a.ip, a.details, a.created_at,
             count(*) OVER()::text AS total_count
-       FROM audit_events a
+       ${from}
       WHERE ${where}
       ORDER BY ${orderByClause(AUDIT_SORT_COLUMNS, f.sort, 'a.id')}
       LIMIT $${p} OFFSET $${p + 1}`,
@@ -126,7 +135,7 @@ export async function listAuditEvents(
   if (pageRows.length === 0) {
     const count = await query<{ n: string }>(
       db,
-      `SELECT count(*)::text AS n FROM audit_events a WHERE ${where}`,
+      `SELECT count(*)::text AS n ${from} WHERE ${where}`,
       params,
     );
     return { rows: [], total: Number(count[0]?.n ?? 0) };

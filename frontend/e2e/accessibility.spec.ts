@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { login, DEMO_ACCOUNTS, openScreen, es } from './helpers';
+import { structure } from '../../shared/src/ssot/structure';
 
 /**
  * axe-core coverage over the shared widgets the whole staff app is built from: the login form, a
@@ -63,8 +64,11 @@ test.describe('Accessibility (axe-core)', () => {
     await auditBothThemes(page);
   });
 
-  // A referenced-id filter renders a searchable combobox whose only visible name is the field name
-  // beside it, so this is the screen where a broken label association shows up.
+  // An added filter row names its control only by the field label beside it, so a broken label
+  // association shows up here. The referenced-id (combobox) variant of that row is the hardest
+  // case, but the only foreign-key filter any generic screen offers is the business column, which
+  // is now withheld from a business-bound admin — and no demo account is a super-admin. That
+  // variant's label wiring is asserted in test/a11y-chrome.test.ts instead.
   test('an active filter row (GenericFilters) has no automatically detectable violations', async ({ page }) => {
     test.skip(!isDesktopWidth(page), 'audited once, at desktop width');
 
@@ -72,10 +76,10 @@ test.describe('Accessibility (axe-core)', () => {
     await openScreen(page, es.nav.users);
     await expect(page.locator('table')).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole('combobox', { name: es.generic.selectColumnAria }).selectOption('business_id');
+    await page.getByRole('combobox', { name: es.generic.selectColumnAria }).selectOption('role');
     // exact: 'Agregar' is otherwise a substring of the page's 'Agregar usuario' create button.
     await page.getByRole('button', { name: es.generic.add, exact: true }).click();
-    await expect(page.getByPlaceholder(es.generic.all)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel(structure.tables.users.columns.role.label.es, { exact: true })).toBeVisible({ timeout: 10_000 });
 
     await auditBothThemes(page);
   });

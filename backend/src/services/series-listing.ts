@@ -5,7 +5,7 @@ import {
   evaluateConflicts,
   OPEN_APPOINTMENT_STATES,
 } from '../../../shared/src/ssot/domain';
-import type { AppointmentRow, AppointmentSeriesRow, VirtualOccurrence } from '../../../shared/src/ssot/query-types';
+import type { AppointmentRow, AppointmentSeriesRowWithNames, VirtualOccurrence } from '../../../shared/src/ssot/query-types';
 import {
   getActiveSeriesForOwner,
   getActiveSeriesForClient,
@@ -32,9 +32,9 @@ export type VirtualOccurrenceFilter = {
 // Role-scoped series fetch, mirroring listAppointments' scoping exactly (same predicate per role),
 // then narrowed further by any explicit filter query params — narrowing only, never widening past
 // the role scope above.
-async function loadInScopeSeries(q: Queryable, f: VirtualOccurrenceFilter): Promise<AppointmentSeriesRow[]> {
+async function loadInScopeSeries(q: Queryable, f: VirtualOccurrenceFilter): Promise<AppointmentSeriesRowWithNames[]> {
   const businessId = String(f.businessId);
-  let series: AppointmentSeriesRow[];
+  let series: AppointmentSeriesRowWithNames[];
   if (f.roleScope.kind === 'client') {
     series = await getActiveSeriesForClient(q, businessId, String(f.roleScope.userId), f.windowStart, f.windowEnd);
   } else if (f.roleScope.kind === 'professional') {
@@ -142,6 +142,9 @@ export async function listVirtualOccurrences(q: Queryable, f: VirtualOccurrenceF
         description: null,
         is_virtual: true,
         in_conflict: inConflict,
+        service_name: s.service_name,
+        professional_name: s.professional_name,
+        client_name: s.client_name,
       });
     }
   }
