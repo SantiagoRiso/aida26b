@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
   login,
   DEMO_ACCOUNTS,
@@ -31,11 +32,40 @@ const SERVICE = DEMO_SERVICE_NAMES.nutricion;
 const DURATION = 40;
 const PAST = isoDaysFromNow(-6);
 const FUTURE = isoDaysFromNow(21);
-// The client request endpoint cannot override conflicts, so the reject fixture needs a genuinely
-// free, slot-aligned slot on Lisa's working day. shiftSeedDate keeps the authored Tuesday 08:00
-// (she works Mon-Thu) aligned with the seed's shift, landing past the dense-fill window and inside
-// the 60-day booking window.
-const REQUEST_DATE = shiftSeedDate('2026-08-25');
+// Scan window for the request-endpoint fixtures below: past the seed's dense-fill window, inside
+// the 60-day client booking window.
+const SCAN_FROM = shiftSeedDate('2026-08-25');
+const SCAN_TO = isoDaysFromNow(59);
+
+// The client request endpoint (requestViaApi) cannot override conflicts, so its fixtures need a
+// genuinely open slot — not an assumed-free hardcoded time. beforeAll reruns on every CI retry (a
+// fresh worker re-executes it from scratch) and nothing here cleans up what a prior attempt already
+// created, so a fixed date/time is only actually free on the very first attempt; any retry then
+// collides with the previous attempt's own leftover appointment. Scanning /api/availability (the
+// same idiom calendar-drag-override.spec.ts uses) sidesteps that: a retry's scan simply lands on
+// whatever is still open, self-healing run after run instead of assuming the slot is free.
+async function findFreeSlots(
+  page: Page,
+  professionalId: number,
+  serviceId: number,
+  count: number,
+): Promise<{ date: string; start: string }[]> {
+  const res = await page.request.get(
+    `/api/availability?owner=prof:${professionalId}&service=${serviceId}&date_from=${SCAN_FROM}&date_to=${SCAN_TO}`,
+  );
+  const days = (await res.json()).data as Array<{ date: string; slots: Array<{ start: string; end: string }> }>;
+  const found: { date: string; start: string }[] = [];
+  for (const day of days) {
+    for (const slot of day.slots) {
+      found.push({ date: day.date, start: slot.start });
+      if (found.length === count) return found;
+    }
+  }
+  throw new Error(
+    `Not enough free slots for professional ${professionalId} between ${SCAN_FROM} and ${SCAN_TO} ` +
+    `(found ${found.length}, needed ${count})`,
+  );
+}
 
 test.describe('Appointment lifecycle transitions via the detail panel', () => {
   let completeId: number;
@@ -63,6 +93,7 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
     noShowId    = await scheduleViaApi(admin, { ...base, client_user_id: luann, date: PAST,   start: '09:20', name: 'E2E ausente' });
     cancelId    = await scheduleViaApi(admin, { ...base, client_user_id: agnes, date: FUTURE, start: '10:00', name: 'E2E cancelar' });
     tooEarlyId  = await scheduleViaApi(admin, { ...base, client_user_id: ruth,  date: FUTURE, start: '11:00', name: 'E2E too-early' });
+    const [rejectSlot, approveSlot] = await findFreeSlots(admin, professional_user_id, service_id, 2);
     await adminContext.close();
 
     // 'requested' is only reachable via the client request endpoint — create it as the client.
@@ -71,11 +102,11 @@ test.describe('Appointment lifecycle transitions via the detail panel', () => {
     await login(client, 'demo_client34', DEMO_PASSWORD); // Jimbo Jones — untouched by other specs
     rejectId = await requestViaApi(client, {
       professional_user_id, service_id, duration_minutes: DURATION,
-      date: REQUEST_DATE, start: '08:00', name: 'E2E rechazar',
+      date: rejectSlot.date, start: rejectSlot.start, name: 'E2E rechazar',
     });
     approveId = await requestViaApi(client, {
       professional_user_id, service_id, duration_minutes: DURATION,
-      date: REQUEST_DATE, start: '08:40', name: 'E2E aprobar',
+      date: approveSlot.date, start: approveSlot.start, name: 'E2E aprobar',
     });
     await clientContext.close();
   });

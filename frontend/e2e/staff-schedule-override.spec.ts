@@ -103,8 +103,15 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
     await expect(rows.first()).toContainText('conflict_override');
-    // The entity id has its own element; matching it there rather than in the row's concatenated
-    // text keeps the actor id in the next cell from running into it.
-    await expect(rows.first().getByText(`#${forcedAppointmentId}`, { exact: true })).toBeVisible();
+
+    // The entity column names the turno (whose it is, and when) instead of printing its id, so the
+    // row can no longer be tied to the appointment on screen. The identity check moves to the API,
+    // which still carries entity_id, and the screen is held to showing no id at all.
+    await expect(rows.first().getByText(`#${forcedAppointmentId}`, { exact: true })).toHaveCount(0);
+
+    const newest = await page.request.get('/api/audit?filter_event_type=conflict_override&limit=1');
+    const body = await newest.json();
+    expect(Number(body.data[0].entity_id)).toBe(forcedAppointmentId);
+    expect(body.data[0].entity_label).toBeTruthy();
   });
 });

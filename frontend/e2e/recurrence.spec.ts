@@ -45,7 +45,13 @@ async function navigateToOccurrence(
   await expect(page.locator('.fc')).toBeVisible({ timeout: 10_000 });
   const target = page.locator(`[data-testid="${testId}"]`);
   for (let i = 0; i < maxClicks; i++) {
-    if (await target.first().isVisible().catch(() => false)) break;
+    // Mirrors navigateCalendarToAppointment in helpers.ts: the initial (current-week) view may
+    // already contain the target occurrence, and an instant check there races its async render and
+    // pages right past it. The first pass waits for the render; later passes stay instant.
+    const found = i === 0
+      ? await target.first().waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false)
+      : await target.first().isVisible().catch(() => false);
+    if (found) break;
     const nextFetch = page.waitForResponse(
       (r) => r.url().includes('/appointments') && r.request().method() === 'GET',
       { timeout: 10_000 },
