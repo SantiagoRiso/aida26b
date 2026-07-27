@@ -469,6 +469,8 @@ export const es = {
     requestsToTriage: 'Solicitudes a gestionar',
     appointmentsToday: 'Turnos hoy',
     viewAudit: 'Ver auditoría',
+    recentActivity: 'Actividad reciente',
+    noRecentActivity: 'Sin actividad reciente',
   },
   requests: {
     emptyHeading: 'Sin solicitudes pendientes',
@@ -548,7 +550,7 @@ export const es = {
     accessRestrictedBody: 'Solo los administradores pueden ver la auditoría.',
     allTypes: 'Todos los tipos',
     entityTypeAria: 'Tipo de entidad',
-    actorPlaceholder: 'Usuario que realizó la acción',
+    actorPlaceholder: 'Buscar por nombre o usuario',
     eventTypePlaceholder: 'Tipo de evento',
     outcome: 'Resultado',
     clear: 'Limpiar',

@@ -14,7 +14,7 @@ const auditEvent = object<AuditEvent>({
   // Sent only on a super-admin cross-tenant read (null marks a tenantless system event); a tenant
   // Admin's rows omit it, so the field is optional.
   id: stringValue, business_id: optional(nullable(stringValue)), actor_user_id: nullable(stringValue),
-  actor_username: nullable(stringValue), event_type: stringValue, entity_type: nullable(stringValue), entity_id: nullable(stringValue),
+  actor_username: nullable(stringValue), entity_label: nullable(stringValue), event_type: stringValue, entity_type: nullable(stringValue), entity_id: nullable(stringValue),
   outcome: stringValue, ip: nullable(stringValue), details: nullable(recordOf(columnValue)),
   created_at: stringValue,
 });

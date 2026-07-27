@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useCurrency } from '@/composables/useCurrency';
 import { useStateLabel } from '@/composables/useStateLabel';
+import { auditOutcomeBadgeClass } from '@/composables/badgeTone';
 import { useAppointmentLabels } from '@/composables/useAppointmentLabels';
 import { useProfessionalDashboard } from '@/composables/useProfessionalDashboard';
 import { useReceptionistDashboard } from '@/composables/useReceptionistDashboard';
@@ -27,7 +28,7 @@ const role = computed(() => auth.user?.role);
 
 const { proUpcoming, proPending, loadingPro, proLoadFailed, loadProfessional } = useProfessionalDashboard();
 const { recToday, recPending, loadingRec, recLoadFailed, loadReceptionist } = useReceptionistDashboard();
-const { adminTodayCount, adminPendingCount, loadingAdmin, adminLoadFailed, loadAdmin } = useAdminDashboard();
+const { adminTodayCount, adminPendingCount, recentAudit, loadingAdmin, adminLoadFailed, loadAdmin } = useAdminDashboard();
 
 const {
   conflictTurnos, conflictTotal, loadConflicts, conflictBusy, resolveTarget,
@@ -291,6 +292,28 @@ onMounted(() => {
           </AppButton>
         </div>
 
+        <div class="rounded-lg border border-border bg-card p-5">
+          <h2 class="text-lg font-semibold text-heading mb-3">
+            {{ t('dashboard.recentActivity') }}
+          </h2>
+          <ul v-if="recentAudit.length" class="space-y-2">
+            <li
+              v-for="event in recentAudit"
+              :key="event.id"
+              class="flex items-center justify-between text-sm border-b border-border pb-2 last:border-0 last:pb-0"
+            >
+              <span class="text-neutral">{{ formatDateTime(event.created_at) }}</span>
+              <span class="font-mono text-xs text-heading">{{ event.event_type }}</span>
+              <span
+                class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
+                :class="auditOutcomeBadgeClass(event.outcome)"
+              >
+                {{ event.outcome }}
+              </span>
+            </li>
+          </ul>
+          <EmptyState v-else :heading="t('dashboard.noRecentActivity')" body="" />
+        </div>
       </div>
     </template>
 

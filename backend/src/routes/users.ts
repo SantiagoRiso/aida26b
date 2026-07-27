@@ -149,7 +149,7 @@ async function createContactOnlyClient(
       return Number(inserted.id);
     });
 
-    await audit(req, 'user_created', 'success', { user_id: newUserId, role }, { businessId });
+    await audit(req, 'user_created', 'success', { entity_type: 'auth.users', entity_id: newUserId, user_id: newUserId, role }, { businessId });
 
     return sendData(res, { id: newUserId, role } satisfies CreatedUserResult, 201);
   } catch (error) {
@@ -191,7 +191,7 @@ async function createCredentialedUser(
       return Number(inserted.id);
     });
 
-    await audit(req, 'user_created', 'success', { user_id: newUserId, role }, { businessId });
+    await audit(req, 'user_created', 'success', { entity_type: 'auth.users', entity_id: newUserId, user_id: newUserId, role }, { businessId });
 
     return sendData(res, { id: newUserId, username, role } satisfies CreatedUserResult, 201);
   } catch (error) {
@@ -296,7 +296,7 @@ export function mountUserAdminRoutes(
       await deleteUserSessions(pool, userId);
 
       const { business_id: targetBusinessId, ...user } = deactivated;
-      await audit(req, 'user_deactivated', 'success', { user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
+      await audit(req, 'user_deactivated', 'success', { entity_type: 'auth.users', entity_id: userId, user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
 
       return sendData(res, { user });
     }),
@@ -343,7 +343,7 @@ export function mountUserAdminRoutes(
       await deleteUserSessions(pool, userId);
 
       const { business_id: targetBusinessId, ...user } = reset;
-      await audit(req, 'password_reset', 'success', { user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
+      await audit(req, 'password_reset', 'success', { entity_type: 'auth.users', entity_id: userId, user_id: userId }, { businessId: numericBusiness(targetBusinessId) });
 
       return sendData(res, { user });
     }),

@@ -255,6 +255,78 @@ describe('GET /api/audit filters (parameterized values)', () => {
     }
   });
 
+  // An id says which record changed; it never says whose account or whose turno, which is the
+  // question a reader of the log actually has.
+  describe('naming what the event was about', () => {
+    test('a user event names the account, and a client with no login falls back to their name', async () => {
+      const contactOnly = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users
+           (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+         VALUES (NULL, NULL, 'Homero Sin Login', 'h', 's', 'Client', $1, false)
+         RETURNING id`,
+        [bizId],
+      );
+      const contactOnlyId = Number(contactOnly.rows[0].id);
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'password_reset', 'auth.users', $3, 'success', '{}'),
+                ($1, $2, 'user_deactivated', 'auth.users', $4, 'success', '{}')`,
+        [bizId, adminId, proId, contactOnlyId],
+      );
+
+      currentUser = asUser(adminId, 'Admin');
+      const rows = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=password_reset'));
+      expect(rows.find((r) => Number(r.entity_id) === proId)?.entity_label).toBe('audit_pro');
+
+      const deact = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=user_deactivated'));
+      expect(deact.find((r) => Number(r.entity_id) === contactOnlyId)?.entity_label).toBe('Homero Sin Login');
+    });
+
+    test('a turno is named by whose it is and when, not by its id', async () => {
+      const svc = await pool.query<{ id: string }>(
+        `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+         VALUES ($1, 'Consulta auditada', 30, '1500.00') RETURNING id`,
+        [bizId],
+      );
+      const svcId = Number(svc.rows[0].id);
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+         VALUES ($1, $2, $3, $4, 30, 'scheduled', '1500.00', false)
+         RETURNING id`,
+        [clientId, proId, svcId, FAR_FUTURE_TS],
+      );
+      const apptId = Number(appt.rows[0].id);
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'appointment_canceled_named', 'appointments', $3, 'success', '{}')`,
+        [bizId, adminId, apptId],
+      );
+
+      currentUser = asUser(adminId, 'Admin');
+      const rows = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=appointment_canceled_named'));
+      const label = rows[0]?.entity_label ?? '';
+      expect(label).toContain('audit_client');
+      // Wall clock in the business timezone, so the reader sees the turno's local time.
+      expect(label).toMatch(/\d{2}\/\d{2} \d{2}:\d{2}$/);
+    });
+
+    test('an entity with no natural name keeps its id rather than an invented label', async () => {
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'grant_created_named', 'calendar_grants', 4242, 'success', '{}')`,
+        [bizId, adminId],
+      );
+      currentUser = asUser(adminId, 'Admin');
+      const rows = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=grant_created_named'));
+      expect(rows[0].entity_label).toBeNull();
+      expect(Number(rows[0].entity_id)).toBe(4242);
+    });
+  });
+
   test('every row carries the actor username, resolved from the directory', async () => {
     currentUser = asUser(adminId, 'Admin');
     const res = await auditReq<AuditRow[]>('GET', `/api/audit?filter_actor_user_id=${proId}`);
@@ -282,6 +354,70 @@ describe('GET /api/audit filters (parameterized values)', () => {
     expect(res.status).toBe(200);
     expect(dataOf(res)).toEqual([]);
     expect(metaOf(res).total).toBe(0);
+  });
+
+  // Whoever reads the log is looking for a person, and they know a name, not an exact login. The
+  // seeded actors elsewhere in this file carry display_name = username, which cannot tell the two
+  // columns apart, so this actor is deliberately given a name unlike its login.
+  describe('searching the actor by a fragment of the name or the login', () => {
+    let searchActorId: number;
+
+    beforeAll(async () => {
+      const r = await pool.query<{ id: string }>(
+        `INSERT INTO auth.users
+           (username, email, display_name, password_hash, password_salt, role, business_id, must_change_password)
+         VALUES ('lsimpson_audit', 'lsimpson_audit@test.local', 'Dra. Lisa Simpson', 'h', 's', 'Professional', $1, false)
+         RETURNING id`,
+        [bizId],
+      );
+      searchActorId = Number(r.rows[0].id);
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'appointment_scheduled', 'appointments', 77, 'success', '{}')`,
+        [bizId, searchActorId],
+      );
+    });
+
+    async function search(term: string) {
+      currentUser = asUser(adminId, 'Admin');
+      return auditReq<AuditRow[]>('GET', `/api/audit?filter_actor_username=${encodeURIComponent(term)}`);
+    }
+
+    test('a fragment of the login finds the actor, without naming it in full', async () => {
+      const res = await search('simpson_aud');
+      expect(res.status).toBe(200);
+      const rows = dataOf(res);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(Number(row.actor_user_id)).toBe(searchActorId);
+    });
+
+    test('a fragment of the display name finds it too, though the column shown is the login', async () => {
+      const res = await search('Lisa');
+      const rows = dataOf(res);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row.actor_username).toBe('lsimpson_audit');
+    });
+
+    test('the search ignores case', async () => {
+      expect(metaOf(await search('lISA')).total).toBe(metaOf(await search('Lisa')).total);
+    });
+
+    // A search box that let its input act as a pattern would answer a question nobody asked:
+    // `_` would quietly match any character, so `l_simpson` must find nothing rather than everything.
+    test("a wildcard the reader typed is matched literally, not as a pattern", async () => {
+      expect(metaOf(await search('l_simpson')).total).toBe(0);
+      expect(metaOf(await search('%')).total).toBe(0);
+    });
+
+    test('negating the search returns exactly the events it would otherwise hide', async () => {
+      const all = metaOf(await search('')).total;
+      const matching = metaOf(await search('Lisa')).total;
+      const excluded = metaOf(await search('!Lisa')).total;
+      // Complement over the whole tenant, tenantless-actor rows included.
+      expect(matching + excluded).toBe(all);
+      expect(excluded).toBeGreaterThan(0);
+    });
   });
 
   test('?filter_created_at range narrows results to the given window', async () => {

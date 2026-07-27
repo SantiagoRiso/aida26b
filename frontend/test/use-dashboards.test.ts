@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { listAppointments } from '@/api/appointments';
+import { listAudit } from '@/api/audit';
 import type { Appointment, AppointmentListFilters } from '@/api/appointments';
 import type { VirtualOccurrence } from '@shared/ssot/query-types';
 import { useAuthStore } from '@/stores/auth';
@@ -11,8 +12,10 @@ import { useReceptionistDashboard } from '@/composables/useReceptionistDashboard
 // Stat tiles / summary lists on the three staff dashboards — each patched to drop virtual
 // (un-materialized recurring) occurrences from the server's mixed list response.
 vi.mock('@/api/appointments', () => ({ listAppointments: vi.fn() }));
+vi.mock('@/api/audit', () => ({ listAudit: vi.fn() }));
 
 const mockedList = vi.mocked(listAppointments);
+const mockedAudit = vi.mocked(listAudit);
 
 const NOW = new Date();
 
@@ -71,6 +74,8 @@ function makeVirtual(overrides: Partial<VirtualOccurrence> = {}): VirtualOccurre
 beforeEach(() => {
   setActivePinia(createPinia());
   mockedList.mockReset();
+  mockedAudit.mockReset();
+  mockedAudit.mockResolvedValue({ ok: true, data: [] });
 });
 
 describe('useAdminDashboard — virtual filter', () => {

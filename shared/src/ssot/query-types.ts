@@ -271,6 +271,9 @@ export type AuditEventRow = {
   // Null when the event has no actor, and when the actor row is gone — audit rows outlive the
   // users they name.
   actor_username: string | null;
+  // What the event was about, in words: the account for a user event, whose turno and when for an
+  // appointment. Null for entity types with no natural name, which keep showing their id.
+  entity_label: string | null;
   event_type: string;
   entity_type: string | null;
   entity_id: string | null;

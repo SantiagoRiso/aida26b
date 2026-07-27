@@ -99,13 +99,15 @@ const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
+// Only types the audit writers actually stamp. `businesses` is protected — no generic CRUD writes
+// it and no bespoke route names it — so offering it asked for a set that is always empty.
 const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
   { value: '' },
   { value: 'appointments', tableKey: 'appointments' },
   { value: 'ledger_entries', tableKey: 'ledger_entries' },
   { value: 'auth.users', tableKey: 'users' },
-  { value: 'businesses', tableKey: 'businesses' },
   { value: 'calendar_grants', tableKey: 'calendar_grants' },
+  { value: 'schedule_exceptions', tableKey: 'schedule_exceptions' },
 ];
 
 function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
@@ -309,7 +311,8 @@ if (isAdmin.value) {
               </td>
               <td class="px-4 py-3 text-neutral">
                 {{ event.entity_type }}
-                <span v-if="event.entity_id" class="ml-1 text-xs opacity-60">#{{ event.entity_id }}</span>
+                <span v-if="event.entity_label" class="ml-1 text-xs opacity-70">{{ event.entity_label }}</span>
+                <span v-else-if="event.entity_id" class="ml-1 text-xs opacity-60">#{{ event.entity_id }}</span>
               </td>
               <td class="px-4 py-3 text-neutral">
                 {{ actorLabel(event) }}

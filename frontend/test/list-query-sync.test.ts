@@ -391,6 +391,39 @@ describe('AuditView — its own list state is URL-bound too', () => {
     );
   });
 
+  // Searching the log for a person is the common case, and the search has to survive being shared
+  // or reloaded like every other filter on this screen.
+  it('searching by actor name reaches the request and the URL, and comes back on reload', async () => {
+    const plugins = await makePlugins();
+    const wrapper = mountAudit(plugins);
+    await flushPromises();
+
+    await wrapper.get(`input[placeholder="${es.audit.actorPlaceholder}"]`).setValue('lisa');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+
+    expect(listAuditMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ actor_username: 'lisa' }),
+      1,
+      LIST_DEFAULT_LIMIT,
+      { sort: undefined, dir: 'asc' },
+    );
+    expect(plugins.router.currentRoute.value.query).toEqual({ [filterParam('actor_username')]: 'lisa' });
+
+    // The shared link reopens on the same search rather than an unfiltered log.
+    const reopened = await makePlugins(`/?${filterParam('actor_username')}=lisa`);
+    const restored = mountAudit(reopened);
+    await flushPromises();
+    expect(listAuditMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ actor_username: 'lisa' }),
+      1,
+      LIST_DEFAULT_LIMIT,
+      { sort: undefined, dir: 'asc' },
+    );
+    expect(restored.get<HTMLInputElement>(`input[placeholder="${es.audit.actorPlaceholder}"]`).element.value)
+      .toBe('lisa');
+  });
+
   it('clearing the filters empties the URL', async () => {
     const plugins = await makePlugins(`/?${filterParam('event_type')}=login`);
     const wrapper = mountAudit(plugins);

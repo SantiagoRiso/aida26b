@@ -52,9 +52,28 @@ function openCreate() {
   createPanelOpen.value = true;
 }
 
+// The form is novalidate, so nothing stops a submit with the role still on its placeholder. Left
+// to the server it comes back as one message naming three fields, which reads as a rejection of
+// whatever the reader thought they were doing — a duplicate username, say — instead of pointing at
+// the empty box.
+function missingCreateFields(): string[] {
+  return Object.entries({
+    username: !createForm.username.trim(),
+    password: !createForm.password,
+    role: !createForm.role,
+  }).filter(([, missing]) => missing).map(([field]) => field);
+}
+
 async function submitCreate() {
-  createSubmitting.value = true;
   Object.keys(createErrors).forEach((k) => delete createErrors[k]);
+
+  const missing = missingCreateFields();
+  if (missing.length > 0) {
+    for (const field of missing) createErrors[field] = t('fieldError.required');
+    return;
+  }
+
+  createSubmitting.value = true;
   try {
     const result = await createUser({
       username: createForm.username,
@@ -185,6 +204,7 @@ async function submitReset() {
             class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           />
+          <FieldError :message="createErrors['username']" />
         </div>
 
         <div class="flex flex-col gap-1">
@@ -207,6 +227,7 @@ async function submitReset() {
             input-class="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             required
           />
+          <FieldError :message="createErrors['password']" />
         </div>
 
         <div class="flex flex-col gap-1">
@@ -222,6 +243,7 @@ async function submitReset() {
             <option value="">{{ t('generic.selectPlaceholder') }}</option>
             <option v-for="r in ROLE_OPTIONS" :key="r.value" :value="r.value">{{ label(r.label) }}</option>
           </select>
+          <FieldError :message="createErrors['role']" />
         </div>
 
         <div class="flex flex-col gap-1">

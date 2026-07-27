@@ -5,6 +5,7 @@ import { dateBoundConditions } from './date-bounds';
 import { orderByClause } from './sort';
 import type { ListSort, SortColumns } from './sort';
 import type { AuditSortField } from '../../../shared/src/ssot/list-sort';
+import { BUSINESS_TZ } from '../time';
 
 // ip is null for in-transaction writes (auditInTx) that don't carry a request. businessId is null
 // only for events that belong to no tenant — a login attempt on a username nobody holds.
@@ -52,7 +53,8 @@ export const AUDIT_DEFAULT_SORT: ListSort<AuditSortField> = { column: 'created_a
 
 // The endpoint's own filter allowlist. Audit is bespoke, so the field names a filter may name come
 // from here rather than an SSoT descriptor; anything else the route drops. `created_at` reads the
-// shared `min,max` range grammar; the rest are exact-match identity fields.
+// shared `min,max` range grammar, `actor_username` is a substring search over the actor's name and
+// login; the rest are exact-match identity fields.
 export const AUDIT_FILTER_FIELDS = ['entity_type', 'actor_user_id', 'actor_username', 'event_type', 'outcome', 'created_at'] as const;
 export type AuditFilterField = (typeof AUDIT_FILTER_FIELDS)[number];
 
@@ -81,6 +83,23 @@ function matchOp(negated: boolean): string {
   return negated ? 'IS DISTINCT FROM' : '=';
 }
 
+// A reader looking for "who did this" knows a person, not an exact login, so the actor filter
+// matches a fragment of either the username or the display name. The wildcards belong to the
+// grammar, not to the value: a search for `a_b` means those three characters, so an input's own
+// `%`/`_` is escaped rather than left to match anything.
+function escapeLikeValue(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+// coalesce keeps the expression two-valued, so a negated search is the exact complement and still
+// returns the tenantless events whose actor is null.
+function actorMatchCondition(paramIndex: number, negated: boolean): string {
+  const pattern = `'%' || $${paramIndex} || '%'`;
+  const match = `(coalesce(u.username, '') ILIKE ${pattern} ESCAPE '\\'`
+    + ` OR coalesce(u.display_name, '') ILIKE ${pattern} ESCAPE '\\')`;
+  return negated ? `NOT ${match}` : match;
+}
+
 // Only code-controlled column names are interpolated; every filter value is a bound $N param.
 // Events written in one transaction share created_at, so the id closes the sort — without a unique
 // tiebreaker two pages of the same list can repeat one event and never show another.
@@ -99,7 +118,7 @@ export async function listAuditEvents(
 
   if (f.entityType != null) { conditions.push(`a.entity_type ${matchOp(f.entityType.negated)} $${p++}`); params.push(f.entityType.value); }
   if (f.actorUserId != null) { conditions.push(`a.actor_user_id ${matchOp(f.actorUserId.negated)} $${p++}`); params.push(f.actorUserId.value); }
-  if (f.actorUsername != null) { conditions.push(`u.username ${matchOp(f.actorUsername.negated)} $${p++}`); params.push(f.actorUsername.value); }
+  if (f.actorUsername != null) { conditions.push(actorMatchCondition(p++, f.actorUsername.negated)); params.push(escapeLikeValue(f.actorUsername.value)); }
   if (f.eventType != null) { conditions.push(`a.event_type ${matchOp(f.eventType.negated)} $${p++}`); params.push(f.eventType.value); }
   if (f.outcome != null) { conditions.push(`a.outcome ${matchOp(f.outcome.negated)} $${p++}`); params.push(f.outcome.value); }
 
@@ -114,23 +133,44 @@ export async function listAuditEvents(
   // business and gets the same projection they always did.
   const businessCol = f.scope.kind === 'all' ? 'a.business_id, ' : '';
 
-  // Outer-joined so an event whose actor was purged still appears — dropping it would edit the
-  // record. Shared with the count query: a username filter only one of them applied would report a
-  // total the page can't produce.
+  // Every join is outer so an event whose subject was purged still appears — dropping it would edit
+  // the record. Shared with the count query: a filter only one of them applied would report a total
+  // the page can't produce. Each ON tests the entity type first, so a row only pays for the join
+  // that can match it.
+  //
+  // `u` is who acted. The rest answer "on what", which for a reset or a cancellation is the whole
+  // point of the row and which the id alone never says.
   const from = `FROM audit_events a
-       LEFT JOIN auth.users_directory u ON u.id = a.actor_user_id`;
+       LEFT JOIN auth.users_directory u ON u.id = a.actor_user_id
+       LEFT JOIN auth.users_directory tgt ON a.entity_type = 'auth.users' AND tgt.id = a.entity_id
+       LEFT JOIN appointments ap ON a.entity_type = 'appointments' AND ap.id = a.entity_id
+       LEFT JOIN auth.users_directory apc ON apc.id = ap.client_user_id`;
+
+  // A contact-only client has no username, so a person falls back to the display name, which is
+  // NOT NULL. A turno is named by whose it is and when, because a client books more than one.
+  // Whatever is left keeps its id: an entity with no natural name is better shown as the locator
+  // it is than given an invented one.
+  const tzParam = p;
+  const entityLabel = `CASE
+              WHEN a.entity_type = 'auth.users' THEN coalesce(tgt.username, tgt.display_name)
+              WHEN ap.id IS NOT NULL
+                THEN apc.display_name || ' · ' || to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI')
+            END AS entity_label`;
 
   const pageRows = await query<AuditEventRow & { total_count: string }>(
     db,
     `SELECT a.id, ${businessCol}a.actor_user_id, u.username AS actor_username,
+            ${entityLabel},
             a.event_type, a.entity_type, a.entity_id,
             a.outcome, a.ip, a.details, a.created_at,
             count(*) OVER()::text AS total_count
        ${from}
       WHERE ${where}
       ORDER BY ${orderByClause(AUDIT_SORT_COLUMNS, f.sort, 'a.id')}
-      LIMIT $${p} OFFSET $${p + 1}`,
-    [...params, f.limit, f.offset],
+      LIMIT $${p + 1} OFFSET $${p + 2}`,
+    // The timezone is bound, not written into the SQL, so the wall-clock a reader sees comes from
+    // the one constant the rest of the app resolves business days with.
+    [...params, BUSINESS_TZ, f.limit, f.offset],
   );
   if (pageRows.length === 0) {
     const count = await query<{ n: string }>(

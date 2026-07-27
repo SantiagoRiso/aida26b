@@ -466,6 +466,8 @@ export const en: Messages = {
     requestsToTriage: 'Requests to triage',
     appointmentsToday: 'Appointments today',
     viewAudit: 'View audit log',
+    recentActivity: 'Recent activity',
+    noRecentActivity: 'No recent activity',
   },
   requests: {
     emptyHeading: 'No pending requests',
@@ -545,7 +547,7 @@ export const en: Messages = {
     accessRestrictedBody: 'Only administrators can view the audit log.',
     allTypes: 'All types',
     entityTypeAria: 'Entity type',
-    actorPlaceholder: 'User who performed the action',
+    actorPlaceholder: 'Search by name or username',
     eventTypePlaceholder: 'Event type',
     outcome: 'Outcome',
     clear: 'Clear',
