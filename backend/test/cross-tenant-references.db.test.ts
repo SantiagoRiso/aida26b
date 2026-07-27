@@ -34,9 +34,12 @@ const foreignRow: Partial<Record<TableKey, string>> = {};
 
 let ownClientId: string;
 let ownProId: string;
+// Seeded in beforeAll; every generic write in this suite is audited against this actor, so it
+// must be a real auth.users row (see src/audit.ts) rather than a fabricated id.
+let ownAdminId: string;
 
 const admin = (): AuthUser => ({
-  id: 0,
+  id: Number(ownAdminId),
   username: 'xt-admin',
   email: null,
   role: 'Admin',
@@ -176,6 +179,13 @@ beforeAll(async () => {
   ownClientId = own.clientId;
   ownProId = own.proId;
   foreignBizId = (await seedBusiness('foreign')).bizId;
+
+  const ownAdmin = await pool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+     VALUES ('own_admin', 'own_admin@test.local', 'Admin', 'h', 's', 'Admin', $1) RETURNING id`,
+    [ownBizId],
+  );
+  ownAdminId = ownAdmin.rows[0].id;
 
   const app = createApp(pool, { defaultUser: admin() });
   server = app.listen(0, '127.0.0.1');

@@ -16,6 +16,8 @@ import type { GenericRow } from '../../shared/src/ssot/query-types';
 // detail.key. A cross-tenant super-admin fixture keeps authz out of the way; the point here is the
 // error shape, not scoping (already covered by generic-crud-policy.db.test.ts and friends).
 
+// id is a placeholder until beforeAll seeds the row and overwrites it — the generic writes below
+// are audited against this actor, so it must be a real auth.users row (see src/audit.ts).
 const superAdmin: AuthUser = {
   id: 0,
   username: 'constraint-admin',
@@ -71,6 +73,12 @@ beforeAll(async () => {
     [businessId],
   );
   resourceId = Number(resource.rows[0].id);
+
+  const superAdminUser = await testsPool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+     VALUES ('constraint_super_admin', 'super@constraint.test', 'Constraint Super Admin', 'h', 's', 'Admin', NULL) RETURNING id`,
+  );
+  superAdmin.id = Number(superAdminUser.rows[0].id);
 
   appPool = makeAppPool();
   const app = createApp(appPool, { defaultUser: superAdmin });

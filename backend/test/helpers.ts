@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import { markAuditStrict } from '../src/audit';
 
 dotenv.config();
 
@@ -130,13 +131,20 @@ export function dropTestDb(): Promise<void> {
 }
 
 // Harness pool (superuser): schema setup, migrations, fixture seeding, and direct assertions.
+// Marked audit-strict: a db test whose fixture audits with an actor id that isn't a real
+// auth.users row must fail loudly, not emit a swallowed error line (see src/audit.ts).
 export function makeTestPool(): Pool {
-  return new Pool({ ...envSuper(), database: TEST_DB_NAME });
+  const pool = new Pool({ ...envSuper(), database: TEST_DB_NAME });
+  markAuditStrict(pool);
+  return pool;
 }
 
 // App-role pool (aida26_user): hand this to the server under test so API paths hit real grants.
+// Marked audit-strict for the same reason as makeTestPool.
 export function makeAppPool(): Pool {
-  return new Pool({ ...envApp(), database: TEST_DB_NAME });
+  const pool = new Pool({ ...envApp(), database: TEST_DB_NAME });
+  markAuditStrict(pool);
+  return pool;
 }
 
 export const APP_ROLE = process.env.DB_USER ?? 'aida26_user';

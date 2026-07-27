@@ -21,6 +21,7 @@ const injectUser: express.RequestHandler = (req, _res, next) => {
 };
 
 let bizId: string;
+let adminId: number;
 let pro1: number;
 let pro2: number;
 let recepNoGrant: number;
@@ -85,6 +86,14 @@ async function readBinding(id: string) {
   return r.rows[0];
 }
 
+async function auditRows(eventType: string, entityId: number) {
+  const r = await pool.query<{ actor_user_id: string; outcome: string }>(
+    `SELECT actor_user_id, outcome FROM audit_events WHERE event_type = $1 AND entity_id = $2`,
+    [eventType, entityId],
+  );
+  return r.rows;
+}
+
 beforeAll(async () => {
   await resetTestDb();
   pool = makeTestPool();
@@ -93,6 +102,7 @@ beforeAll(async () => {
   const biz = await pool.query<{ id: string }>(`INSERT INTO businesses (name) VALUES ('Window Biz') RETURNING id`);
   bizId = biz.rows[0].id;
 
+  adminId = await seedUser('psw_admin', 'Admin');
   pro1 = await seedUser('psw_pro1', 'Professional');
   pro2 = await seedUser('psw_pro2', 'Professional');
   recepNoGrant = await seedUser('psw_recep_no', 'Receptionist');
@@ -138,11 +148,18 @@ afterAll(async () => {
 
 describe('professional_services per-service window edit authz', () => {
   test('Admin may set the window on any in-business binding', async () => {
-    currentUser = asUser(900000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(await putWindow(bindingId, 2, 30)).toBe(202);
     const row = await readBinding(bindingId);
     expect(row.min_booking_days).toBe(2);
     expect(row.max_booking_days).toBe(30);
+
+    // The write is audited against a real actor, so the insert genuinely lands — this is the
+    // path a fabricated actor id used to fail silently (a swallowed FK violation on audit_events).
+    const audited = await auditRows('professional_services_updated', Number(bindingId));
+    expect(audited).toHaveLength(1);
+    expect(Number(audited[0].actor_user_id)).toBe(adminId);
+    expect(audited[0].outcome).toBe('success');
   });
 
   test('the owning Professional may set their own binding window', async () => {
@@ -173,7 +190,7 @@ describe('professional_services per-service window edit authz', () => {
   });
 
   test('the owner FK is not an accepted field on the window PUT (cannot be reassigned)', async () => {
-    currentUser = asUser(900000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(
       await putRaw(bindingId, { professional_user_id: String(pro2), min_booking_days: 1, max_booking_days: 10 }),
     ).toBe(400);
@@ -181,7 +198,7 @@ describe('professional_services per-service window edit authz', () => {
   });
 
   test('the service_id is not an accepted field on the window PUT (not writable)', async () => {
-    currentUser = asUser(900000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(
       await putRaw(bindingId, { service_id: svc2, min_booking_days: 1, max_booking_days: 10 }),
     ).toBe(400);
@@ -191,19 +208,26 @@ describe('professional_services per-service window edit authz', () => {
   // The FK pair is readonlyOnEdit — frozen after create, but it MUST be settable AT create, else no
   // offering can be made. This exercises the generic POST that the frontend's offer checklist calls.
   test('Admin may CREATE an offering with the full object (FK pair settable at create)', async () => {
-    currentUser = asUser(900000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(
       await postCreate({ professional_user_id: String(pro2), service_id: svc2, min_booking_days: null, max_booking_days: null }),
     ).toBe(201);
-    const r = await pool.query(
-      `SELECT 1 FROM professional_services WHERE professional_user_id = $1 AND service_id = $2`,
+    const r = await pool.query<{ id: string }>(
+      `SELECT id FROM professional_services WHERE professional_user_id = $1 AND service_id = $2`,
       [pro2, svc2],
     );
     expect(r.rowCount).toBe(1);
+
+    // Same guarantee as the PUT case above: the create audit insert must actually land, not just
+    // be attempted with an actor that can never satisfy audit_events' FK.
+    const audited = await auditRows('professional_services_created', Number(r.rows[0].id));
+    expect(audited).toHaveLength(1);
+    expect(Number(audited[0].actor_user_id)).toBe(adminId);
+    expect(audited[0].outcome).toBe('success');
   });
 
   test('create still requires the full object (a missing service FK is rejected)', async () => {
-    currentUser = asUser(900000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(
       await postCreate({ professional_user_id: String(pro1), min_booking_days: null, max_booking_days: null }),
     ).toBe(400);

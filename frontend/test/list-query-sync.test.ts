@@ -39,6 +39,7 @@ import AuditView from '@/views/staff/AuditView.vue';
 import { listRows, buildQuery } from '@/api/crud';
 import type { ListParams } from '@/api/crud';
 import { listAudit } from '@/api/audit';
+import type { AuditFilters } from '@/api/audit';
 
 const listRowsMock = listRows as ReturnType<typeof vi.fn>;
 const listAuditMock = listAudit as ReturnType<typeof vi.fn>;
@@ -409,7 +410,7 @@ describe('AuditView — its own list state is URL-bound too', () => {
     const wrapper = mountAudit(plugins);
     await flushPromises();
 
-    const sentFilters = listAuditMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const sentFilters = listAuditMock.mock.calls.at(-1)?.[0] as AuditFilters;
     expect(sentFilters).not.toHaveProperty('actor_user_id');
     expect(sentFilters.actor_username).toBeUndefined();
     expect(wrapper.text()).toContain(es.audit.title);

@@ -9,6 +9,8 @@ import type { Server } from 'node:http';
 
 // Handlers fail closed without an authenticated user; inject a cross-business super-admin
 // explicitly so the policy suite exercises the privileged path without a real session.
+// id is a placeholder until beforeAll seeds the row and overwrites it — every generic write in
+// this suite is audited against this actor, so it must be a real auth.users row (see audit.ts).
 const superAdmin: AuthUser = {
   id: 0,
   username: 'policy-admin',
@@ -59,6 +61,12 @@ beforeAll(async () => {
     [businessId]
   );
   clientUserId = clientUser.rows[0].id;
+
+  const superAdminUser = await testsPool.query<{ id: string }>(
+    `INSERT INTO auth.users (username, email, display_name, password_hash, password_salt, role, business_id)
+     VALUES ('policy_super_admin', 'super@policy.test', 'Policy Super Admin', 'h', 's', 'Admin', NULL) RETURNING id`
+  );
+  superAdmin.id = Number(superAdminUser.rows[0].id);
 
   appPool = makeAppPool();
   const app = createApp(appPool, { defaultUser: superAdmin });

@@ -14,6 +14,18 @@ export type AuditWriter = (
   override?: { actorId?: number | null; businessId?: number | null },
 ) => Promise<void>;
 
+// Test-only escape hatch: a pool marked strict makes its writer rethrow a failed insert instead of
+// swallowing it, so a fixture that fabricates an actor id fails the test that exercises it instead
+// of only emitting an error line nobody reads. Never set in production — see markAuditStrict.
+const strictPools = new WeakSet<Pool>();
+
+// Call only from test harness code (test/helpers.ts pool factories). A pool never marked here keeps
+// the best-effort behaviour production relies on: a broken audit trail must not break the request
+// that triggered it.
+export function markAuditStrict(pool: Pool): void {
+  strictPools.add(pool);
+}
+
 // By default the business is derived from the actor's session. An unauthenticated request with no
 // explicit scope is dropped rather than filed under a guess — this is the anti-DoS gate, since an
 // authenticated actor bounds the volume to a session while an anonymous one does not. An
@@ -61,6 +73,9 @@ export function createAuditWriter(pool: Pool): AuditWriter {
         outcome,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Strict pools (test harness only) turn the swallow into a real failure: the error above
+      // stays for context, but the test exercising this write must not pass regardless.
+      if (strictPools.has(pool)) throw error;
     }
   };
 }

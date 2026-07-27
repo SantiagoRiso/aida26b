@@ -41,6 +41,7 @@ async function createException(professionalUserId: number, exceptionDate: string
 }
 
 let bizId: string;
+let adminId: number;
 let pro1: number;
 let pro2: number;
 let recepNoGrant: number;
@@ -77,6 +78,7 @@ beforeAll(async () => {
   const biz = await pool.query<{ id: string }>(`INSERT INTO businesses (name) VALUES ('Authz Biz') RETURNING id`);
   bizId = biz.rows[0].id;
 
+  adminId = await seedUser('osa_admin', 'Admin');
   pro1 = await seedUser('osa_pro1', 'Professional');
   pro2 = await seedUser('osa_pro2', 'Professional');
   recepNoGrant = await seedUser('osa_recep_no', 'Receptionist');
@@ -130,7 +132,7 @@ afterAll(async () => {
 
 describe('own-schedule authz via generic schedule_exceptions create', () => {
   test('Admin may create an exception for any in-business professional', async () => {
-    currentUser = asUser(100000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(await createException(pro1, '2026-07-06')).toBe(201);
   });
 
@@ -160,7 +162,7 @@ describe('own-schedule authz via generic schedule_exceptions create', () => {
   });
 
   test('a DATE column is emitted verbatim as YYYY-MM-DD, not an ISO timestamp', async () => {
-    currentUser = asUser(100000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     const res = await fetch(`${baseUrl}/api/schedule_exceptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -220,7 +222,7 @@ async function createBlockService(professionalUserId: number, blockId: string, s
 
 describe('own-schedule authz via generic schedule_block_services create/update', () => {
   test('Admin may attach a service to any in-business block', async () => {
-    currentUser = asUser(100000, 'Admin');
+    currentUser = asUser(adminId, 'Admin');
     expect(await createBlockService(pro1, block1, svc[0])).toBe(201);
   });
 
