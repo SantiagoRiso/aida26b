@@ -75,6 +75,17 @@ export function toHHMM(min: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+// One rule for every timed schedule range. The database states it twice as CHECK constraints
+// (schedule_blocks_time_order, schedule_exceptions_time_range_check) and constraint-messages maps
+// both to the same endAfterStart wording, so a screen that pre-checks must agree with them or the
+// user gets one answer from the form and a different one from the server.
+//
+// Both bounds are required: a half-filled range is not a range, and a blank field must not slip
+// through to a database error. Zero-padded HH:MM compares correctly as text.
+export function isValidTimeRange(start: string | null | undefined, end: string | null | undefined): boolean {
+  return !!start && !!end && start < end;
+}
+
 export function mergeIntervals(intervals: MinuteInterval[]): MinuteInterval[] {
   const sorted = [...intervals].filter((i) => i.end > i.start).sort((a, b) => a.start - b.start);
   const out: MinuteInterval[] = [];

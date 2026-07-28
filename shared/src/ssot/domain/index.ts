@@ -35,6 +35,7 @@ export {
   toMinutes,
   toHHMM,
   mergeIntervals,
+  isValidTimeRange,
 } from './availability';
 export type { Weekday, TimeInterval, ServiceBlock, ScheduleExceptionInput } from './availability';
 export {
@@ -62,7 +63,7 @@ export type {
   ConflictOwner,
   BookedAppointment,
 } from './conflict';
-export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES, LEDGER_WRITE_ROLES, RECEPTIONIST_ENTRY_TYPES } from './finance';
+export { LEDGER_ENTRY_TYPES, LEDGER_DEBIT_TYPES, LEDGER_CREDIT_TYPES, LEDGER_WRITE_ROLES, RECEPTIONIST_APPOINTMENT_LINKED_TYPES } from './finance';
 export type { LedgerEntryType } from './finance';
 export {
   FREQUENCY_VALUES,
@@ -92,5 +93,10 @@ export type { SeriesRule } from './recurrence-expand';
 export { seriesOccupancyForDate } from './recurrence-occupancy';
 export { AUDIT_OUTCOME_VALUES, AUDIT_OUTCOMES };
 export type { AuditOutcome } from './business';
+// auditEventLabel/WRITE_EVENT_SUFFIX are NOT re-exported here on purpose: audit-events.ts reads
+// table descriptors back out of `structure` (via utils.ts), and structure.ts is assembled from
+// this barrel — re-exporting it here would import audit-events.ts before `structure.tables` is
+// populated, a circular init that leaves getTableKeys() looking at an undefined object. Import
+// audit-events.ts directly instead.
 export { ROLE_OPTIONS, ROLE_LABELS, WRITE_PROTECTED_COLUMNS, PASSWORD_REUSE_KEY, isPasswordReused };
 export { CONSTRAINT_DETAIL_KEYS, USER_IDENTITY_CONSTRAINT_DETAIL_KEYS, INTENTIONALLY_GENERIC_CONSTRAINTS };

@@ -1,6 +1,7 @@
 import type { EventInput } from '@fullcalendar/core';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { Wire } from '@shared/ssot/query-types';
+import { isValidTimeRange } from '@shared/ssot/domain';
 import { tableRecord } from '@/api/ssot-decoder';
 
 export type ExceptionKind = 'off' | 'block' | 'extra';
@@ -91,7 +92,7 @@ export function buildExceptionBody(input: BuildExceptionBodyInput): BuildExcepti
   if ((professionalId == null) === (resourceId == null)) return { ok: false, reason: 'owner' };
 
   const timed = input.kind !== 'off';
-  if (timed && (!input.start_time || !input.end_time || input.start_time >= input.end_time)) {
+  if (timed && !isValidTimeRange(input.start_time, input.end_time)) {
     return { ok: false, reason: 'range' };
   }
   if (

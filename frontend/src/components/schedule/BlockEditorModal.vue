@@ -6,8 +6,9 @@ import AppButton from '@/components/shared/AppButton.vue';
 import TimeField from '@/components/shared/TimeField.vue';
 import BlockServicesPanel from '@/components/schedule/BlockServicesPanel.vue';
 import type { TemplateBlock } from '@/composables/scheduleTemplateGrid';
-import { toMinutes } from '@shared/ssot/domain';
+import { toMinutes, isValidTimeRange } from '@shared/ssot/domain';
 import type { Weekday } from '@shared/ssot/domain';
+import FieldError from '@/components/shared/FieldError.vue';
 import { structure } from '@shared/ssot/structure';
 import { useLabel } from '@/composables/useLabel';
 
@@ -36,8 +37,18 @@ const weekdayColumn = structure.tables.schedule_blocks.columns.weekday;
 const weekdayOptions = computed(() =>
   weekdayColumn.options.map((option) => ({ value: option.value, label: label(option.label) })));
 
+// The same rule the schedule_blocks_time_order CHECK enforces. Without it a block whose end is not
+// after its start reached the database and came back as a constraint error, which named no field.
+const rangeError = ref('');
+const rangeValid = computed(() => isValidTimeRange(startTime.value, endTime.value));
+
 async function onSubmit() {
   if (submitting.value) return;
+  if (!rangeValid.value) {
+    rangeError.value = t('apiError.endAfterStart');
+    return;
+  }
+  rangeError.value = '';
   submitting.value = true;
   try {
     // The block first (it can reject on overlap), then the pending service changes; close only when
@@ -72,6 +83,7 @@ watch(
     weekday.value = source.weekday;
     startTime.value = source.start_time;
     endTime.value = source.end_time;
+    rangeError.value = '';
   },
   { immediate: true },
 );
@@ -119,14 +131,15 @@ const liveMinutes = computed(() => {
                 </select>
               </label>
               <label class="flex flex-col gap-1 text-sm">
-                {{ t('schedule.startLabel') }}
+                {{ t('schedule.startLabel') }} <span class="text-destructive">*</span>
                 <TimeField v-model="startTime" />
               </label>
               <label class="flex flex-col gap-1 text-sm">
-                {{ t('schedule.endLabel') }}
+                {{ t('schedule.endLabel') }} <span class="text-destructive">*</span>
                 <TimeField v-model="endTime" />
               </label>
             </div>
+            <FieldError :message="rangeError" class="mt-2" data-testid="block-edit-range-error" />
 
             <BlockServicesPanel
               v-if="block && showServices"
