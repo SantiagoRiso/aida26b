@@ -6,6 +6,7 @@ import { seedDemo } from '../src/seed-demo';
 import { listVirtualOccurrences } from '../src/services/series-listing';
 import { resetTestDb, makeTestPool } from './helpers';
 import type { SqlParam } from '../src/db/core';
+import { auditEventLabel } from '../../shared/src/ssot/domain/audit-events';
 
 let pool: Pool;
 
@@ -124,6 +125,31 @@ describe('demo seed feature coverage (SC4)', () => {
     expect(await count(`SELECT COUNT(*)::int count FROM audit_events WHERE outcome = 'denied'`)).toBeGreaterThanOrEqual(1);
   });
 
+  // The seed bypasses every route, so nothing stops it from inventing an event_type no writer
+  // emits. auditEventLabel is the SSOT resolver for the real vocabulary (bespoke exact matches,
+  // plus the generic CRUD/appointment-state/ledger-entry composition rules) and returns null for
+  // anything else (see shared/src/ssot/domain/audit-events.ts) — reusing it here, instead of a
+  // second hardcoded list, means this test can't drift from what the resolver itself considers real.
+  it('seeds no audit event_type outside the real vocabulary', async () => {
+    const r = await pool.query<{ event_type: string }>(`SELECT DISTINCT event_type FROM audit_events`);
+    expect(r.rows.length).toBeGreaterThan(0);
+    for (const row of r.rows) {
+      expect(auditEventLabel(row.event_type), row.event_type).not.toBeNull();
+    }
+  });
+
+  // assertLedgerWriteAllowed (routes/appointment-authz.ts) forbids a Receptionist from writing a
+  // ledger entry with no appointment_id; the seed bypasses that guard entirely, so this is the
+  // only thing standing between it and reintroducing the bug fixed above.
+  it('seeds no receptionist-authored ledger entry lacking an appointment', async () => {
+    const n = await count(
+      `SELECT COUNT(*)::int count FROM ledger_entries le
+       JOIN auth.users u ON u.id = le.actor_user_id
+       WHERE u.role = 'Receptionist' AND le.appointment_id IS NULL`,
+    );
+    expect(n).toBe(0);
+  });
+
   it('seeds normalized schedule blocks; every professional block offers a service', async () => {
     expect(await count(`SELECT COUNT(*)::int count FROM schedule_blocks`)).toBeGreaterThan(0);
     // No degenerate time ranges.
@@ -161,6 +187,141 @@ describe('demo seed feature coverage (SC4)', () => {
        WHERE is_unavailable = false AND granularity_minutes IS NOT NULL`,
     );
     expect(changedHours).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// A completed appointment always has its session charge, same invariant the real transition route
+// enforces in-transaction (POST /appointments/:id/transition -> insertSessionChargeIfAbsent). The
+// seed writes appointments with direct SQL, so nothing but this test stands between it and drifting
+// into a state the app itself can never produce.
+describe('demo seed: completed-appointment charge invariant', () => {
+  it('every completed appointment has exactly one linked charge, for its own price', async () => {
+    const uncharged = await count(
+      `SELECT COUNT(*)::int count FROM appointments a
+       WHERE a.state = 'completed'
+         AND NOT EXISTS (
+           SELECT 1 FROM ledger_entries le
+           WHERE le.appointment_id = a.id AND le.entry_type = 'charge'
+         )`,
+    );
+    expect(uncharged).toBe(0);
+
+    const duplicated = await count(
+      `SELECT COUNT(*)::int count FROM (
+         SELECT a.id FROM appointments a
+         JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+         WHERE a.state = 'completed'
+         GROUP BY a.id
+         HAVING COUNT(*) > 1
+       ) dup`,
+    );
+    expect(duplicated).toBe(0);
+
+    const mismatched = await count(
+      `SELECT COUNT(*)::int count FROM appointments a
+       JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+       WHERE a.state = 'completed' AND le.amount_ars != a.price`,
+    );
+    expect(mismatched).toBe(0);
+  });
+
+  it('no no_show appointment has a linked charge', async () => {
+    const noShowCharged = await count(
+      `SELECT COUNT(*)::int count FROM appointments a
+       JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+       WHERE a.state = 'no_show'`,
+    );
+    expect(noShowCharged).toBe(0);
+  });
+
+  it('charge count from completed appointments is stable across a repeat seed run', async () => {
+    const before = await count(
+      `SELECT COUNT(*)::int count FROM ledger_entries WHERE entry_type = 'charge'`,
+    );
+    await seedDemo(pool);
+    const after = await count(
+      `SELECT COUNT(*)::int count FROM ledger_entries WHERE entry_type = 'charge'`,
+    );
+    expect(after).toBe(before);
+  });
+});
+
+// settleCompletedAppointments (seed-demo.ts) pays most completed sessions at the appointment,
+// mirroring real front-desk collection, while leaving a deterministic unpaid tail and never
+// touching Bart (demo_client_overdue) or the curated Homero/Marge/Apu pairs.
+describe('demo seed: payment settlement pass', () => {
+  async function balanceFor(username: string): Promise<number> {
+    const r = await pool.query<{ balance: string }>(
+      `SELECT COALESCE(
+         SUM(CASE WHEN le.entry_type IN ('charge','adjustment_debit') THEN le.amount_ars ELSE 0 END)
+         - SUM(CASE WHEN le.entry_type IN ('payment','adjustment_credit') THEN le.amount_ars ELSE 0 END),
+         0) AS balance
+       FROM ledger_entries le
+       JOIN auth.users u ON u.id = le.client_user_id
+       WHERE u.username = $1`,
+      [username],
+    );
+    return Number(r.rows[0].balance);
+  }
+
+  it('settles most completed appointments while leaving a visible unpaid tail', async () => {
+    const totalCompleted = await count(`SELECT COUNT(*)::int count FROM appointments WHERE state = 'completed'`);
+    const paidCompleted = await count(
+      `SELECT COUNT(*)::int count FROM appointments a
+       WHERE a.state = 'completed'
+         AND EXISTS (
+           SELECT 1 FROM ledger_entries p WHERE p.appointment_id = a.id AND p.entry_type = 'payment'
+         )`,
+    );
+    // Neither "pay everything" nor "pay nothing" should pass this test.
+    expect(paidCompleted).toBeGreaterThan(totalCompleted / 2);
+    expect(paidCompleted).toBeLessThan(totalCompleted);
+  });
+
+  it('no appointment carries more than one linked payment', async () => {
+    const overPaid = await count(
+      `SELECT COUNT(*)::int count FROM (
+         SELECT appointment_id FROM ledger_entries
+         WHERE entry_type = 'payment' AND appointment_id IS NOT NULL
+         GROUP BY appointment_id
+         HAVING COUNT(*) > 1
+       ) dup`,
+    );
+    expect(overPaid).toBe(0);
+  });
+
+  it("keeps Homero's curated account netted to zero", async () => {
+    expect(await balanceFor('demo_client')).toBe(0);
+  });
+
+  // Apu's curated payment is deliberately unallocated (no appointment_id), so the settle pass's
+  // per-appointment "already has a linked payment" guard alone can't see it and would otherwise post
+  // a second payment for the same charge; seed-demo.ts passes his appointment id explicitly to avoid
+  // that. A blanket "no appointment has >1 linked payment" check wouldn't catch this: the duplicate
+  // would be linked while the curated one stays unlinked, so neither exceeds one linked payment alone.
+  it("does not double-pay Apu's curated appointment via the settle pass", async () => {
+    const appt = await pool.query<{ id: string }>(
+      `SELECT a.id FROM appointments a
+       JOIN auth.users u ON u.id = a.client_user_id
+       WHERE u.username = 'demo_client3' AND a.state = 'completed' AND a.price = '10000.00'`,
+    );
+    expect(appt.rows.length).toBe(1);
+    const linkedPayments = await count(
+      `SELECT COUNT(*)::int count FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'payment'`,
+      [appt.rows[0].id],
+    );
+    expect(linkedPayments).toBe(0);
+  });
+
+  it('keeps Bart (the curated overdue client) with a positive balance', async () => {
+    expect(await balanceFor('demo_client_overdue')).toBeGreaterThan(0);
+  });
+
+  it('payment count from the settle pass is stable across a repeat seed run', async () => {
+    const before = await count(`SELECT COUNT(*)::int count FROM ledger_entries WHERE entry_type = 'payment'`);
+    await seedDemo(pool);
+    const after = await count(`SELECT COUNT(*)::int count FROM ledger_entries WHERE entry_type = 'payment'`);
+    expect(after).toBe(before);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   scheduleViaApi, findProfessionalId, findServiceId, findClientId, es,
 } from './helpers';
 import { DEMO_SERVICE_NAMES, shiftSeedDate } from '../../shared/src/dev-fixtures';
+import { auditEventLabel } from '../../shared/src/ssot/domain/audit-events';
 
 /**
  * The seed plants TWO appointments for the SAME professional (demo_pro) at the SAME
@@ -102,7 +103,9 @@ test.describe('Staff schedule — conflict override (sobreturno)', () => {
 
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
-    await expect(rows.first()).toContainText('conflict_override');
+    // The cell reads the event in Spanish; the raw identifier the filter matches on stays on the
+    // title. Resolved through the same rule the view uses, so a wording change cannot drift.
+    await expect(rows.first()).toContainText(String(auditEventLabel('conflict_override')?.es));
 
     // The entity column names the turno (whose it is, and when) instead of printing its id, so the
     // row can no longer be tied to the appointment on screen. The identity check moves to the API,

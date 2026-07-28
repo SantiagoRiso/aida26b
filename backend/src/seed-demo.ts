@@ -3,6 +3,7 @@ import { createOwnerPool } from './db';
 import { BUSINESS_TZ } from './time';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, DEMO_SERVICE_NAMES, shiftSeedDate as shift, SEED_START } from '../../shared/src/dev-fixtures';
 import { weekdayOf, toMinutes, toHHMM } from '../../shared/src/ssot/domain/availability';
+import { insertSessionChargeIfAbsent } from './db/ledger';
 import {
   type PoolLike,
   pickId,
@@ -265,16 +266,23 @@ async function setServiceBookingWindow(
   );
 }
 
+// Returns the grant row's own id (audit rows reference it, never the professional/grantee ids).
 async function upsertGrant(
   pool: PoolLike,
   professionalUserId: string,
   granteeUserId: string,
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO calendar_grants (professional_user_id, grantee_user_id)
-     VALUES ($1, $2) ON CONFLICT (professional_user_id, grantee_user_id) DO NOTHING`,
+): Promise<string> {
+  const existing = await pickId(
+    pool,
+    `SELECT id FROM calendar_grants WHERE professional_user_id = $1 AND grantee_user_id = $2`,
     [professionalUserId, granteeUserId],
   );
+  if (existing) return existing;
+  const r = await pool.query<{ id: string }>(
+    `INSERT INTO calendar_grants (professional_user_id, grantee_user_id) VALUES ($1, $2) RETURNING id`,
+    [professionalUserId, granteeUserId],
+  );
+  return r.rows[0].id;
 }
 
 // appointment_series carries no natural unique constraint (see db/series.ts), so idempotency is a
@@ -350,24 +358,41 @@ async function upsertAppointment(
      WHERE professional_user_id = $1 AND client_user_id = $2 AND service_id = $3 AND starts_at = $4`,
     [opts.professionalUserId, opts.clientUserId, opts.serviceId, opts.startsAt],
   );
-  if (existing) return existing;
-  // No name: an untitled turno renders through the app's own title derivation (client, resource,
-  // service, plus the sobreturno designation), so demo titles stay localized and never drift.
-  const r = await pool.query<{ id: string }>(
-    `INSERT INTO appointments
-       (client_user_id, professional_user_id, resource_id, service_id, starts_at,
-        duration_minutes, state, price, description, staff_note,
-        override_conflict, override_actor_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-     RETURNING id`,
-    [
-      opts.clientUserId, opts.professionalUserId, opts.resourceId ?? null, opts.serviceId, opts.startsAt,
-      opts.durationMinutes, opts.state, opts.price,
-      opts.description ?? null, opts.staffNote ?? null,
-      opts.overrideConflict ?? false, opts.overrideActorId ?? null,
-    ],
-  );
-  return r.rows[0].id;
+  let id: string;
+  if (existing) {
+    id = existing;
+  } else {
+    // No name: an untitled turno renders through the app's own title derivation (client, resource,
+    // service, plus the sobreturno designation), so demo titles stay localized and never drift.
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO appointments
+         (client_user_id, professional_user_id, resource_id, service_id, starts_at,
+          duration_minutes, state, price, description, staff_note,
+          override_conflict, override_actor_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        opts.clientUserId, opts.professionalUserId, opts.resourceId ?? null, opts.serviceId, opts.startsAt,
+        opts.durationMinutes, opts.state, opts.price,
+        opts.description ?? null, opts.staffNote ?? null,
+        opts.overrideConflict ?? false, opts.overrideActorId ?? null,
+      ],
+    );
+    id = r.rows[0].id;
+  }
+  // A completed session always has its charge, same as POST /appointments/:id/transition posting it
+  // in-transaction: the seed must never produce a state the real app can't reach. no_show never
+  // charges. insertSessionChargeIfAbsent's own NOT EXISTS guard keeps this idempotent across re-seeds
+  // and across both branches above (a pre-existing completed appointment still gets its charge).
+  if (opts.state === 'completed') {
+    await insertSessionChargeIfAbsent(pool, {
+      clientUserId: opts.clientUserId,
+      appointmentId: Number(id),
+      amountArs: opts.price,
+      actorUserId: Number(opts.professionalUserId),
+    });
+  }
+  return id;
 }
 
 // All appointment start instants (epoch ms) already booked for a professional. Preloaded once per
@@ -445,9 +470,58 @@ async function fillProfessionalDays(
   return filled;
 }
 
+// The completed-appointment invariant (inside upsertAppointment) posts the charge; this only reads
+// its id back for callers that need to reference it (e.g. an audit event).
+async function chargeIdForAppointment(pool: PoolLike, appointmentId: string): Promise<string> {
+  const id = await pickId(
+    pool,
+    `SELECT id FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'`,
+    [appointmentId],
+  );
+  if (id == null) throw new Error(`No charge found for appointment ${appointmentId}`);
+  return id;
+}
+
+// Front-desk collection pass: real clinics collect at the session, so most completed appointments
+// should be settled, not just the four curated pairs below. Runs AFTER the curated block, so its own
+// "no payment linked to this appointment yet" guard also protects Homero's and Marge's curated
+// payments from a second, duplicate one (both reference their appointment_id). Bart's curated payment
+// needs no such protection: he's excluded entirely, must stay overdue. Apu's curated payment is
+// deliberately unallocated (no appointment_id, see below), so the per-appointment guard alone can't
+// see it; excludeAppointmentIds carries his appointment explicitly so it isn't paid a second time.
+// One set-based INSERT...SELECT...WHERE NOT EXISTS, same idiom as the guards above. The unpaid tail
+// is deterministic, never Math.random (the seed must be reproducible): day-of-month alone repeats too
+// little in this seed's short completed-appointment window (a handful of distinct calendar days) to
+// spread evenly, so it's offset by the client id too, keeping same-day sessions from all landing in
+// the same bucket. An appointment stays unpaid when (day-of-month + client id) is a multiple of 6,
+// leaving a ~1-in-6 (~17%) visible tail.
+async function settleCompletedAppointments(
+  pool: PoolLike,
+  overdueClientUserId: string,
+  excludeAppointmentIds: string[],
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
+     SELECT a.client_user_id, a.id, 'payment', c.amount_ars, NULL, a.professional_user_id
+       FROM appointments a
+       JOIN ledger_entries c ON c.appointment_id = a.id AND c.entry_type = 'charge'
+      WHERE a.state = 'completed'
+        AND a.client_user_id <> $1
+        AND NOT (a.id = ANY($3::bigint[]))
+        AND (EXTRACT(DAY FROM a.starts_at AT TIME ZONE $2)::int + a.client_user_id) % 6 <> 0
+        AND NOT EXISTS (
+          SELECT 1 FROM ledger_entries p WHERE p.appointment_id = a.id AND p.entry_type = 'payment'
+        )`,
+    [overdueClientUserId, BUSINESS_TZ, excludeAppointmentIds],
+  );
+}
+
 // Append-only guard: insert only if no row with the same deterministic natural key exists.
-// Uses a CTE with explicit casts to avoid "inconsistent types" for parameters reused across
-// INSERT + WHERE NOT EXISTS in a single statement.
+// description is never seeded (the real app never writes one either, see ledgerEntryName), so
+// the natural key is client+type+amount+appointment. appointment_id is nullable, so the match
+// must use IS NOT DISTINCT FROM: two NULLs (both "no linked appointment") are the same key, and
+// `=` would never match a NULL, silently defeating the guard and duplicating rows on a re-run.
+// Returns the row's own id (existing or newly inserted) so callers can audit-reference it.
 async function guardedLedgerInsert(
   pool: PoolLike,
   opts: {
@@ -455,40 +529,42 @@ async function guardedLedgerInsert(
     appointmentId?: string | null;
     entryType: string;
     amountArs: string;
-    description: string;    // stable demo tag — serves as natural key along with client+type+amount
     actorUserId?: string | null;
   },
-): Promise<void> {
-  // Duplicating scalar params avoids Postgres type-inference conflicts when the same
-  // positional parameter appears in both the SELECT list and a WHERE predicate with
-  // different expected types (text vs. varchar CHECK constraint, etc.).
-  await pool.query(
-    `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
-     SELECT $1::bigint, $2::bigint, $3::text, $4::numeric, $5::text, $6::bigint
-     WHERE NOT EXISTS (
-       SELECT 1 FROM ledger_entries
-       WHERE client_user_id = $7::bigint
-         AND entry_type     = $8::text
-         AND amount_ars     = $9::numeric
-         AND description    = $10::text
-     )`,
-    [
-      opts.clientUserId, opts.appointmentId ?? null, opts.entryType, opts.amountArs, opts.description, opts.actorUserId ?? null,
-      opts.clientUserId, opts.entryType, opts.amountArs, opts.description,
-    ],
+): Promise<string> {
+  const existing = await pickId(
+    pool,
+    `SELECT id FROM ledger_entries
+     WHERE client_user_id  = $1
+       AND entry_type      = $2
+       AND amount_ars      = $3
+       AND appointment_id IS NOT DISTINCT FROM $4`,
+    [opts.clientUserId, opts.entryType, opts.amountArs, opts.appointmentId ?? null],
   );
+  if (existing) return existing;
+  const r = await pool.query<{ id: string }>(
+    `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
+     VALUES ($1, $2, $3, $4, NULL, $5)
+     RETURNING id`,
+    [opts.clientUserId, opts.appointmentId ?? null, opts.entryType, opts.amountArs, opts.actorUserId ?? null],
+  );
+  return r.rows[0].id;
 }
 
-// Append-only guard: insert only if no row with the same (entity_type, entity_id, event_type, outcome) exists.
-// Duplicating scalar params avoids Postgres type-inference conflicts (same param in SELECT + WHERE).
+// Append-only guard: insert only if no row with the same (actor, entity_type, entity_id, event_type,
+// outcome) exists. entity_type/entity_id are nullable (several real writers never set them, e.g.
+// login_success), so the match uses IS NOT DISTINCT FROM the same way the ledger guard above does;
+// actor_user_id joins the key so two null-entity rows for different actors (e.g. two logins) don't
+// collide into "the same event". Duplicating scalar params avoids Postgres type-inference conflicts
+// (same param in SELECT + WHERE).
 async function guardedAuditInsert(
   pool: PoolLike,
   opts: {
     businessId: string;
     actorUserId?: string | null;
     eventType: string;
-    entityType: string;
-    entityId: string;
+    entityType?: string | null;
+    entityId?: string | null;
     outcome: string;
     ip?: string | null;
     details?: object | null;
@@ -499,16 +575,17 @@ async function guardedAuditInsert(
      SELECT $1::bigint, $2::bigint, $3::text, $4::text, $5::bigint, $6::text, $7::text, $8::jsonb
      WHERE NOT EXISTS (
        SELECT 1 FROM audit_events
-       WHERE entity_type = $9::text
-         AND entity_id   = $10::bigint
-         AND event_type  = $11::text
-         AND outcome     = $12::text
+       WHERE actor_user_id IS NOT DISTINCT FROM $9::bigint
+         AND entity_type   IS NOT DISTINCT FROM $10::text
+         AND entity_id     IS NOT DISTINCT FROM $11::bigint
+         AND event_type    = $12::text
+         AND outcome       = $13::text
      )`,
     [
       opts.businessId, opts.actorUserId ?? null, opts.eventType,
-      opts.entityType, opts.entityId, opts.outcome,
+      opts.entityType ?? null, opts.entityId ?? null, opts.outcome,
       opts.ip ?? null, JSON.stringify(opts.details ?? {}),
-      opts.entityType, opts.entityId, opts.eventType, opts.outcome,
+      opts.actorUserId ?? null, opts.entityType ?? null, opts.entityId ?? null, opts.eventType, opts.outcome,
     ],
   );
 }
@@ -578,7 +655,7 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
   await upsertClientPrice(pool, uids['demo_client2'],        uids['demo_pro3'], svcNutricion, '5500.00');
   await upsertClientPrice(pool, uids['demo_client3'],        uids['demo_pro4'], svcKineso, '10000.00');
 
-  await upsertGrant(pool, uids['demo_pro'],  uids['demo_recep']);
+  const grantMargeRecep = await upsertGrant(pool, uids['demo_pro'],  uids['demo_recep']);
   await upsertGrant(pool, uids['demo_pro2'], uids['demo_recep']);
 
   // Each professional offers the service(s) that match their specialty (drives the booking form's
@@ -614,7 +691,10 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     startsAt: shift('2026-06-03T09:00:00-03:00'), durationMinutes: 40,
     state: 'completed', price: '5500.00',
   });
-  await upsertAppointment(pool, {
+  // Captured (unlike the other dense-fill-style fixtures around it): its curated payment below is
+  // deliberately unallocated, so the settle pass can't recognize it as paid via appointment_id and
+  // needs this id passed explicitly to avoid posting a second, duplicate payment for the same charge.
+  const apptApu = await upsertAppointment(pool, {
     clientUserId: uids['demo_client3'], professionalUserId: uids['demo_pro4'],
     resourceId: room3, serviceId: svcKineso,
     startsAt: shift('2026-06-04T14:00:00-03:00'), durationMinutes: 60,
@@ -879,89 +959,101 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     });
   }
 
-  // Homero: charged + paid in full → zero balance
+  // A receptionist may only record a charge or payment against the turno it settles (the entry form
+  // and assertLedgerWriteAllowed both enforce it), so every receptionist-attributed entry here
+  // carries its appointment. Bart's second charge and Apu's payment are unallocated, so they're
+  // attributed to the admin instead, who may record a movement that settles no single session.
+  //
+  // Every client below (except Homero, who is excluded from the dense fill) also carries completed
+  // appointments from fillProfessionalDays; the invariant charges every one of those too. The
+  // settleCompletedAppointments pass below (after this block) pays most of those charges off, except
+  // Bart's (he stays overdue on purpose) and a deterministic ~1-in-6 unpaid tail on everyone else.
+
+  // Homero: appt1's charge is posted automatically (completed-appointment invariant); look its id up
+  // only to reference it from the audit event below. Homero's only appointments are curated (he is
+  // excluded from the dense fill), so charged + paid in full here means his account nets to zero.
+  const homeroCharge = await chargeIdForAppointment(pool, appt1);
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client'], appointmentId: appt1,
-    entryType: 'charge', amountArs: '6500.00',
-    description: 'demo:cargo-sesion-homero-20260602', actorUserId: uids['demo_recep'],
-  });
-  await guardedLedgerInsert(pool, {
-    clientUserId: uids['demo_client'],
     entryType: 'payment', amountArs: '6500.00',
-    description: 'demo:pago-homero-20260602', actorUserId: uids['demo_recep'],
+    actorUserId: uids['demo_recep'],
   });
 
-  // Bart: two charges, one partial payment, a late fee → positive (overdue) balance
+  // Bart: appt2's charge is posted automatically; a second, deliberately unlinked charge plus a
+  // partial payment and a late fee add to his overdue balance. He's excluded from the settle pass
+  // below, so his dense-fill charges stay unpaid too: he must stay overdue, that's the point of him.
+  await guardedLedgerInsert(pool, {
+    clientUserId: uids['demo_client_overdue'],
+    entryType: 'charge', amountArs: '8000.00',
+    actorUserId: uids['demo_admin'],
+  });
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client_overdue'], appointmentId: appt2,
-    entryType: 'charge', amountArs: '8000.00',
-    description: 'demo:cargo-sesion-bart-20260602', actorUserId: uids['demo_recep'],
-  });
-  await guardedLedgerInsert(pool, {
-    clientUserId: uids['demo_client_overdue'],
-    entryType: 'charge', amountArs: '8000.00',
-    description: 'demo:cargo-sesion-bart-20260707', actorUserId: uids['demo_recep'],
-  });
-  await guardedLedgerInsert(pool, {
-    clientUserId: uids['demo_client_overdue'],
     entryType: 'payment', amountArs: '5000.00',
-    description: 'demo:pago-parcial-bart', actorUserId: uids['demo_recep'],
+    actorUserId: uids['demo_recep'],
   });
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client_overdue'],
     entryType: 'adjustment_debit', amountArs: '500.00',
-    description: 'demo:ajuste-mora-bart', actorUserId: uids['demo_admin'],
+    actorUserId: uids['demo_admin'],
   });
 
-  // Marge: nutrition charge + payment + a credit correction → zero balance
+  // Marge: appt3's charge is posted automatically; payment plus a credit correction settle this pair
+  // (nets it to -200, a small credit). The rest of her balance is mostly-settled dense-fill charges,
+  // per the settle pass below.
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client2'], appointmentId: appt3,
-    entryType: 'charge', amountArs: '5500.00',
-    description: 'demo:cargo-nutricion-marge-20260603', actorUserId: uids['demo_recep'],
-  });
-  await guardedLedgerInsert(pool, {
-    clientUserId: uids['demo_client2'],
     entryType: 'payment', amountArs: '5500.00',
-    description: 'demo:pago-marge-20260603', actorUserId: uids['demo_recep'],
+    actorUserId: uids['demo_recep'],
   });
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client2'],
     entryType: 'adjustment_credit', amountArs: '200.00',
-    description: 'demo:ajuste-credito-marge', actorUserId: uids['demo_admin'],
+    actorUserId: uids['demo_admin'],
   });
 
-  // Apu: charged + paid in full
-  await guardedLedgerInsert(pool, {
-    clientUserId: uids['demo_client3'],
-    entryType: 'charge', amountArs: '10000.00',
-    description: 'demo:cargo-kineso-apu-20260604', actorUserId: uids['demo_recep'],
-  });
+  // Apu: the completed appointment's charge is posted automatically and linked; the payment here is
+  // deliberately unallocated, so the statement shows what a movement that settles no single session
+  // looks like next to one that does. Settles this pair; the rest of his balance is mostly-settled
+  // dense-fill charges, per the settle pass below.
   await guardedLedgerInsert(pool, {
     clientUserId: uids['demo_client3'],
     entryType: 'payment', amountArs: '10000.00',
-    description: 'demo:pago-apu-20260604', actorUserId: uids['demo_recep'],
+    actorUserId: uids['demo_admin'],
   });
 
+  // Settle most of the dense-fill completed appointments (see function doc above): runs last so its
+  // guard sees every curated payment already written and skips those appointments. apptApu is passed
+  // explicitly: his curated payment is unallocated, so the appointment_id guard alone can't see it.
+  await settleCompletedAppointments(pool, uids['demo_client_overdue'], [apptApu]);
+
+  // login_success carries no entity at all (routes/auth.ts calls `audit(req, 'login_success',
+  // 'success')` with no details), but it IS written by the pool-based writer (createAuditWriter),
+  // which stamps `ip: req.ip`. Unlike the in-tx writer, a login row legitimately carries an IP.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_admin'],
-    eventType: 'login', entityType: 'auth.users',
-    entityId: uids['demo_admin'], outcome: 'success', ip: '192.168.1.10',
+    eventType: 'login_success', outcome: 'success', ip: '192.168.1.10',
   });
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_recep'],
-    eventType: 'login', entityType: 'auth.users',
-    entityId: uids['demo_recep'], outcome: 'success', ip: '192.168.1.11',
+    eventType: 'login_success', outcome: 'success', ip: '192.168.1.11',
   });
+  // appt1 was booked directly into 'scheduled' by staff (its actor here is the receptionist, not
+  // the client), matching the /schedule route's auditInTx('appointment_scheduled', ...).
+  // 'appointment_requested' belongs to the client-initiated request flow instead.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_recep'],
-    eventType: 'appointment_created', entityType: 'appointments',
+    eventType: 'appointment_scheduled', entityType: 'appointments',
     entityId: appt1, outcome: 'success',
   });
+  // auditConflictOverrideInTx always tags the operation that forced the save; apptSobreturno was
+  // forced through the direct /schedule route, so operation is 'schedule' (not approve/reschedule/
+  // materialize). Written via auditInTx, so ip is null like every other lifecycle event below.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_admin'],
     eventType: 'conflict_override', entityType: 'appointments',
     entityId: apptSobreturno, outcome: 'success',
-    details: { reason: 'Urgencia del paciente; autorizó admin' },
+    details: { operation: 'schedule' },
   });
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_pro'],
@@ -973,22 +1065,31 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     eventType: 'appointment_rejected', entityType: 'appointments',
     entityId: apptRejected, outcome: 'success',
   });
+  // routes/ledger.ts: auditInTx(tx, user, `ledger_${entryType}_created`, 'success', Number(row.id),
+  // 'ledger_entries'). entity_id is the ledger row's own id, never a user id.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_recep'],
-    eventType: 'ledger_entry_created', entityType: 'ledger_entries',
-    entityId: uids['demo_client'], outcome: 'success',
+    eventType: 'ledger_charge_created', entityType: 'ledger_entries',
+    entityId: homeroCharge, outcome: 'success',
   });
+  // routes/grants.ts writes grant_created through the pool-based writer (guards.audit), so it
+  // carries a real ip like login_success does; entity_id is the calendar_grants row's own id.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_admin'],
     eventType: 'grant_created', entityType: 'calendar_grants',
-    entityId: uids['demo_pro'], outcome: 'success',
+    entityId: grantMargeRecep, outcome: 'success', ip: '192.168.1.12',
   });
-  // Denied action proves the audit trail records refused authorization attempts.
+  // No route emits 'appointment_update'. The scenario this stood in for (a client attempting a
+  // staff-only state change) really produces 'appointment_action_denied': assertAppointmentAction
+  // Allowed rejects every Client before any state is touched (see routes/appointment-authz.ts), and
+  // the /reschedule route's denial audit (routes/appointments.ts) is exactly that check failing.
+  // It runs through the pool-based writer too, so it carries a real ip; entity_type stays unset
+  // (the route never passes one), matching `{ reason: authz.code, entity_id: id }` verbatim.
   await guardedAuditInsert(pool, {
     businessId, actorUserId: uids['demo_client'],
-    eventType: 'appointment_update', entityType: 'appointments',
+    eventType: 'appointment_action_denied',
     entityId: appt2, outcome: 'denied', ip: '10.0.0.5',
-    details: { reason: 'Client attempted state change not permitted' },
+    details: { reason: 'forbidden', entity_id: Number(appt2) },
   });
 }
 
