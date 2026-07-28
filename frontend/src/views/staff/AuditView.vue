@@ -4,14 +4,16 @@ import { useI18n } from 'vue-i18n';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/audit';
 import { AUDIT_OUTCOMES } from '@shared/ssot/domain';
+import { auditEventLabel } from '@shared/ssot/domain/audit-events';
 import { LIST_DEFAULT_LIMIT } from '@shared/ssot/list-protocol';
 import { AUDIT_SORT_FIELDS } from '@shared/ssot/list-sort';
 import { structure } from '@shared/ssot/structure';
 import type { TableStructure } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
-import { isTableKey } from '@shared/utils/utils';
+import { isTableKey, isProtected, getTableKeys } from '@shared/utils/utils';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
+import { useAuditDetails } from '@/composables/useAuditDetails';
 import { useListQuerySync } from '@/composables/useListQuerySync';
 import { auditOutcomeBadgeClass } from '@/composables/badgeTone';
 import { useAuthStore } from '@/stores/auth';
@@ -26,6 +28,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const { formatDateTime } = useCurrency();
 const { label } = useLabel();
+const { auditDetailEntries } = useAuditDetails();
 
 // Route meta already gates access; render nothing if somehow reached as non-Admin.
 const isAdmin = computed(() => auth.user?.role === 'Admin');
@@ -100,17 +103,23 @@ const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
-// The types worth offering, not every type that occurs: generic CRUD stamps the table key of any
-// non-protected table, so services and the join tables also appear in the log and simply have no
-// option here. `businesses` was removed because it is protected (no generic CRUD writes it and no
-// bespoke route names it), so offering it asked for a set that is always empty.
+// Every non-protected table is offered automatically: the generic CRUD audit writer
+// (auditGenericWrite) stamps its table key on every write, so a newly exposed table needs no
+// edit here. `businesses`/`audit_events`/`users`/`sessions` are protected and stay excluded
+// because nothing ever stamps their table key: `businesses` has no route that names itself as an
+// audit entity (business-settings.ts records only business_id), `audit_events` never audits
+// itself, and person rows are recorded under the bespoke 'auth.users' literal instead of `users`
+// (see the manual entry below).
+const BESPOKE_STAMPED_PROTECTED_ENTITY_TYPES: readonly TableKey[] = [
+  'appointments', 'ledger_entries', 'appointment_series', 'calendar_grants',
+];
+
 const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
   { value: '' },
-  { value: 'appointments', tableKey: 'appointments' },
-  { value: 'ledger_entries', tableKey: 'ledger_entries' },
+  ...getTableKeys()
+    .filter((key) => !isProtected(key) || BESPOKE_STAMPED_PROTECTED_ENTITY_TYPES.includes(key))
+    .map((key) => ({ value: key, tableKey: key })),
   { value: 'auth.users', tableKey: 'users' },
-  { value: 'calendar_grants', tableKey: 'calendar_grants' },
-  { value: 'schedule_exceptions', tableKey: 'schedule_exceptions' },
 ];
 
 function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
@@ -121,6 +130,19 @@ function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
 }
 
 const OUTCOMES = AUDIT_OUTCOMES;
+
+// Most event types compose from data the SSOT already has Spanish labels for (see
+// auditEventLabel); the handful that don't fall back to the raw identifier rather than going
+// blank, since it is still the value the event-type filter matches on.
+function eventTypeLabel(eventType: string): string {
+  const composed = auditEventLabel(eventType);
+  return composed ? label(composed) : eventType;
+}
+
+function outcomeLabel(outcome: string): string {
+  const match = OUTCOMES.find((o) => o.value === outcome);
+  return match ? label(match.label) : outcome;
+}
 
 // The id stands in when a purged actor leaves the username unresolvable: an audit row must stay
 // readable. No actor at all is the system acting on its own.
@@ -150,6 +172,14 @@ function entityDetail(event: AuditEvent): string {
   if (event.entity_type == null) return '';
   return event.entity_id != null ? `${event.entity_type} #${event.entity_id}` : event.entity_type;
 }
+
+// Computed once per row (not per interpolation) — the details cell renders a variable-length
+// list, so the template needs the resolved array, not a function it would otherwise re-run three
+// times per row.
+const rows = computed(() => events.value.map((event) => ({
+  event,
+  detailEntries: auditDetailEntries(event.details),
+})));
 
 async function load() {
   if (!isAdmin.value) return;
@@ -312,11 +342,14 @@ if (isAdmin.value) {
               <SortableHeader field="entity_type" :label="t('audit.colEntity')" :active="sort" :dir="dir" @sort="toggleSort" />
               <SortableHeader field="actor_username" :label="t('audit.colActor')" :active="sort" :dir="dir" @sort="toggleSort" />
               <SortableHeader field="outcome" :label="t('audit.outcome')" :active="sort" :dir="dir" @sort="toggleSort" />
+              <th scope="col" class="px-4 py-3 text-left font-semibold">
+                {{ t('audit.colDetails') }}
+              </th>
             </tr>
           </thead>
           <tbody class="divide-y divide-border bg-card">
             <tr
-              v-for="event in events"
+              v-for="{ event, detailEntries } in rows"
               :key="event.id"
               class="virtualized-row hover:bg-surface"
               :class="{
@@ -330,8 +363,8 @@ if (isAdmin.value) {
               <td class="px-4 py-3 tabular-nums text-neutral whitespace-nowrap">
                 {{ formatDateTime(event.created_at) }}
               </td>
-              <td class="px-4 py-3 font-mono text-xs text-heading">
-                {{ event.event_type }}
+              <td class="px-4 py-3 text-heading">
+                <span :title="event.event_type">{{ eventTypeLabel(event.event_type) }}</span>
               </td>
               <td class="px-4 py-3 text-neutral">
                 <span :title="entityDetail(event)">
@@ -351,7 +384,17 @@ if (isAdmin.value) {
                   :class="auditOutcomeBadgeClass(event.outcome)"
                 >
                   <span v-if="event.outcome === 'denied'" class="mr-1" aria-hidden="true">⛔</span>
-                  {{ event.outcome }}
+                  {{ outcomeLabel(event.outcome) }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-neutral">
+                <span v-if="detailEntries.length" class="text-xs">
+                  <span
+                    v-for="(entry, index) in detailEntries"
+                    :key="entry.key"
+                  >
+                    <span class="font-semibold">{{ entry.label }}:</span> {{ entry.text }}<span v-if="index < detailEntries.length - 1"> · </span>
+                  </span>
                 </span>
               </td>
             </tr>

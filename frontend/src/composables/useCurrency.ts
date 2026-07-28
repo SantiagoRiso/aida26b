@@ -1,7 +1,7 @@
 // ARS and date formatting fixed to Argentine conventions — independent of the language toggle.
 // Only UI chrome/labels translate; monetary amounts and dates always render in es-AR.
 
-import { ISO_DATE_PATTERN } from '@shared/ssot/domain/availability';
+import { ISO_DATE_PATTERN, BUSINESS_TZ } from '@shared/ssot/domain/availability';
 
 const ISO_DATE_RE = new RegExp(ISO_DATE_PATTERN);
 
@@ -12,12 +12,20 @@ const ARS_FORMATTER = new Intl.NumberFormat('es-AR', {
   maximumFractionDigits: 2,
 });
 
+// Deliberately no timeZone: toLocalDate below parses a date-only string into a Date at LOCAL
+// midnight, so formatting stays zone-less too (construct-local/format-local is symmetric).
+// Pinning this to BUSINESS_TZ would break it — a Date built at the viewer's local midnight,
+// reformatted in Argentina's zone, can land on the wrong calendar day.
 const DATE_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
 });
 
+// Pinned to BUSINESS_TZ (unlike DATE_FORMATTER above): these format an absolute instant — a
+// timestamp with real time-of-day, not a bare calendar date — so without an explicit zone
+// Intl would render it in the viewer's OS timezone instead of Argentina's. The server pins the
+// same zone (backend/src/time.ts) when it stamps entity_label times, so the two must agree.
 const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit',
   month: '2-digit',
@@ -25,12 +33,14 @@ const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
+  timeZone: BUSINESS_TZ,
 });
 
 const TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
+  timeZone: BUSINESS_TZ,
 });
 
 // Date-only strings must parse as LOCAL dates: new Date('YYYY-MM-DD') is UTC midnight,

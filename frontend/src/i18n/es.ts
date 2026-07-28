@@ -563,7 +563,26 @@ export const es = {
     colEvent: 'Evento',
     colEntity: 'Entidad',
     colActor: 'Actor',
+    colDetails: 'Detalle',
     systemActor: 'Sistema',
+    details: {
+      reasonLabel: 'Motivo',
+      usernameLabel: 'Usuario intentado',
+      fieldsLabel: 'Campos modificados',
+      pathLabel: 'Ruta',
+      methodLabel: 'Método',
+      roleLabel: 'Rol',
+      operationLabel: 'Operación',
+      countLabel: 'Cantidad',
+      canceledLabel: 'Cancelada',
+      professionalIdLabel: 'ID de profesional',
+      operationValue: {
+        schedule: 'Reserva',
+        approve: 'Aprobación',
+        reschedule: 'Reprogramación',
+        materialize: 'Generación de turno de serie',
+      },
+    },
   },
   business: {
     generalHeading: 'General',
@@ -641,6 +660,9 @@ export const es = {
     appointmentRequired: 'Turno requerido para recepcionistas',
     selectType: 'Seleccionar un tipo',
     noAppointment: 'Sin turno',
+    // A payment that settles no particular session is a real state, not missing data: it is how a
+    // partial payment or a payment covering several sessions is recorded.
+    unallocated: 'A cuenta, sin turno asociado',
     amountPlaceholder: 'Ej: 1500.00',
   },
   timeOff: {

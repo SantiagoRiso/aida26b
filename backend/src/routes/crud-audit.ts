@@ -4,10 +4,9 @@ import type { Pool } from 'pg';
 import { createAuditWriter } from '../audit';
 import type { AuditWriter } from '../audit';
 import { getPkFields } from '../../../shared/src/utils/utils';
+import { WRITE_EVENT_SUFFIX } from '../../../shared/src/ssot/domain/audit-events';
 import type { TableKey } from '../../../shared/src/ssot/derived';
 import type { GenericRow } from '../../../shared/src/ssot/query-types';
-
-const WRITE_EVENT_SUFFIX = { create: 'created', update: 'updated', delete: 'deleted' } as const;
 
 export type WriteOperation = keyof typeof WRITE_EVENT_SUFFIX;
 

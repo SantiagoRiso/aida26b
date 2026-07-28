@@ -560,7 +560,26 @@ export const en: Messages = {
     colEvent: 'Event',
     colEntity: 'Entity',
     colActor: 'Actor',
+    colDetails: 'Details',
     systemActor: 'System',
+    details: {
+      reasonLabel: 'Reason',
+      usernameLabel: 'Attempted username',
+      fieldsLabel: 'Changed fields',
+      pathLabel: 'Path',
+      methodLabel: 'Method',
+      roleLabel: 'Role',
+      operationLabel: 'Operation',
+      countLabel: 'Count',
+      canceledLabel: 'Canceled',
+      professionalIdLabel: 'Professional ID',
+      operationValue: {
+        schedule: 'Booking',
+        approve: 'Approval',
+        reschedule: 'Reschedule',
+        materialize: 'Series occurrence generation',
+      },
+    },
   },
   business: {
     generalHeading: 'General',
@@ -638,6 +657,9 @@ export const en: Messages = {
     appointmentRequired: 'Appointment required for receptionists',
     selectType: 'Select a type',
     noAppointment: 'No appointment',
+    // A payment that settles no particular session is a real state, not missing data: it is how a
+    // partial payment or a payment covering several sessions is recorded.
+    unallocated: 'On account, no session linked',
     amountPlaceholder: 'E.g. 1500.00',
   },
   timeOff: {
