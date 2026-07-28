@@ -1,0 +1,28 @@
+# Production frontend image: Vite builds the static bundle in a node builder, then the
+# bundle is served by nginx. The runtime image carries no node/npm/vite/esbuild, so the
+# build-tooling CVEs (esbuild's Go stdlib, postcss, picomatch, ...) never ship.
+
+FROM node:25-alpine AS build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+# vite.config resolves @shared to ../shared/src, so the shared tree and base tsconfig
+# must sit alongside the frontend at the same relative paths as in the source tree.
+COPY frontend/src ./src
+COPY frontend/styles ./styles
+COPY frontend/public ./public
+COPY frontend/index.html ./
+COPY frontend/tsconfig.json ./
+COPY frontend/vite.config.ts ./
+COPY tsconfig.base.json /app/tsconfig.base.json
+COPY shared/src /app/shared/src
+RUN npm run build
+
+FROM nginx:alpine AS runtime
+RUN apk --no-cache upgrade
+COPY --from=build /app/frontend/dist /usr/share/nginx/html
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+# Where nginx forwards /api; overridable per environment. Default targets the backend
+# service on a shared Docker/compose network.
+ENV API_PROXY_TARGET=http://backend:3000
+EXPOSE 8080

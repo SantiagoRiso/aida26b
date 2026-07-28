@@ -1,0 +1,90 @@
+# Copy to docker-compose.prod.yml and point the two `image:` tags at your own registry.
+# The copy is gitignored so one deployment's registry host never lands in the repo.
+#
+# Production stack: builds the hardened prod images (tagged for the registry) and runs them
+# against their own Postgres. No source bind-mounts — the containers run the code baked
+# into the image, unlike docker-compose.yml which mounts host source for hot-reload.
+# Its own project name/volume keeps this isolated from the dev stack's data.
+name: aida26-prod
+
+x-db-credentials: &db-credentials
+  DB_NAME: ${DB_NAME:-professional_agenda}
+  DB_USER: ${DB_USER:-aida26_user}
+  DB_PASSWORD: ${DB_PASSWORD:-CambiaEsta!}
+  DB_OWNER_USER: ${DB_OWNER_USER:-aida26_owner}
+  DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-CambiaEsta_Owner!}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILE:-5}"
+
+services:
+  database:
+    image: postgres:18-alpine
+    container_name: aida26_prod_database
+    environment:
+      <<: *db-credentials
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERPASS:-CambiaEsta_Super!}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./database/bootstrap.sh:/docker-entrypoint-initdb.d/00-bootstrap.sh:ro
+    networks:
+      - aida26_network
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    image: registry.example.com/agenda-pro/backend:latest
+    container_name: aida26_prod_backend
+    environment:
+      <<: *db-credentials
+      NODE_ENV: production
+      PORT: ${PORT:-3000}
+      VERSION: ${VERSION:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_HOST: ${DB_HOST:-database}
+      DB_PORT: ${DB_PORT:-5432}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-yourpassword}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+    # No host port: the backend is reached only over the compose network (by the frontend's
+    # /api proxy), which is how it runs in production behind the edge reverse proxy too.
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - aida26_network
+    logging: *default-logging
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+    image: registry.example.com/agenda-pro/frontend:latest
+    container_name: aida26_prod_frontend
+    environment:
+      API_PROXY_TARGET: http://backend:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    networks:
+      - aida26_network
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+
+networks:
+  aida26_network:
+    driver: bridge

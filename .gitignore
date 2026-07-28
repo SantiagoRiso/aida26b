@@ -144,3 +144,7 @@ test-results/
 playwright-report/
 .playwright/
 .superpowers/
+
+# Production compose names one deployment's own registry; the tracked template is the
+# starting point, the working copy is per-operator.
+docker-compose.prod.yml

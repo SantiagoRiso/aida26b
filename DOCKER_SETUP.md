@@ -131,6 +131,29 @@ docker-compose up -d --build frontend # Rebuild frontend
 
 ## Production Deployment
 
+### The production stack
+
+`docker-compose.prod.yml.template` builds `backend/Dockerfile.prod` and
+`frontend/Dockerfile.prod`: multi-stage images that ship only compiled output —
+the backend runs `node` against `dist/` with npm itself removed, the frontend is
+a static bundle served by nginx with no node in the runtime layer. Neither
+carries the build tooling, so its CVEs never reach production.
+
+```bash
+cp docker-compose.prod.yml.template docker-compose.prod.yml
+# point both `image:` tags at your registry, then:
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The working copy is gitignored because the image tags name one deployment's
+registry. Credentials come from `.env` exactly as they do in development — the
+compose file only declares defaults.
+
+nginx reverse-proxies `/api` to the backend so the browser makes same-origin
+requests and the session cookie stays same-site, which is what Vite's dev proxy
+does in development. `API_PROXY_TARGET` sets the upstream at container start.
+
 ### General Production Recommendations
 
 You would typically:
@@ -146,4 +169,5 @@ You would typically:
 9. Use health checks and restart policies
 10. Implement logging aggregation
 
-Example production docker-compose can be created upon request.
+Of these, the prod stack above already covers 1-4, 5 (nginx, TLS terminated by the
+edge proxy in front of it), 7, and 9.
