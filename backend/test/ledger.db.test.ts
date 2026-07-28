@@ -355,11 +355,29 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
     expect(res.status).toBe(403);
   });
 
-  test('receptionist cannot create an adjustment_debit → 403', async () => {
-    currentUser = asUser(recepWithGrantId, 'Receptionist');
+  // An adjustment corrects a balance instead of settling a session, so it carries no appointment
+  // and cannot be authorized against one. It is scoped to the clients whose ledger the grant
+  // already exposes: adjusting a balance you may not read would outrank reading it.
+  test.each(['adjustment_debit', 'adjustment_credit'])(
+    'receptionist with a grant creates a standalone %s, no appointment needed',
+    async (entryType) => {
+      currentUser = asUser(recepWithGrantId, 'Receptionist');
+      const res = await req<LedgerRow>('POST', '/api/ledger', {
+        client_user_id: clientId,
+        entry_type: entryType,
+        amount_ars: '100.00',
+      });
+      expect(res.status).toBe(201);
+      expect(dataOf(res).appointment_id).toBeNull();
+      expect(dataOf(res).entry_type).toBe(entryType);
+    },
+  );
+
+  test('receptionist without a grant on this client cannot adjust the balance → 403', async () => {
+    currentUser = asUser(recepNoGrantId, 'Receptionist');
     const res = await req<LedgerRow>('POST', '/api/ledger', {
       client_user_id: clientId,
-      entry_type: 'adjustment_debit',
+      entry_type: 'adjustment_credit',
       amount_ars: '100.00',
     });
     expect(res.status).toBe(403);
@@ -559,6 +577,54 @@ describe('GET /api/clients/:id/ledger — paginated list', () => {
     currentUser = asUser(clientId, 'Client');
     const res = await req<LedgerRow[]>('GET', `/api/clients/${client2Id}/ledger`);
     expect(res.status).toBe(403);
+  });
+});
+
+describe('GET /api/clients/:id/ledger: appointment-derived description parts', () => {
+  test('an entry linked to an appointment returns service/professional/when', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
+    const created = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId,
+      appointment_id: appt,
+      entry_type: 'charge',
+      amount_ars: '444.00',
+    });
+    expect(created.status).toBe(201);
+
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?limit=1000`);
+    expect(res.status).toBe(200);
+    const row = dataOf(res).find((r) => r.id === dataOf(created).id);
+    expect(row).toBeDefined();
+    expect(row?.service_name).toBe('Consulta');
+    expect(row?.professional_name).toBe('ledger_pro1');
+    expect(row?.appointment_when).toMatch(/^\d{2}\/\d{2} \d{2}:\d{2}$/);
+  });
+
+  test('an entry with no appointment returns null parts, not missing ones', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const created = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId,
+      entry_type: 'payment',
+      amount_ars: '55.00',
+    });
+    expect(created.status).toBe(201);
+
+    const res = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?limit=1000`);
+    const row = dataOf(res).find((r) => r.id === dataOf(created).id);
+    expect(row).toBeDefined();
+    expect(row?.service_name).toBeNull();
+    expect(row?.professional_name).toBeNull();
+    expect(row?.appointment_when).toBeNull();
+  });
+
+  test('the paged total still matches once the name joins are present', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const full = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?limit=1000`);
+    const paged = await req<LedgerRow[]>('GET', `/api/clients/${clientId}/ledger?page=1&limit=2`);
+    expect(paged.status).toBe(200);
+    expect(metaOf(paged).total).toBe(metaOf(full).total);
+    expect(dataOf(paged).length).toBeLessThanOrEqual(2);
   });
 });
 

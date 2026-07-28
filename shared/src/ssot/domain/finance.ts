@@ -23,10 +23,12 @@ export const LEDGER_CREDIT_TYPES = LEDGER_ENTRY_TYPES.filter((t) => t.sign === '
 // source the server's check and the frontend gate both read.
 export const LEDGER_WRITE_ROLES: Role[] = ['Admin', 'Professional', 'Receptionist'];
 
-// The front desk collects money for sessions, so a Receptionist may charge and take payment, but
-// only against an appointment on a granted calendar. Adjustments stay admin-only. Declared here so
-// the server's check and the form's type list cannot drift.
-export const RECEPTIONIST_ENTRY_TYPES: LedgerEntryType[] = ['charge', 'payment'];
+// The front desk collects money for sessions, so a Receptionist recording a charge or a payment
+// must name the turno it settles, on a calendar they hold a grant for. An adjustment settles no
+// session by definition and so has no turno to name: it is scoped instead to the clients whose
+// ledger the Receptionist may already read. Declared here so the server's check and the form's
+// type list cannot drift.
+export const RECEPTIONIST_APPOINTMENT_LINKED_TYPES: LedgerEntryType[] = ['charge', 'payment'];
 
 export const financeTables = {
   // Immutable: balance is SUM over entries; corrections are new adjustment rows.

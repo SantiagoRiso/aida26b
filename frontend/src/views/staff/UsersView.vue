@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
+import { ref, reactive, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { apiErrorMessage } from '@/i18n/api-errors';
 import { useLabel } from '@/composables/useLabel';
@@ -46,6 +46,10 @@ const createForm = reactive({
   role: '',
   display_name: '',
 });
+
+// A client signs in with their address and has no placeholder to fall back on, so the form has to
+// say so before it rejects a blank one.
+const emailRequired = computed(() => createForm.role === 'Client');
 
 function openCreate() {
   Object.assign(createForm, { username: '', email: '', password: '', role: '', display_name: '' });
@@ -220,7 +224,12 @@ async function submitReset() {
         </div>
 
         <div class="flex flex-col gap-1">
-          <label for="email" class="text-sm font-semibold">{{ label(usersColumns.email.label) }}</label>
+          <!-- Only a Client must supply one: staff fall back to a placeholder address, so marking
+               it required for everyone would ask for something the server does not want. -->
+          <label for="email" class="text-sm font-semibold">
+            {{ label(usersColumns.email.label) }}
+            <span v-if="emailRequired" class="text-destructive">*</span>
+          </label>
           <input
             id="email"
             v-model="createForm.email"

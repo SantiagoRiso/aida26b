@@ -71,25 +71,30 @@ beforeEach(() => {
   mockedCreateEntry.mockResolvedValue({ ok: true, data: {} });
 });
 
-describe('LedgerEntryForm — entry types by role', () => {
-  it('offers a receptionist both charge and payment, and nothing else', () => {
+// Every staff role may post any entry type. What differs is scope, which the server owns, so the
+// form no longer hides types by role.
+describe('LedgerEntryForm: entry types by role', () => {
+  const ALL_TYPES = ['charge', 'payment', 'adjustment_debit', 'adjustment_credit'];
+
+  it.each(['Receptionist', 'Admin', 'Professional'] as const)('offers a %s every entry type', (role) => {
+    expect(typeOptions(mountAs(role))).toEqual(ALL_TYPES);
+  });
+});
+
+// A receptionist charge or payment settles a session and must name it. An adjustment corrects a
+// balance instead, so there is no turno to pick and the server authorizes it against the grant that
+// already lets them read the client's ledger.
+describe('LedgerEntryForm: the appointment picker follows the entry type', () => {
+  it.each(['charge', 'payment'])('a receptionist %s asks for the appointment', async (entryType) => {
     const wrapper = mountAs('Receptionist');
-    expect(typeOptions(wrapper)).toEqual(['charge', 'payment']);
+    await wrapper.find('select').setValue(entryType);
+    expect(wrapper.findAll('select').length).toBeGreaterThan(1);
   });
 
-  it('offers an admin every entry type', () => {
-    const wrapper = mountAs('Admin');
-    expect(typeOptions(wrapper)).toEqual([
-      'charge',
-      'payment',
-      'adjustment_debit',
-      'adjustment_credit',
-    ]);
-  });
-
-  it('offers a professional every entry type', () => {
-    const wrapper = mountAs('Professional');
-    expect(typeOptions(wrapper)).toHaveLength(4);
+  it.each(['adjustment_debit', 'adjustment_credit'])('a receptionist %s does not', async (entryType) => {
+    const wrapper = mountAs('Receptionist');
+    await wrapper.find('select').setValue(entryType);
+    expect(wrapper.findAll('select')).toHaveLength(1);
   });
 });
 

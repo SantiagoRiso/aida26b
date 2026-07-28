@@ -2,7 +2,7 @@ import type { Queryable, TransactionClient } from '../db/core';
 import type { AuthUser } from '../auth';
 import type { ColumnValue } from '../../../shared/src/types/types';
 import type { AuditOutcome, LedgerEntryType } from '../../../shared/src/ssot/domain';
-import { LEDGER_WRITE_ROLES, RECEPTIONIST_ENTRY_TYPES } from '../../../shared/src/ssot/domain';
+import { LEDGER_WRITE_ROLES, RECEPTIONIST_APPOINTMENT_LINKED_TYPES } from '../../../shared/src/ssot/domain';
 import { hasCalendarGrant } from '../db/grants';
 import { insertAuditEvent } from '../db/audit';
 import { NO_BUSINESS_CODE, NO_BUSINESS_MESSAGE } from './business-context';
@@ -112,18 +112,25 @@ export async function assertLedgerWriteAllowed(
       : { ok: false, status: 403, code: 'forbidden', message: 'Professional may only write ledger entries for own clients' };
   }
 
-  // Receptionist: appointment-linked entries on a granted calendar. Adjustments and standalone
-  // entries stay admin-only.
-  if (!RECEPTIONIST_ENTRY_TYPES.includes(entryType as LedgerEntryType)) {
-    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists may only create appointment-linked charges and payments' };
+  // Receptionist. Money against a session names the session: the entry must carry the appointment
+  // and the caller must hold a grant on that calendar.
+  if (RECEPTIONIST_APPOINTMENT_LINKED_TYPES.includes(entryType as LedgerEntryType)) {
+    if (appointmentId == null) {
+      return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists must provide an appointment_id' };
+    }
+    const allowed = await granteeCanActOnAppointment(db, appointmentId, clientUserId, user.id);
+    return allowed
+      ? { ok: true }
+      : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to create a charge for this appointment' };
   }
-  if (appointmentId == null) {
-    return { ok: false, status: 403, code: 'forbidden', message: 'Receptionists must provide an appointment_id' };
-  }
-  const allowed = await granteeCanActOnAppointment(db, appointmentId, clientUserId, user.id);
+
+  // An adjustment corrects a balance rather than settling a session, so there is no appointment to
+  // authorize against. Scope it to the clients whose ledger this grant already exposes: correcting
+  // a balance you may not even read would be a wider power than reading it.
+  const allowed = await granteeReadsClientLedger(db, clientUserId, user.id);
   return allowed
     ? { ok: true }
-    : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to create a charge for this appointment' };
+    : { ok: false, status: 403, code: 'forbidden', message: 'Calendar grant required to adjust this client balance' };
 }
 
 export async function assertLedgerReadAllowed(

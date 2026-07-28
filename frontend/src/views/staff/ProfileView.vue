@@ -166,7 +166,9 @@ async function saveSvc(row: SvcOverride) {
           <div class="w-20 text-center text-xs font-medium text-neutral">{{ t('profile.maxCol') }}</div>
           <div></div>
           <template v-for="row in svcRows" :key="row.id">
-            <div class="truncate font-medium">{{ serviceLabelFor(row.service_id) ?? row.service_id }}</div>
+            <div class="truncate font-medium">
+              {{ serviceLabelFor(row.service_id) ?? t('generic.unresolvedReference') }}
+            </div>
             <input v-model="row.min" type="number" min="0" class="w-20 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
             <input v-model="row.max" type="number" min="0" class="w-20 rounded-md border border-border px-2 py-1 text-sm tabular-nums" />
             <AppButton variant="neutral" :loading="row.saving" @click="saveSvc(row)">

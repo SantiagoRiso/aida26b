@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { LEDGER_ENTRY_TYPES, RECEPTIONIST_ENTRY_TYPES } from '@shared/ssot/domain/finance';
+import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
 import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
 import { fieldErrorMessages } from '@/i18n/api-errors';
@@ -40,22 +40,18 @@ const fieldErrors = ref<Record<string, string>>({});
 const appointments = ref<Appointment[]>([]);
 const loadingAppointments = ref(false);
 
-// Only receptionists are restricted (appointment-linked entries). Admin and Professional — who
-// rank above a receptionist — may post any entry type; the server scopes professionals to their
-// own clients.
+// Every staff role may post any entry type. What differs is scope, which the server owns: a
+// professional is limited to their own clients, and a receptionist to the calendars they hold a
+// grant for.
 const role = computed(() => auth.user?.role);
 const isReceptionist = computed(() => role.value === 'Receptionist');
 
-const availableTypes = computed(() => {
-  if (isReceptionist.value) {
-    return LEDGER_ENTRY_TYPES.filter((t) => RECEPTIONIST_ENTRY_TYPES.includes(t.value));
-  }
-  return LEDGER_ENTRY_TYPES;
-});
+const availableTypes = computed(() => LEDGER_ENTRY_TYPES);
 
 // Everyone links a charge to its appointment; a receptionist must also link the payment they take.
 // For Admin and Professional a payment stays unallocated, which is what makes partial and multiple
-// payments work.
+// payments work. An adjustment never offers the picker: it corrects a balance rather than settling
+// a session, so there is no turno to name.
 const showAppointmentPicker = computed(
   () => entryType.value === 'charge' || (isReceptionist.value && entryType.value === 'payment'),
 );
@@ -142,7 +138,7 @@ async function submit() {
   <form class="space-y-4" @submit.prevent="submit">
     <div>
       <label class="block text-sm font-semibold text-heading mb-1">
-        {{ t('portal.type') }}
+        {{ t('portal.type') }} <span class="text-destructive">*</span>
       </label>
       <select
         v-model="entryType"
