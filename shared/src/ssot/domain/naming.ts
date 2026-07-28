@@ -45,3 +45,23 @@ export function appointmentName(parts: AppointmentNameParts, fallback: string): 
   }
   return when === '' ? who : `${who}${NAME_WHEN_SEPARATOR}${when}`;
 }
+
+// A movement is named by the session it settles, since that is what a client disputes: which
+// visit is this money for. Only a manual entry carries a typed description, and the automatic
+// session charge never does, so most rows have nothing else to show.
+//
+// Callers pass only the parts their screen does not already state. A statement sits inside one
+// client and omits `client`; an audit row is a flat list across clients and passes it.
+export interface LedgerEntryNameParts {
+  client?: string | null;
+  service?: string | null;
+  professional?: string | null;
+  when?: string | null;
+}
+
+export function ledgerEntryName(parts: LedgerEntryNameParts, fallback: string): string {
+  return appointmentName(
+    { client: parts.client, service: parts.service, professional: parts.professional, when: parts.when },
+    fallback,
+  );
+}

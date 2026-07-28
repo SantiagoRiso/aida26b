@@ -64,7 +64,7 @@ describe('orderByClause', () => {
     expect(orderByClause(AUDIT_SORT_COLUMNS, { column: 'created_at', dir: 'desc' }, 'a.id'))
       .toBe('a.created_at DESC, a.id DESC');
     expect(orderByClause(LEDGER_SORT_COLUMNS, { column: 'amount_ars', dir: 'asc' }, 'id'))
-      .toBe('amount_ars ASC, id ASC');
+      .toBe('le.amount_ars ASC, id ASC');
   });
 
   // Rows tied on the sort column would otherwise come back in an unstable order, and paging would

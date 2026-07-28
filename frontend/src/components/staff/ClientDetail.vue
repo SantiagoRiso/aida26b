@@ -37,7 +37,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { formatARS, formatDateTime } = useCurrency();
 const { stateLabel } = useStateLabel();
-const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
+const { entryTypeLabel, entryBadgeClass, entryDescription } = useLedgerLabel();
 const { label } = useLabel();
 const clientColumns = structure.tables.clients.columns;
 const ledgerColumns = structure.tables.ledger_entries.columns;
@@ -194,7 +194,7 @@ onMounted(load);
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums font-semibold">{{ formatARS(entry.amount_ars) }}</td>
-                <td class="px-4 py-3 text-neutral">{{ entry.description ?? t('generic.emptyValue') }}</td>
+                <td class="px-4 py-3 text-neutral">{{ entryDescription(entry) }}</td>
               </tr>
             </tbody>
           </table>

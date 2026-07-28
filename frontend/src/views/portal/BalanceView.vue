@@ -19,7 +19,7 @@ import SortableHeader from '@/components/shared/SortableHeader.vue';
 const { t } = useI18n();
 const auth = useAuthStore();
 const { formatARS, formatDateTime } = useCurrency();
-const { entryTypeLabel, entryBadgeClass } = useLedgerLabel();
+const { entryTypeLabel, entryBadgeClass, entryDescription } = useLedgerLabel();
 
 const balanceArs = ref<string | null>(null);
 const loadingBalance = ref(false);
@@ -191,7 +191,7 @@ load();
               </td>
               <td class="px-4 py-3 text-neutral">
                 <!-- Interpolate, never v-html: backend text is untrusted (XSS guard). -->
-                {{ entry.description ?? t('generic.emptyValue') }}
+                {{ entryDescription(entry) }}
               </td>
             </tr>
           </tbody>

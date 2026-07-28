@@ -1,5 +1,5 @@
 import { apiFetchDecoded } from '@/api/client';
-import { arrayOf, nullable, numberValue, object, stringValue, union } from '@/api/decoders';
+import { arrayOf, nullable, numberValue, object, optional, stringValue, union } from '@/api/decoders';
 import type { ApiResult } from '@/api/client';
 import type { LedgerEntryRow, Wire } from '@shared/ssot/query-types';
 import { ledgerPaths } from '@shared/ssot/api-paths';
@@ -14,6 +14,10 @@ const ledgerEntry = object<LedgerEntry>({
   id: stringValue, client_user_id: stringValue, appointment_id: nullable(stringValue),
   entry_type: stringValue, amount_ars: stringValue, description: nullable(stringValue),
   actor_user_id: nullable(stringValue), created_at: stringValue,
+  // Present (nullable) on list reads (listClientLedger's join); absent on a mutation response.
+  service_name: optional(nullable(stringValue)),
+  professional_name: optional(nullable(stringValue)),
+  appointment_when: optional(nullable(stringValue)),
 });
 
 export interface CreateEntryBody {

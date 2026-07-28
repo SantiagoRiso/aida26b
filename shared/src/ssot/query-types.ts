@@ -215,6 +215,10 @@ export type LedgerEntryRow = {
   description: string | null;
   actor_user_id: string | null;
   created_at: Date;
+  // Populated by listClientLedger's join only; absent from insertLedgerEntry's bare RETURNING * row.
+  service_name?: string | null;
+  professional_name?: string | null;
+  appointment_when?: string | null;
 };
 
 // A generic-CRUD row: the engine is table-agnostic, so values are bounded to ColumnValue
