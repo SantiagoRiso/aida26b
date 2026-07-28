@@ -14,10 +14,9 @@ const CRUD_ACTION_TEXT: Record<(typeof WRITE_EVENT_SUFFIX)[keyof typeof WRITE_EV
   deleted: { es: 'Eliminación', en: 'deleted' },
 };
 
-// Events genuinely outside the SSOT-composable vocabulary: bespoke workflow steps, auth/session
-// events and denials. Verified against every `audit(`/`auditInTx(`/`guards.audit(` call site in
-// backend/src — anything decomposable by table, appointment state or ledger entry type is left
-// out on purpose so a newly exposed table/state/entry type needs no edit here.
+// Events outside the SSOT-composable vocabulary: bespoke workflow steps, auth/session events, and
+// denials. Anything decomposable by table, appointment state, or ledger entry type is deliberately
+// left out, so a newly exposed table/state/entry type needs no edit here.
 const BESPOKE_AUDIT_EVENT_LABELS: Record<string, LocalizedText> = {
   login_failed: { es: 'Inicio de sesión fallido', en: 'Login failed' },
   login_success: { es: 'Inicio de sesión exitoso', en: 'Login succeeded' },
@@ -51,7 +50,7 @@ const BESPOKE_AUDIT_EVENT_LABELS: Record<string, LocalizedText> = {
   business_settings_updated: { es: 'Configuración del negocio actualizada', en: 'Business settings updated' },
 };
 
-// `${tableKey}_created|updated|deleted` — every generic-CRUD write stamps this shape
+// `${tableKey}_created|updated|deleted`: every generic-CRUD write stamps this shape
 // (crudEventType in crud-audit.ts), so a newly exposed table is labelled with no edit here.
 function composeCrudEventLabel(eventType: string): LocalizedText | null {
   for (const suffix of Object.values(WRITE_EVENT_SUFFIX)) {
@@ -65,7 +64,7 @@ function composeCrudEventLabel(eventType: string): LocalizedText | null {
   return null;
 }
 
-// `appointment_${state}` — every appointment lifecycle transition audits under this shape
+// `appointment_${state}`: every appointment lifecycle transition audits under this shape
 // (see appointments.ts's generic transition handler and the dedicated request/schedule routes),
 // so a newly added state is labelled with no edit here.
 function composeAppointmentStateLabel(eventType: string): LocalizedText | null {
@@ -77,7 +76,7 @@ function composeAppointmentStateLabel(eventType: string): LocalizedText | null {
   return { es: `Turno ${state.label.es}`, en: `Appointment ${state.label.en}` };
 }
 
-// `ledger_${entryType}_created` — every ledger write audits under this shape (appointments.ts's
+// `ledger_${entryType}_created`: every ledger write audits under this shape (appointments.ts's
 // session charge, ledger.ts's manual entries), so a newly added entry type is labelled with no
 // edit here.
 function composeLedgerEntryLabel(eventType: string): LocalizedText | null {

@@ -356,8 +356,8 @@ describe('POST /api/ledger — Receptionist write matrix', () => {
   });
 
   // An adjustment corrects a balance instead of settling a session, so it carries no appointment
-  // and cannot be authorized against one. It is scoped to the clients whose ledger the grant
-  // already exposes: adjusting a balance you may not read would outrank reading it.
+  // and cannot be authorized against one. Authorization falls back to the calendar grant: a
+  // receptionist may adjust any client whose ledger that grant already exposes.
   test.each(['adjustment_debit', 'adjustment_credit'])(
     'receptionist with a grant creates a standalone %s, no appointment needed',
     async (entryType) => {

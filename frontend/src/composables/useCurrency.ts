@@ -13,19 +13,19 @@ const ARS_FORMATTER = new Intl.NumberFormat('es-AR', {
 });
 
 // Deliberately no timeZone: toLocalDate below parses a date-only string into a Date at LOCAL
-// midnight, so formatting stays zone-less too (construct-local/format-local is symmetric).
-// Pinning this to BUSINESS_TZ would break it — a Date built at the viewer's local midnight,
-// reformatted in Argentina's zone, can land on the wrong calendar day.
+// midnight, so formatting stays zone-less too. Pinning this to BUSINESS_TZ would break it: a Date
+// built at the viewer's local midnight, reformatted in Argentina's zone, can land on the wrong
+// calendar day.
 const DATE_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
 });
 
-// Pinned to BUSINESS_TZ (unlike DATE_FORMATTER above): these format an absolute instant — a
-// timestamp with real time-of-day, not a bare calendar date — so without an explicit zone
+// Pinned to BUSINESS_TZ (unlike DATE_FORMATTER above): these format an absolute instant, a
+// timestamp with real time-of-day rather than a bare calendar date, so without an explicit zone
 // Intl would render it in the viewer's OS timezone instead of Argentina's. The server pins the
-// same zone (backend/src/time.ts) when it stamps entity_label times, so the two must agree.
+// same zone (backend/src/time.ts), so the two must agree.
 const DATETIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit',
   month: '2-digit',

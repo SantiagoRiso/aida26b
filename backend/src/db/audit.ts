@@ -121,11 +121,10 @@ type EntityNameParts = {
 };
 
 // An entity with no natural name yields null and keeps its id on screen: better the locator it is
-// than a name invented for it. Branch order follows entity_type, which the joins already make
-// mutually exclusive, so an appointment or account row can't pick up a ledger label or vice versa.
-// Takes the projection row rather than loose arguments: the parts are all nullable strings, so a
-// positional list lets a caller swap the service for the timestamp and still typecheck, producing a
-// name that looks right and isn't.
+// than a name invented for it. Branch order follows entity_type, which the joins keep mutually
+// exclusive, so one entity type can't pick up another's label. Takes the projection row rather than
+// positional args: the parts are all nullable strings, so a positional swap (e.g. service for
+// timestamp) would still typecheck and silently produce a wrong name.
 function composeEntityLabel(parts: EntityNameParts): string | null {
   const person = parts.entity_person_name;
   if (person != null && person !== '') return person;
@@ -188,9 +187,7 @@ export async function listAuditEvents(
   // a foreign key into one), so none of them can multiply an audit row.
   //
   // `u` is who acted. The rest answer "on what", which for a reset or a cancellation is the whole
-  // point of the row and which the id alone never says. `le`/`lec`/`lap`/`lsvc` chain off the ledger
-  // entry the same way `ap`/`apc` chain off an appointment: client, then (if any) the appointment it
-  // settles, then that appointment's service.
+  // point of the row and which the id alone never says.
   const from = `FROM audit_events a
        LEFT JOIN auth.users_directory u ON u.id = a.actor_user_id
        LEFT JOIN auth.users_directory tgt

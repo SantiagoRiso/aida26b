@@ -126,10 +126,9 @@ describe('demo seed feature coverage (SC4)', () => {
   });
 
   // The seed bypasses every route, so nothing stops it from inventing an event_type no writer
-  // emits. auditEventLabel is the SSOT resolver for the real vocabulary (bespoke exact matches,
-  // plus the generic CRUD/appointment-state/ledger-entry composition rules) and returns null for
-  // anything else (see shared/src/ssot/domain/audit-events.ts) — reusing it here, instead of a
-  // second hardcoded list, means this test can't drift from what the resolver itself considers real.
+  // emits. auditEventLabel is the SSOT resolver for the real vocabulary (bespoke matches plus the
+  // generic CRUD/appointment-state/ledger-entry composition rules), so reusing it here means this
+  // test cannot drift from what the resolver itself considers real.
   it('seeds no audit event_type outside the real vocabulary', async () => {
     const r = await pool.query<{ event_type: string }>(`SELECT DISTINCT event_type FROM audit_events`);
     expect(r.rows.length).toBeGreaterThan(0);
@@ -139,8 +138,8 @@ describe('demo seed feature coverage (SC4)', () => {
   });
 
   // assertLedgerWriteAllowed (routes/appointment-authz.ts) forbids a Receptionist from writing a
-  // ledger entry with no appointment_id; the seed bypasses that guard entirely, so this is the
-  // only thing standing between it and reintroducing the bug fixed above.
+  // ledger entry with no appointment_id; the seed bypasses that guard entirely, so this test is
+  // what stops it from reintroducing a receptionist charge the app itself would reject.
   it('seeds no receptionist-authored ledger entry lacking an appointment', async () => {
     const n = await count(
       `SELECT COUNT(*)::int count FROM ledger_entries le
@@ -294,11 +293,11 @@ describe('demo seed: payment settlement pass', () => {
     expect(await balanceFor('demo_client')).toBe(0);
   });
 
-  // Apu's curated payment is deliberately unallocated (no appointment_id), so the settle pass's
-  // per-appointment "already has a linked payment" guard alone can't see it and would otherwise post
-  // a second payment for the same charge; seed-demo.ts passes his appointment id explicitly to avoid
-  // that. A blanket "no appointment has >1 linked payment" check wouldn't catch this: the duplicate
-  // would be linked while the curated one stays unlinked, so neither exceeds one linked payment alone.
+  // Apu's curated payment is deliberately unallocated, so the settle pass's per-appointment
+  // "already has a payment" guard can't see it and would post a second payment for the same
+  // charge; seed-demo.ts passes his appointment id explicitly to avoid that. The blanket "no
+  // appointment has >1 linked payment" check above would not catch a regression here: the new
+  // payment would be linked while Apu's stays unlinked, so neither exceeds one on its own.
   it("does not double-pay Apu's curated appointment via the settle pass", async () => {
     const appt = await pool.query<{ id: string }>(
       `SELECT a.id FROM appointments a

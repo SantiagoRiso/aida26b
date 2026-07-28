@@ -4,10 +4,10 @@ import { useLedgerLabel } from '@/composables/useLedgerLabel';
 import { es } from '@/i18n/es';
 import type { LedgerEntry } from '@/api/ledger';
 
-// Only a charge always settles one session. A payment carries a turno only when a receptionist took
-// it; for Admin and Professional it stays unallocated so a payment can be partial or cover several
-// sessions, and adjustments never carry one. So most non-charge rows have no appointment to name
-// them by, and that case is the one worth pinning.
+// Only a charge always settles one session. A payment carries a turno only when a receptionist
+// took it (for Admin and Professional it stays unallocated, so a payment can be partial or cover
+// several sessions), and adjustments never carry one. Most non-charge rows have no appointment to
+// name them by, and that is the case worth pinning.
 function entry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
   return {
     id: '1',

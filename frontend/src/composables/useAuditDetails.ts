@@ -8,21 +8,21 @@ import type { AuditEvent } from '@/api/audit';
 type AuditDetails = NonNullable<AuditEvent['details']>;
 type AuditDetailValue = AuditDetails[string];
 
-// Keys already represented by their own column: entity_type/entity_id are the Entity cell,
-// user_id repeats entity_id, business_id repeats the tenant column (super-admin view). Showing
-// them again here would just echo what the row already says.
+// Keys already represented by their own column: entity_type/entity_id are the Entity cell, user_id
+// repeats entity_id, business_id repeats the tenant column. Showing them again would just echo
+// what the row already says.
 const SUPPRESSED_DETAIL_KEYS = new Set<string>(['entity_type', 'entity_id', 'user_id', 'business_id']);
 
-// Audit-only denial reasons that have no matching apiError.code.* entry because the HTTP error
-// code sent to the client is coarser ('forbidden') than the reason recorded in the trail.
+// Denial reasons with no apiError.code.* entry: the HTTP error code sent to the client is
+// coarser ('forbidden') than the reason recorded in the audit trail.
 const REASON_KEY_OVERRIDES: Record<string, string> = {
   role_forbidden: 'apiError.insufficientRole',
   own_calendar_only: 'apiError.grantOwnCalendarOnly',
 };
 
-// Business-facing labels for the detail keys writers actually stamp (grepped across
-// backend/src/routes). An unlisted key still renders under its own raw name rather than being
-// dropped, so a future write site is visible immediately even before someone adds a label here.
+// Business-facing labels for the detail keys writers actually stamp. An unlisted key still
+// renders under its own raw name rather than being dropped, so a new write site is visible
+// immediately, before anyone adds a label here.
 const DETAIL_KEY_LABEL_KEYS: Record<string, string> = {
   reason: 'audit.details.reasonLabel',
   username: 'audit.details.usernameLabel',
@@ -92,8 +92,6 @@ export function useAuditDetails() {
     return scalarText(value);
   }
 
-  // One key -> its non-default formatter. Keys absent here (including every unlisted one)
-  // fall back to defaultText, which handles the scalar/array shape safely either way.
   const VALUE_FORMATTERS: Record<string, (value: AuditDetailValue) => string> = {
     reason: reasonText,
     operation: operationText,
@@ -106,8 +104,8 @@ export function useAuditDetails() {
     return labelKey ? t(labelKey) : keyName;
   }
 
-  // Free-form JSON from the server: never assume a shape beyond what the decoder already
-  // guarantees (scalar or scalar[]), and never throw on a value this function doesn't know about.
+  // Free-form JSON from the server: never assume a shape beyond scalar or scalar[], and never
+  // throw on a value this function doesn't know about.
   function auditDetailEntries(details: AuditEvent['details']): AuditDetailEntry[] {
     if (!details) return [];
     const entries: AuditDetailEntry[] = [];

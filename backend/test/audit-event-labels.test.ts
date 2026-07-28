@@ -3,9 +3,9 @@ import { auditEventLabel } from '../../shared/src/ssot/domain/audit-events';
 import { tableOf } from '../../shared/src/utils/utils';
 import { APPOINTMENT_STATES, LEDGER_ENTRY_TYPES } from '../../shared/src/ssot/domain';
 
-// auditEventLabel is the presentation layer for backend/src/audit.ts's event vocabulary: every
-// case here is a real event_type some route actually writes (grepped, not invented), so a
-// passing suite proves the reader-facing label resolver matches what the audit trail contains.
+// auditEventLabel is the presentation layer for backend/src/audit.ts's event vocabulary; every
+// case here is a real event_type some route actually writes (grepped, not invented), so this
+// suite proves the label resolver matches what the audit trail actually contains.
 describe('auditEventLabel — bespoke events (no composition rule applies)', () => {
   it('resolves a bespoke auth event', () => {
     const result = auditEventLabel('login_failed');

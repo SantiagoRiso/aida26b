@@ -104,12 +104,11 @@ const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
 // Every non-protected table is offered automatically: the generic CRUD audit writer
-// (auditGenericWrite) stamps its table key on every write, so a newly exposed table needs no
-// edit here. `businesses`/`audit_events`/`users`/`sessions` are protected and stay excluded
-// because nothing ever stamps their table key: `businesses` has no route that names itself as an
-// audit entity (business-settings.ts records only business_id), `audit_events` never audits
-// itself, and person rows are recorded under the bespoke 'auth.users' literal instead of `users`
-// (see the manual entry below).
+// (auditGenericWrite) stamps its table key on every write, so a newly exposed table needs no edit
+// here. `businesses`/`audit_events`/`users`/`sessions` are protected and stay excluded because
+// nothing stamps their table key: `businesses` writes only record business_id, `audit_events`
+// never audits itself, and person rows are recorded under the bespoke 'auth.users' literal
+// instead (see the manual entry below).
 const BESPOKE_STAMPED_PROTECTED_ENTITY_TYPES: readonly TableKey[] = [
   'appointments', 'ledger_entries', 'appointment_series', 'calendar_grants',
 ];
@@ -131,9 +130,8 @@ function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
 
 const OUTCOMES = AUDIT_OUTCOMES;
 
-// Most event types compose from data the SSOT already has Spanish labels for (see
-// auditEventLabel); the handful that don't fall back to the raw identifier rather than going
-// blank, since it is still the value the event-type filter matches on.
+// Most event types compose from SSOT data via auditEventLabel; the rest fall back to the raw
+// identifier rather than going blank, since that is still the value the filter matches on.
 function eventTypeLabel(eventType: string): string {
   const composed = auditEventLabel(eventType);
   return composed ? label(composed) : eventType;
@@ -173,9 +171,8 @@ function entityDetail(event: AuditEvent): string {
   return event.entity_id != null ? `${event.entity_type} #${event.entity_id}` : event.entity_type;
 }
 
-// Computed once per row (not per interpolation) — the details cell renders a variable-length
-// list, so the template needs the resolved array, not a function it would otherwise re-run three
-// times per row.
+// Computed once per row, not per interpolation: the details cell renders a variable-length list,
+// so the template needs the resolved array rather than a function it would re-run per render.
 const rows = computed(() => events.value.map((event) => ({
   event,
   detailEntries: auditDetailEntries(event.details),
