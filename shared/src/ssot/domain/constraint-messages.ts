@@ -22,7 +22,10 @@ export const CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, string>> = Object.f
   // it is server-stamped/editable:false, so a request body can only ever supply the same two).
   schedule_blocks_one_owner: 'scheduleOwnerExactlyOne',
   schedule_exceptions_one_owner: 'scheduleOwnerExactlyOne',
-  idx_ledger_entries_one_charge_per_appointment: 'chargeAlreadyPosted',
+  // Only the automatic (undescribed) session charge is unique per appointment; an extra charge is
+  // legal but must carry a description (enforced by the route, in-transaction, before this index
+  // is ever reached in normal use — see routes/ledger.ts).
+  idx_ledger_entries_one_auto_charge_per_appointment: 'autoChargeAlreadyPosted',
 });
 
 // auth.users unique constraints are deliberately EXCLUDED from CONSTRAINT_DETAIL_KEYS above.

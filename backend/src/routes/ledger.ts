@@ -18,6 +18,7 @@ import { withTransaction } from '../db/core';
 import { findUser } from '../db/users';
 import {
   getAppointmentChargeAmount,
+  hasChargeForAppointment,
   insertLedgerEntry,
   getClientBalance,
   listClientLedger,
@@ -87,6 +88,15 @@ export function mountLedgerRoutes(
       });
       if (!authz.ok) return { kind: 'denied' as const, authz };
 
+      // A turno may carry more than one charge (e.g. a materials fee alongside the session
+      // charge), but every charge past the first must say what it's for. Checked in-transaction,
+      // alongside the authz read above, so a concurrent request can't race past it.
+      if (entryType === 'charge' && appointmentId != null && (description == null || description.trim() === '')) {
+        if (await hasChargeForAppointment(tx, appointmentId)) {
+          return { kind: 'description_required' as const };
+        }
+      }
+
       // Prefill amount from the appointment's booked price for charges when the caller omitted
       // amount_ars. An explicitly supplied amount takes precedence.
       let amountArs: string;
@@ -124,6 +134,12 @@ export function mountLedgerRoutes(
     }
     if (outcome.kind === 'appt_not_found') {
       return sendError(res, 404, 'not_found', 'Referenced appointment not found');
+    }
+    if (outcome.kind === 'description_required') {
+      return sendError(res, 422, 'invalid_request', 'A description is required for an additional charge on this appointment', {
+        fields: { description: 'required for an additional charge on this appointment' },
+        fieldDetails: { description: { key: 'extraChargeDescriptionRequired' } },
+      });
     }
     if (outcome.kind === 'amount_required') {
       return sendError(res, 422, 'invalid_request', 'amount_ars is required', {

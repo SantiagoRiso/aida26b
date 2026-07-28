@@ -6,6 +6,7 @@ import { runMigrations } from '../src/migrate';
 import { DEFAULT_MIGRATIONS_DIR } from '../src/migration-files';
 import { resetTestDb, makeTestPool } from './helpers';
 import { mountLedgerRoutes } from '../src/routes/ledger';
+import { insertSessionChargeIfAbsent } from '../src/db/ledger';
 import type { AuthUser } from '../src/auth';
 import { makeApiClient, dataOf, metaOf, errorOf } from './api_client';
 import type { JsonBody } from './api_client';
@@ -226,7 +227,7 @@ describe('POST /api/ledger — Admin write matrix', () => {
     expect(audit.rows.some((r) => r.event_type === 'ledger_adjustment_credit_created')).toBe(true);
   });
 
-  test('a second charge on the same appointment is rejected (409) — one charge per appointment', async () => {
+  test('a second, undescribed charge on the same appointment is rejected (422) — extra charges must say what they are', async () => {
     currentUser = asUser(adminId, 'Admin');
     const appt = await seedAppt();
     const first = await req<LedgerRow>('POST', '/api/ledger', {
@@ -242,8 +243,55 @@ describe('POST /api/ledger — Admin write matrix', () => {
       amount_ars: '300.00',
     });
     expect(first.status).toBe(201);
-    expect(second.status).toBe(409);
-    expect(errorOf(second).detail?.key).toBe('chargeAlreadyPosted');
+    expect(second.status).toBe(422);
+    expect(errorOf(second).fieldDetails?.description?.key).toBe('extraChargeDescriptionRequired');
+  });
+
+  test('a second, whitespace-only description is treated as missing → 422', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
+    await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '300.00',
+    });
+    const second = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '300.00',
+      description: '   ',
+    });
+    expect(second.status).toBe(422);
+    expect(errorOf(second).fieldDetails?.description?.key).toBe('extraChargeDescriptionRequired');
+  });
+
+  test('a second charge WITH a description succeeds, and the balance includes both', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
+    const first = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '300.00',
+    });
+    const second = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '150.00',
+      description: 'Materiales utilizados en la sesión',
+    });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(dataOf(second).description).toBe('Materiales utilizados en la sesión');
+
+    const balance = await req<BalanceResult>('GET', `/api/clients/${clientId}/balance`);
+    expect(balance.status).toBe(200);
+    expect(Number(dataOf(balance).balance_ars)).toBeGreaterThanOrEqual(300 + 150);
+  });
+
+  test('a third charge (any order) still needs a description once any charge exists', async () => {
+    currentUser = asUser(adminId, 'Admin');
+    const appt = await seedAppt();
+    await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '300.00',
+      description: 'Cargo por materiales',
+    });
+    const undescribed = await req<LedgerRow>('POST', '/api/ledger', {
+      client_user_id: clientId, appointment_id: appt, entry_type: 'charge', amount_ars: '150.00',
+    });
+    expect(undescribed.status).toBe(422);
+    expect(errorOf(undescribed).fieldDetails?.description?.key).toBe('extraChargeDescriptionRequired');
   });
 
   test('an unlinked charge (no appointment_id) is unconstrained — several can coexist', async () => {
@@ -742,5 +790,53 @@ describe("POST /api/ledger — prefill rejects an appointment not belonging to t
       // no amount_ars — would trigger prefill
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// insertSessionChargeIfAbsent backs the completion flow directly (see
+// POST /appointments/:id/transition). Extra charges are now legal, so its NOT EXISTS guard must
+// key on the automatic charge specifically (description IS NULL), never "any charge" — otherwise a
+// materials charge added before completion would satisfy a looser guard and the session would never
+// get its automatic charge.
+describe('insertSessionChargeIfAbsent — automatic-charge guard', () => {
+  test('posts the automatic charge once; a second call is a no-op (completing a turno twice)', async () => {
+    const appt = await seedAppt();
+    const first = await insertSessionChargeIfAbsent(pool, {
+      clientUserId: String(clientId), appointmentId: appt, amountArs: '2500.00', actorUserId: adminId,
+    });
+    const second = await insertSessionChargeIfAbsent(pool, {
+      clientUserId: String(clientId), appointmentId: appt, amountArs: '2500.00', actorUserId: adminId,
+    });
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+
+    const charges = await pool.query(
+      `SELECT id FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'`,
+      [appt],
+    );
+    expect(charges.rows).toHaveLength(1);
+  });
+
+  test('still posts the automatic charge when a described extra charge already exists on the turno', async () => {
+    const appt = await seedAppt();
+    await pool.query(
+      `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
+       VALUES ($1, $2, 'charge', '150.00', 'Materiales utilizados en la sesión', $3)`,
+      [clientId, appt, adminId],
+    );
+
+    const chargeId = await insertSessionChargeIfAbsent(pool, {
+      clientUserId: String(clientId), appointmentId: appt, amountArs: '2500.00', actorUserId: adminId,
+    });
+    expect(chargeId).not.toBeNull();
+
+    const charges = await pool.query<{ description: string | null; amount_ars: string }>(
+      `SELECT description, amount_ars FROM ledger_entries
+        WHERE appointment_id = $1 AND entry_type = 'charge' ORDER BY amount_ars`,
+      [appt],
+    );
+    expect(charges.rows).toHaveLength(2);
+    expect(charges.rows.some((r) => r.description === null && r.amount_ars === '2500.00')).toBe(true);
+    expect(charges.rows.some((r) => r.description === 'Materiales utilizados en la sesión')).toBe(true);
   });
 });

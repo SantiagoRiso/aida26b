@@ -470,11 +470,12 @@ async function fillProfessionalDays(
 }
 
 // The completed-appointment invariant (inside upsertAppointment) posts the charge; this only reads
-// its id back for callers that need to reference it (e.g. an audit event).
+// its id back for callers that need to reference it (e.g. an audit event). description IS NULL
+// picks out the automatic one: an appointment may also carry an extra, described charge now.
 async function chargeIdForAppointment(pool: PoolLike, appointmentId: string): Promise<string> {
   const id = await pickId(
     pool,
-    `SELECT id FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'`,
+    `SELECT id FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge' AND description IS NULL`,
     [appointmentId],
   );
   if (id == null) throw new Error(`No charge found for appointment ${appointmentId}`);
@@ -498,7 +499,7 @@ async function settleCompletedAppointments(
     `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
      SELECT a.client_user_id, a.id, 'payment', c.amount_ars, NULL, a.professional_user_id
        FROM appointments a
-       JOIN ledger_entries c ON c.appointment_id = a.id AND c.entry_type = 'charge'
+       JOIN ledger_entries c ON c.appointment_id = a.id AND c.entry_type = 'charge' AND c.description IS NULL
       WHERE a.state = 'completed'
         AND a.client_user_id <> $1
         AND NOT (a.id = ANY($3::bigint[]))
@@ -510,10 +511,13 @@ async function settleCompletedAppointments(
   );
 }
 
-// Append-only guard: insert only if no row with the same natural key exists. description is never
-// seeded (the real app never writes one either, see ledgerEntryName), so the key is
-// client+type+amount+appointment. appointment_id is nullable, so the match uses IS NOT DISTINCT FROM:
-// `=` never matches NULL, which would silently defeat the guard and duplicate rows on a re-run.
+// Append-only guard: insert only if no row with the same natural key exists. Most seeded rows carry
+// no description (the automatic charge never does, see ledgerEntryName); the one curated extra
+// charge below does, so description joins the key too — otherwise it couldn't tell that row apart
+// from the automatic charge on the same appointment, and a re-run would skip it forever after the
+// first insert matched on client+type+amount+appointment alone. appointment_id and description are
+// both nullable, so the match uses IS NOT DISTINCT FROM: `=` never matches NULL, which would
+// silently defeat the guard and duplicate rows on a re-run.
 // Returns the row's id (existing or new) so callers can audit-reference it.
 async function guardedLedgerInsert(
   pool: PoolLike,
@@ -522,6 +526,7 @@ async function guardedLedgerInsert(
     appointmentId?: string | null;
     entryType: string;
     amountArs: string;
+    description?: string | null;
     actorUserId?: string | null;
   },
 ): Promise<string> {
@@ -531,15 +536,16 @@ async function guardedLedgerInsert(
      WHERE client_user_id  = $1
        AND entry_type      = $2
        AND amount_ars      = $3
-       AND appointment_id IS NOT DISTINCT FROM $4`,
-    [opts.clientUserId, opts.entryType, opts.amountArs, opts.appointmentId ?? null],
+       AND appointment_id IS NOT DISTINCT FROM $4
+       AND description     IS NOT DISTINCT FROM $5`,
+    [opts.clientUserId, opts.entryType, opts.amountArs, opts.appointmentId ?? null, opts.description ?? null],
   );
   if (existing) return existing;
   const r = await pool.query<{ id: string }>(
     `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
-     VALUES ($1, $2, $3, $4, NULL, $5)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id`,
-    [opts.clientUserId, opts.appointmentId ?? null, opts.entryType, opts.amountArs, opts.actorUserId ?? null],
+    [opts.clientUserId, opts.appointmentId ?? null, opts.entryType, opts.amountArs, opts.description ?? null, opts.actorUserId ?? null],
   );
   return r.rows[0].id;
 }
@@ -1007,6 +1013,16 @@ export async function seedDemo(pool: PoolLike): Promise<void> {
     clientUserId: uids['demo_client3'],
     entryType: 'payment', amountArs: '10000.00',
     actorUserId: uids['demo_admin'],
+  });
+
+  // A turno may carry more than one charge, provided every charge past the automatic session one
+  // explains itself: Apu's kinesiología session also billed the materials it used. Attributed to
+  // the treating professional, same as any other charge a Professional records for their own client.
+  await guardedLedgerInsert(pool, {
+    clientUserId: uids['demo_client3'], appointmentId: apptApu,
+    entryType: 'charge', amountArs: '1200.00',
+    description: 'Materiales utilizados en la sesión (vendas y hielo terapéutico)',
+    actorUserId: uids['demo_pro4'],
   });
 
   // Settle most of the dense-fill completed appointments (see function doc above): runs last so its

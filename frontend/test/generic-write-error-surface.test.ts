@@ -205,7 +205,7 @@ describe('apiErrorMessage — constraint-conflict detail keys resolve to a preci
     ['serviceAlreadyOffered', es.apiError.serviceAlreadyOffered],
     ['clientPriceOverrideExists', es.apiError.clientPriceOverrideExists],
     ['blockServiceAlreadyOffered', es.apiError.blockServiceAlreadyOffered],
-    ['chargeAlreadyPosted', es.apiError.chargeAlreadyPosted],
+    ['autoChargeAlreadyPosted', es.apiError.autoChargeAlreadyPosted],
     ['scheduleOwnerExactlyOne', es.apiError.scheduleOwnerExactlyOne],
     ['exceptionGranularityRequired', es.apiError.exceptionGranularityRequired],
   ] as const)('detail.key %s resolves to its own apiError string, not the generic conflict text', (key, expected) => {

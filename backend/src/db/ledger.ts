@@ -7,9 +7,12 @@ import type { ListSort, SortColumns } from './sort';
 import type { LedgerSortField } from '../../../shared/src/ssot/list-sort';
 import { BUSINESS_TZ } from '../time';
 
-// Post a session charge for a completed appointment, once. The NOT EXISTS guard keeps it
-// idempotent if a charge for this appointment was already written. Returns the new entry id,
-// or null when a charge already existed. ledger_entries is append-only (writes only).
+// Post the automatic session charge for a completed appointment, once. The guard must match the
+// automatic charge specifically (description IS NULL, same as the partial unique index), not "any
+// charge": now that an extra, described charge (e.g. materials) may legally exist before
+// completion, matching on entry_type alone would see that row and skip posting the session charge
+// entirely, leaving the turno unbilled. Returns the new entry id, or null when the automatic charge
+// already existed. ledger_entries is append-only (writes only).
 export function insertSessionChargeIfAbsent(
   db: Queryable,
   c: { clientUserId: string; appointmentId: number; amountArs: string; actorUserId: number },
@@ -20,11 +23,24 @@ export function insertSessionChargeIfAbsent(
        (client_user_id, appointment_id, entry_type, amount_ars, description, actor_user_id)
      SELECT $1, $2, 'charge', $3, NULL, $4
      WHERE NOT EXISTS (
-       SELECT 1 FROM ledger_entries WHERE appointment_id = $2 AND entry_type = 'charge'
+       SELECT 1 FROM ledger_entries
+        WHERE appointment_id = $2 AND entry_type = 'charge' AND description IS NULL
      )
      RETURNING id`,
     [c.clientUserId, c.appointmentId, c.amountArs, c.actorUserId],
   ).then((r) => r?.id ?? null);
+}
+
+// Whether an appointment already carries any charge (automatic or an earlier extra one). The route
+// uses this to require a description on a second charge for the same turno.
+export function hasChargeForAppointment(db: Queryable, appointmentId: number): Promise<boolean> {
+  return queryOne<{ exists: boolean }>(
+    db,
+    `SELECT EXISTS (
+       SELECT 1 FROM ledger_entries WHERE appointment_id = $1 AND entry_type = 'charge'
+     ) AS exists`,
+    [appointmentId],
+  ).then((r) => r?.exists ?? false);
 }
 
 // Charge amount sourced from the appointment's booked price, constrained to the appointment

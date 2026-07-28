@@ -4,12 +4,11 @@ import { useI18n } from 'vue-i18n';
 import { LEDGER_ENTRY_TYPES } from '@shared/ssot/domain/finance';
 import { AMOUNT_PATTERN } from '@shared/ssot/domain/catalog';
 import { createEntry } from '@/api/ledger';
-import { fieldErrorMessages } from '@/i18n/api-errors';
+import { fieldErrorMessages, apiErrorMessage } from '@/i18n/api-errors';
 import { listAppointments } from '@/api/appointments';
 import type { Appointment } from '@/api/appointments';
 import { isVirtualOccurrence } from '@/composables/seriesOccurrence';
 import { useAuthStore } from '@/stores/auth';
-import { useUiStore } from '@/stores/ui';
 import { useLabel } from '@/composables/useLabel';
 import { structure } from '@shared/ssot/structure';
 import AppButton from '@/components/shared/AppButton.vue';
@@ -26,7 +25,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const auth = useAuthStore();
-const ui = useUiStore();
 const { label } = useLabel();
 const ledgerColumns = structure.tables.ledger_entries.columns;
 
@@ -125,7 +123,10 @@ async function submit() {
     if (Object.keys(serverFieldErrors).length > 0) {
       fieldErrors.value = serverFieldErrors;
     } else {
-      ui.toast('error', 'genericError');
+      // A rejection that names no field still has a reason worth reading: the turno is already
+      // charged, the calendar is not granted, the client belongs to another business. Reporting
+      // all of those as "ocurrió un error" hid the one thing the writer could act on.
+      fieldErrors.value = { _: apiErrorMessage(result) };
     }
     return;
   }
@@ -136,6 +137,8 @@ async function submit() {
 
 <template>
   <form class="space-y-4" @submit.prevent="submit">
+    <FieldError :message="fieldErrors._" />
+
     <div>
       <label class="block text-sm font-semibold text-heading mb-1">
         {{ t('portal.type') }} <span class="text-destructive">*</span>
@@ -203,6 +206,7 @@ async function submit() {
         rows="2"
         class="w-full rounded-md border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent resize-none"
       />
+      <FieldError :message="fieldErrors.description" />
     </div>
 
     <div class="flex gap-3 justify-end pt-2">

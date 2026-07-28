@@ -186,3 +186,75 @@ describe('LedgerEntryForm — amount defaulting', () => {
     expect(wrapper.text()).toContain(es.ledger.amountRequired);
   });
 });
+
+// Every rejection that named no field used to collapse into the same "ocurrió un error" toast,
+// including the one the writer can act on. Posting a second charge for an already-charged turno
+// is the common case now that completing a session always bills it.
+describe('LedgerEntryForm: a rejection says why', () => {
+  type MockedFailure = Partial<{
+    status: number;
+    code: string;
+    detail: { key: string };
+    fieldDetails: Record<string, { key: string }>;
+  }>;
+
+  async function submitAdjustment(failure: MockedFailure) {
+    const wrapper = mountAs('Admin');
+    mockedCreateEntry.mockResolvedValue({ ok: false, ...failure });
+    await wrapper.findAll('select')[0].setValue('adjustment_debit');
+    await flushPromises();
+    await wrapper.find('input[inputmode="decimal"]').setValue('100.00');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('names the duplicate automatic charge instead of a generic failure', async () => {
+    const wrapper = await submitAdjustment({
+      status: 409, code: 'conflict', detail: { key: 'autoChargeAlreadyPosted' },
+    });
+    expect(wrapper.text()).toContain(es.apiError.autoChargeAlreadyPosted);
+    expect(wrapper.text()).not.toContain(es.toast.genericError);
+  });
+
+  it('falls back to the error code when the endpoint sends no detail', async () => {
+    const wrapper = await submitAdjustment({ status: 403, code: 'forbidden' });
+    expect(wrapper.text()).toContain(es.apiError.code.forbidden);
+  });
+
+  it('still puts a field-level rejection on its own field', async () => {
+    const wrapper = await submitAdjustment({
+      status: 422,
+      code: 'invalid_request',
+      fieldDetails: { amount_ars: { key: 'amountFormat' } },
+    });
+    expect(wrapper.text()).toContain(es.fieldError.amountFormat);
+  });
+});
+
+// An extra charge on an already-charged turno needs a description; the server names the field
+// (fieldDetails.description), and the form must land the message on the description box itself,
+// not as a generic form-level rejection.
+describe('LedgerEntryForm: an extra-charge rejection lands on the description field', () => {
+  it('shows the message next to the description textarea', async () => {
+    const wrapper = mountAs('Admin');
+    mockedCreateEntry.mockResolvedValue({
+      ok: false,
+      status: 422,
+      code: 'invalid_request',
+      fieldDetails: { description: { key: 'extraChargeDescriptionRequired' } },
+    });
+    await wrapper.findAll('select')[0].setValue('charge');
+    await flushPromises();
+    await wrapper.find('input[inputmode="decimal"]').setValue('150.00');
+
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    const textarea = wrapper.find('textarea');
+    const fieldContainer = textarea.element.parentElement;
+    expect(fieldContainer?.textContent).toContain(es.fieldError.extraChargeDescriptionRequired);
+    // Not swallowed into a generic, field-less rejection.
+    expect(wrapper.text()).not.toContain(es.toast.genericError);
+  });
+});

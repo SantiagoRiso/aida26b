@@ -189,18 +189,21 @@ describe('demo seed feature coverage (SC4)', () => {
   });
 });
 
-// A completed appointment always has its session charge, same invariant the real transition route
-// enforces in-transaction (POST /appointments/:id/transition -> insertSessionChargeIfAbsent). The
-// seed writes appointments with direct SQL, so nothing but this test stands between it and drifting
-// into a state the app itself can never produce.
+// A completed appointment always has its automatic session charge, same invariant the real
+// transition route enforces in-transaction (POST /appointments/:id/transition ->
+// insertSessionChargeIfAbsent). The seed writes appointments with direct SQL, so nothing but this
+// test stands between it and drifting into a state the app itself can never produce. A turno may
+// also carry extra, described charges (e.g. materials) on top of that one automatic charge — the
+// invariant is "at most one undescribed charge", not "at most one charge", matching the partial
+// unique index (idx_ledger_entries_one_auto_charge_per_appointment).
 describe('demo seed: completed-appointment charge invariant', () => {
-  it('every completed appointment has exactly one linked charge, for its own price', async () => {
+  it('every completed appointment has exactly one automatic (undescribed) charge, for its own price', async () => {
     const uncharged = await count(
       `SELECT COUNT(*)::int count FROM appointments a
        WHERE a.state = 'completed'
          AND NOT EXISTS (
            SELECT 1 FROM ledger_entries le
-           WHERE le.appointment_id = a.id AND le.entry_type = 'charge'
+           WHERE le.appointment_id = a.id AND le.entry_type = 'charge' AND le.description IS NULL
          )`,
     );
     expect(uncharged).toBe(0);
@@ -208,7 +211,7 @@ describe('demo seed: completed-appointment charge invariant', () => {
     const duplicated = await count(
       `SELECT COUNT(*)::int count FROM (
          SELECT a.id FROM appointments a
-         JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+         JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge' AND le.description IS NULL
          WHERE a.state = 'completed'
          GROUP BY a.id
          HAVING COUNT(*) > 1
@@ -218,10 +221,29 @@ describe('demo seed: completed-appointment charge invariant', () => {
 
     const mismatched = await count(
       `SELECT COUNT(*)::int count FROM appointments a
-       JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+       JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge' AND le.description IS NULL
        WHERE a.state = 'completed' AND le.amount_ars != a.price`,
     );
     expect(mismatched).toBe(0);
+  });
+
+  it('at least one completed appointment carries an extra, described charge on top of its automatic one', async () => {
+    const extraCharged = await count(
+      `SELECT COUNT(*)::int count FROM (
+         SELECT a.id FROM appointments a
+         JOIN ledger_entries le ON le.appointment_id = a.id AND le.entry_type = 'charge'
+         WHERE a.state = 'completed'
+         GROUP BY a.id
+         HAVING COUNT(*) > 1
+       ) multi`,
+    );
+    expect(extraCharged).toBeGreaterThanOrEqual(1);
+
+    const undescribedExtra = await count(
+      `SELECT COUNT(*)::int count FROM ledger_entries
+       WHERE entry_type = 'charge' AND description IS NOT NULL AND trim(description) = ''`,
+    );
+    expect(undescribedExtra).toBe(0);
   });
 
   it('no no_show appointment has a linked charge', async () => {
