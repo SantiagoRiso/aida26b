@@ -6,6 +6,7 @@ import { orderByClause } from './sort';
 import type { ListSort, SortColumns } from './sort';
 import type { AuditSortField } from '../../../shared/src/ssot/list-sort';
 import { BUSINESS_TZ } from '../time';
+import { appointmentName } from '../../../shared/src/ssot/domain/naming';
 
 // ip is null for in-transaction writes (auditInTx) that don't carry a request. businessId is null
 // only for events that belong to no tenant — a login attempt on a username nobody holds.
@@ -108,6 +109,26 @@ function actorMatchCondition(paramIndex: number, negated: boolean): string {
   return negated ? `NOT ${match}` : match;
 }
 
+// The raw pieces the projection selects so the name can be composed by the shared rule rather than
+// by string concatenation in SQL. Stripped from the row before it leaves this module.
+type EntityNameParts = {
+  entity_person_name: string | null;
+  entity_appointment_client: string | null;
+  entity_appointment_when: string | null;
+};
+
+// An entity with no natural name yields null and keeps its id on screen: better the locator it is
+// than a name invented for it.
+function composeEntityLabel(
+  person: string | null,
+  apptClient: string | null,
+  apptWhen: string | null,
+): string | null {
+  if (person != null && person !== '') return person;
+  if (apptClient == null && apptWhen == null) return null;
+  return appointmentName({ client: apptClient, when: apptWhen }, '') || null;
+}
+
 // Only code-controlled column names are interpolated; every filter value is a bound $N param.
 // Events written in one transaction share created_at, so the id closes the sort — without a unique
 // tiebreaker two pages of the same list can repeat one event and never show another.
@@ -158,17 +179,18 @@ export async function listAuditEvents(
   // NOT NULL. A turno is named by whose it is and when, because a client books more than one.
   // Whatever is left keeps its id: an entity with no natural name is better shown as the locator
   // it is than given an invented one.
+  // SQL yields the pieces; the name is composed by the shared rule below, so the audit log and the
+  // screens that title a turno cannot end up with two ideas of what one is called. Only the wall
+  // clock is formatted here, because the timezone conversion belongs to the database.
   const tzParam = p;
-  const entityLabel = `CASE
-              WHEN a.entity_type = 'auth.users' THEN ${personName('tgt')}
-              WHEN ap.id IS NOT NULL
-                THEN apc.display_name || ' · ' || to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI')
-            END AS entity_label`;
+  const entityParts = `${personName('tgt')} AS entity_person_name,
+            apc.display_name AS entity_appointment_client,
+            to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI') AS entity_appointment_when`;
 
-  const pageRows = await query<AuditEventRow & { total_count: string }>(
+  const pageRows = await query<AuditEventRow & EntityNameParts & { total_count: string }>(
     db,
     `SELECT a.id, ${businessCol}a.actor_user_id, ${personName('u')} AS actor_username,
-            ${entityLabel},
+            ${entityParts},
             a.event_type, a.entity_type, a.entity_id,
             a.outcome, a.ip, a.details, a.created_at,
             count(*) OVER()::text AS total_count
@@ -189,6 +211,15 @@ export async function listAuditEvents(
     return { rows: [], total: Number(count[0]?.n ?? 0) };
   }
   const total = Number(pageRows[0].total_count);
-  const rows = pageRows.map(({ total_count: _, ...row }) => row as AuditEventRow);
+  const rows = pageRows.map(({
+    total_count: _total,
+    entity_person_name: person,
+    entity_appointment_client: apptClient,
+    entity_appointment_when: apptWhen,
+    ...row
+  }) => ({
+    ...row,
+    entity_label: composeEntityLabel(person, apptClient, apptWhen),
+  } as AuditEventRow));
   return { rows, total };
 }

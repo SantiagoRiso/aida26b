@@ -62,6 +62,10 @@ function missingCreateFields(): string[] {
     username: !createForm.username.trim(),
     password: !createForm.password,
     role: !createForm.role,
+    // A client getting credentials must be reachable at an address: staff fall back to a
+    // placeholder, a client does not. Checked here so the requirement lands on the email box
+    // instead of arriving as a form-level error after the round trip.
+    email: createForm.role === 'Client' && !createForm.email.trim(),
   }).filter(([, missing]) => missing).map(([field]) => field);
 }
 
@@ -223,6 +227,7 @@ async function submitReset() {
             type="email"
             class="rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
+          <FieldError :message="createErrors['email']" />
         </div>
 
         <div class="flex flex-col gap-1">

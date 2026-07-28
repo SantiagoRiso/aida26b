@@ -2,7 +2,10 @@ import { useForeignKeyOptions } from '@/composables/useForeignKeyOptions';
 import { useAuthStore } from '@/stores/auth';
 import { i18n } from '@/i18n';
 import type { Appointment } from '@/api/appointments';
+import { appointmentName } from '@shared/ssot/domain/naming';
 
+// Thin adapter over the shared rule: the audit log names a turno with the same function, so the
+// two cannot drift into different ideas of what a turno is called.
 export function formatDefaultAppointmentTitle(
   client: string | null,
   resource: string | null,
@@ -11,8 +14,7 @@ export function formatDefaultAppointmentTitle(
   fallback: string,
   designation: string | null = null,
 ): string {
-  const parts = [client, resource, service, professional, designation].filter((part): part is string => !!part);
-  return parts.length ? parts.join(' - ') : fallback;
+  return appointmentName({ client, resource, service, professional, designation }, fallback);
 }
 
 export function useAppointmentLabels() {

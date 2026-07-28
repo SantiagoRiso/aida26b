@@ -390,6 +390,12 @@ export function mountUserAdminRoutes(
         return sendError(res, 403, 'forbidden', 'Forbidden', { detail: { key: 'insufficientRole' } });
       }
 
+      if (isPasswordTooShort(typeof req.body.password === 'string' ? req.body.password : '')) {
+        return sendError(res, 400, 'invalid_request', `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
+          detail: { key: PASSWORD_TOO_SHORT_KEY, params: { min: String(MIN_PASSWORD_LENGTH) } },
+        });
+      }
+
       if (!Number.isInteger(userId) || !username || !password) {
         return sendError(res, 400, 'invalid_request', 'Valid user id, username and password are required', { detail: { key: 'userCredentialsRequired' } });
       }
@@ -427,7 +433,7 @@ export function mountUserAdminRoutes(
           return sendError(res, 404, 'not_found', 'Client not found', { detail: { key: 'clientNotFound' } });
         }
 
-        await audit(req, 'login_enabled', 'success', { user_id: userId }, { businessId: numericBusiness(enabled.business_id) });
+        await audit(req, 'login_enabled', 'success', { entity_type: 'auth.users', entity_id: userId, user_id: userId }, { businessId: numericBusiness(enabled.business_id) });
 
         return sendData(res, { id: enabled.id, username: enabled.username } satisfies EnabledLoginResult);
       } catch (error) {

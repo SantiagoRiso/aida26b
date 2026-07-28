@@ -907,3 +907,82 @@ describe('role immutability', () => {
     expect(row.rows[0].role).toBe('Client');
   });
 });
+
+// readPassword() returns null for a password under the minimum, which is indistinguishable from
+// one that was never sent. Left there, a short password answers "username, password and role are
+// required" while all three are filled in. Every admin route that takes a password must say the
+// length is the problem, and must say so before the required-fields check runs.
+describe('short passwords are named as such, not reported as missing fields', () => {
+  const SHORT = 'abc12';
+
+  test('create: too short is rejected by length, and no user row is written', async () => {
+    const res = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'shortpwcreate', password: SHORT, role: 'Admin' },
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res).detail?.key).toBe('passwordTooShort');
+    expect(errorOf(res).detail?.params?.min).toBe('8');
+
+    const rows = await testPool.query(
+      `SELECT 1 FROM auth.users WHERE username = 'shortpwcreate'`
+    );
+    expect(rows.rows.length).toBe(0);
+  });
+
+  test('reset-password: too short is rejected by length, and the old password still works', async () => {
+    const createRes = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'shortpwreset', password: 'longenough1', role: 'Admin' },
+    });
+    expect(createRes.status).toBe(201);
+    const userId = dataOf(createRes).id;
+
+    const res = await request<UserResult>(`/api/admin/users/${userId}/reset-password`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { password: SHORT },
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res).detail?.key).toBe('passwordTooShort');
+
+    await login('shortpwreset', 'longenough1');
+  });
+
+  test('enable-login: too short is rejected by length, and the client stays contact-only', async () => {
+    const createRes = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { role: 'Client', display_name: 'Short Pw Enable', email: 'shortpwenable@test.com' },
+    });
+    expect(createRes.status).toBe(201);
+    const clientId = dataOf(createRes).id;
+
+    const res = await request<EnabledLoginResult>(`/api/admin/users/${clientId}/enable-login`, {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'shortpwenable', password: SHORT },
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res).detail?.key).toBe('passwordTooShort');
+
+    const row = await testPool.query<{ username: string | null }>(
+      `SELECT username FROM auth.users WHERE id = $1`,
+      [clientId]
+    );
+    expect(row.rows[0].username).toBeNull();
+  });
+
+  // An absent password is a different error from a short one; the length check must not swallow it.
+  test('an omitted password still reports the required fields, not a length', async () => {
+    const res = await request<CreatedUserResult>('/api/admin/users', {
+      method: 'POST',
+      cookie: adminCookie,
+      body: { username: 'nopwcreate', role: 'Admin' },
+    });
+    expect(res.status).toBe(400);
+    expect(errorOf(res).detail?.key).toBe('usernamePasswordRoleRequired');
+  });
+});

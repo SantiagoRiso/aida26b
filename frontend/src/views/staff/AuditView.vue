@@ -100,8 +100,10 @@ const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 
 // Labels restate SSOT table titles rather than repeating them — the filter value (what the
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
-// Only types the audit writers actually stamp. `businesses` is protected — no generic CRUD writes
-// it and no bespoke route names it — so offering it asked for a set that is always empty.
+// The types worth offering, not every type that occurs: generic CRUD stamps the table key of any
+// non-protected table, so services and the join tables also appear in the log and simply have no
+// option here. `businesses` was removed because it is protected — no generic CRUD writes it and no
+// bespoke route names it — so offering it asked for a set that is always empty.
 const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
   { value: '' },
   { value: 'appointments', tableKey: 'appointments' },
@@ -332,7 +334,13 @@ if (isAdmin.value) {
                 {{ event.event_type }}
               </td>
               <td class="px-4 py-3 text-neutral">
-                <span :title="entityDetail(event)">{{ entityLabel(event) }}</span>
+                <span :title="entityDetail(event)">
+                  {{ entityLabel(event) }}
+                  <!-- A title attribute is mouse-only: no keyboard focus, nothing on touch. The
+                       locator is repeated for assistive tech so hiding it from sight never means
+                       hiding it from a reader. -->
+                  <span v-if="entityDetail(event)" class="sr-only">{{ entityDetail(event) }}</span>
+                </span>
               </td>
               <td class="px-4 py-3 text-neutral">
                 {{ actorLabel(event) }}
