@@ -35,6 +35,16 @@ export const EMAIL_PATTERN_KEY = 'emailFormat';
 // correct, so at that point in the request the two comparisons are the same rule.
 export const PASSWORD_REUSE_KEY = 'passwordReuse';
 
+// Shared so a form can say "at least N characters" with the same N the server enforces, and say it
+// before a round trip. A too-short password is its own failure: reporting it as a missing field
+// sends the reader hunting for an empty box that isn't there.
+export const MIN_PASSWORD_LENGTH = 8;
+export const PASSWORD_TOO_SHORT_KEY = 'passwordTooShort';
+
+export function isPasswordTooShort(password: string): boolean {
+  return password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
+}
+
 export function isPasswordReused(newPassword: string, currentPassword: string): boolean {
   return newPassword !== '' && newPassword === currentPassword;
 }

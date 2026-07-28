@@ -11,7 +11,6 @@ import AppButton from '@/components/shared/AppButton.vue';
 import FieldError from '@/components/shared/FieldError.vue';
 import CalendarGrantsSection from '@/components/settings/CalendarGrantsSection.vue';
 import MyExceptionsSection from '@/components/settings/MyExceptionsSection.vue';
-import ChangePasswordSection from '@/components/settings/ChangePasswordSection.vue';
 import { useLabel } from '@/composables/useLabel';
 import { structure } from '@shared/ssot/structure';
 import type { TableRecordMap } from '@shared/ssot/derived';
@@ -178,15 +177,6 @@ async function saveSvc(row: SvcOverride) {
             </div>
           </template>
         </div>
-      </section>
-
-      <section class="rounded-lg border border-border bg-card p-5 space-y-4">
-        <h2 class="text-lg font-semibold text-heading">{{ t('actions.changePassword') }}</h2>
-        <ChangePasswordSection
-          current-password-id="pf-cur"
-          new-password-id="pf-new"
-          submit-id="pf-pw-save"
-        />
       </section>
 
       <section v-if="auth.user?.role === 'Professional'" class="rounded-lg border border-border bg-card p-5 space-y-4">

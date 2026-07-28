@@ -135,10 +135,48 @@ test.describe('Users CRUD (admin) — reset password, deactivate, isSelf, create
     const createResp = page.waitForResponse((r) => r.url().includes('/api/admin/users') && r.request().method() === 'POST', { timeout: 10_000 });
     await page.getByRole('button', { name: es.actions.save }).click();
     const resp = await createResp;
-    expect(resp.ok()).toBe(false);
+    expect(resp.status()).toBe(409);
 
-    await expect(page.getByRole('alert')).toBeVisible({ timeout: 10_000 });
+    // Naming the collision is the whole point: "already exists" or a message listing the fields to
+    // fill leaves the reader guessing which of them the server objected to.
+    const alert = page.getByRole('alert');
+    await expect(alert).toBeVisible({ timeout: 10_000 });
+    await expect(alert).toContainText(es.apiError.usernameTaken);
+    await expect(alert).not.toContainText(es.apiError.usernamePasswordRoleRequired);
+    await expect(alert).not.toContainText(es.apiError.code.conflict);
+
     // The panel stays open on error — no navigation happened.
     await expect(page.locator('#username')).toBeVisible();
+  });
+
+  // A password under the minimum used to arrive at the server as null, indistinguishable from an
+  // absent one, so a filled-in form came back told to fill in three fields it had already filled.
+  test('a too-short password names the length, not the three fields already filled', async ({ page }) => {
+    await openUsers(page);
+    await page.getByRole('button', { name: es.users.addUser }).click();
+
+    await page.locator('#username').fill(`e2e_short_${Date.now()}`);
+    await page.locator('#password').fill('12345');
+    await page.locator('#role').selectOption('Receptionist');
+
+    await page.getByRole('button', { name: es.actions.save }).click();
+
+    await expect(page.getByText(/al menos \d+ caracteres/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(es.apiError.usernamePasswordRoleRequired)).toHaveCount(0);
+  });
+
+  // The same form with the role left on its placeholder must say so about the role, rather than
+  // returning the three-field message that reads as a rejection of the username.
+  test('create with no role flags the role field, not a duplicate', async ({ page }) => {
+    await openUsers(page);
+    await page.getByRole('button', { name: es.users.addUser }).click();
+
+    await page.locator('#username').fill(`e2e_norole_${Date.now()}`);
+    await page.locator('#password').fill('e2e-secure-pass-789');
+
+    await page.getByRole('button', { name: es.actions.save }).click();
+
+    await expect(page.getByText(es.fieldError.required).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(es.apiError.usernameTaken)).toHaveCount(0);
   });
 });

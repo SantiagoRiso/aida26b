@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useToast } from '@/composables/useToast';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import { ROLE_OPTIONS } from '@shared/ssot/domain';
+import { isPasswordTooShort, MIN_PASSWORD_LENGTH } from '@shared/ssot/domain/people';
 import { structure } from '@shared/ssot/structure';
 import GenericTable from '@/components/generic/GenericTable.vue';
 import DetailPanel from '@/components/shared/DetailPanel.vue';
@@ -70,6 +71,13 @@ async function submitCreate() {
   const missing = missingCreateFields();
   if (missing.length > 0) {
     for (const field of missing) createErrors[field] = t('fieldError.required');
+    return;
+  }
+
+  // Same minimum the server enforces, from the same constant, so the length is stated on the field
+  // rather than coming back as a message about three fields that are already filled.
+  if (isPasswordTooShort(createForm.password)) {
+    createErrors['password'] = t('apiError.passwordTooShort', { min: MIN_PASSWORD_LENGTH });
     return;
   }
 

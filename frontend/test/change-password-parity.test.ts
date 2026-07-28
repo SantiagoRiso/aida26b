@@ -8,24 +8,14 @@ import { useAuthStore } from '@/stores/auth';
 import { isPasswordReused } from '@shared/ssot/domain/people';
 
 // Before the fix: the forced (post-login) ChangePasswordView blocked a repeated password with a
-// live client-side check; the in-session ProfileView had no such check and only discovered the
+// live client-side check; the in-session screen had no such check and only discovered the
 // rejection after a server round trip. Both now share ChangePasswordSection.vue, which runs the
 // same shared/src/ssot isPasswordReused rule the backend enforces — these tests prove the
 // in-session screen behaves identically to the forced one, not just that some error eventually
-// appears.
+// appears. Staff change their own password from Configuracion; Perfil no longer carries a second
+// copy of the same form.
 
-vi.mock('@/api/profile', () => ({ getMyProfile: vi.fn(), updateMyProfile: vi.fn() }));
-vi.mock('@/api/crud', () => ({
-  listRows: vi.fn(),
-  getRow: () => Promise.resolve({ ok: false, status: 404, code: 'not_found', message: 'not found' }),
-  updateRow: vi.fn(),
-  createRow: vi.fn(),
-  deleteRow: vi.fn(),
-}));
-
-import ProfileView from '@/views/staff/ProfileView.vue';
-import { getMyProfile } from '@/api/profile';
-import { listRows } from '@/api/crud';
+import SettingsView from '@/views/staff/SettingsView.vue';
 
 const makeI18n = () => createI18n({ legacy: false, locale: 'es', messages: { es, en } });
 
@@ -46,53 +36,41 @@ function signInProfessional() {
   return pinia;
 }
 
-describe('ProfileView (in-session) rejects a repeated password like the forced flow does', () => {
+describe('SettingsView (in-session) rejects a repeated password like the forced flow does', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('blocks submit and shows the reuse error live, with no server round trip', async () => {
-    vi.mocked(getMyProfile).mockResolvedValue({
-      ok: true, data: { profile: { id: '1', display_name: 'Dra. Ana', bio: null, email: null, phone: null } },
-    });
-    vi.mocked(listRows).mockResolvedValue({ ok: true, data: [] });
     stubUnreachableFetch();
 
     const pinia = signInProfessional();
-    const wrapper = mount(ProfileView, {
-      global: { plugins: [pinia, makeI18n()], stubs: { CalendarGrantsSection: true, MyExceptionsSection: true } },
-    });
+    const wrapper = mount(SettingsView, { global: { plugins: [pinia, makeI18n()] } });
     await flushPromises();
 
-    await wrapper.get('#pf-cur').setValue('samepass123');
-    await wrapper.get('#pf-new').setValue('samepass123');
+    await wrapper.get('#settings-pw-current').setValue('samepass123');
+    await wrapper.get('#settings-pw-new').setValue('samepass123');
     await flushPromises();
 
     expect(wrapper.text()).toContain(es.apiError.passwordReuse);
-    expect(wrapper.get('#pf-pw-save').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('#settings-pw-save').attributes('disabled')).toBeDefined();
 
-    await wrapper.get('#pf-pw-save').trigger('click');
+    await wrapper.get('#settings-pw-save').trigger('click');
     await flushPromises();
 
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it('a differing new password is not flagged and the button stays enabled', async () => {
-    vi.mocked(getMyProfile).mockResolvedValue({
-      ok: true, data: { profile: { id: '1', display_name: 'Dra. Ana', bio: null, email: null, phone: null } },
-    });
-    vi.mocked(listRows).mockResolvedValue({ ok: true, data: [] });
 
     const pinia = signInProfessional();
-    const wrapper = mount(ProfileView, {
-      global: { plugins: [pinia, makeI18n()], stubs: { CalendarGrantsSection: true, MyExceptionsSection: true } },
-    });
+    const wrapper = mount(SettingsView, { global: { plugins: [pinia, makeI18n()] } });
     await flushPromises();
 
-    await wrapper.get('#pf-cur').setValue('oldpassword1');
-    await wrapper.get('#pf-new').setValue('brandnewpass2');
+    await wrapper.get('#settings-pw-current').setValue('oldpassword1');
+    await wrapper.get('#settings-pw-new').setValue('brandnewpass2');
     await flushPromises();
 
     expect(wrapper.text()).not.toContain(es.apiError.passwordReuse);
-    expect(wrapper.get('#pf-pw-save').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('#settings-pw-save').attributes('disabled')).toBeUndefined();
   });
 });
 

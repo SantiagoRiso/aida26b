@@ -17,7 +17,7 @@ import {
 } from '../db/auth';
 import { getSelfProfile, updateSelfProfile } from '../db/users';
 import { AUTH_PATTERNS } from '../../../shared/src/ssot/api-paths';
-import { EMAIL_PATTERN, PASSWORD_REUSE_KEY, isPasswordReused } from '../../../shared/src/ssot/domain/people';
+import { EMAIL_PATTERN, PASSWORD_REUSE_KEY, isPasswordReused, isPasswordTooShort, PASSWORD_TOO_SHORT_KEY, MIN_PASSWORD_LENGTH } from '../../../shared/src/ssot/domain/people';
 import { AuthThrottle, loginIdentityLimits, loginLimits, passwordChangeLimits } from '../auth-throttle';
 
 const EMAIL_RE = new RegExp(EMAIL_PATTERN);
@@ -127,6 +127,14 @@ export function mountAuthRoutes(
     const limits = passwordChangeLimits(user.id);
     const verdict = throttle.check(limits);
     if (verdict.blocked) return tooManyAttempts(res, verdict.retryAfterSeconds);
+
+    // Named before the generic check, for the same reason as the admin create path: a new password
+    // that is merely too short must not be reported as a missing field.
+    if (isPasswordTooShort(typeof req.body.new_password === 'string' ? req.body.new_password : '')) {
+      return sendError(res, 400, 'invalid_request', `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
+        detail: { key: PASSWORD_TOO_SHORT_KEY, params: { min: String(MIN_PASSWORD_LENGTH) } },
+      });
+    }
 
     if (!currentPassword || !newPassword) {
       return sendError(res, 400, 'invalid_request', 'Current password and a valid new password are required', { detail: { key: 'currentAndNewPasswordRequired' } });

@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import type { Role } from '../../shared/src/types/roles';
 import type { AuthUser } from '../../shared/src/ssot/contracts/auth';
+import { MIN_PASSWORD_LENGTH } from '../../shared/src/ssot/domain/people';
+
+export { MIN_PASSWORD_LENGTH };
 
 export type { AuthUser } from '../../shared/src/ssot/contracts/auth';
 
@@ -16,10 +19,11 @@ function scrypt(password: string, salt: string, keyLength: number): Promise<Buff
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
 
-export const MIN_PASSWORD_LENGTH = 8;
-
 // A submitted password is only accepted once it clears the minimum length — shared by the
-// change-password and admin create/reset paths so the rule lives in one place.
+// change-password and admin create/reset paths so the rule lives in one place. Callers that
+// report failures to a person must ask `isPasswordTooShort` first: this collapses "absent" and
+// "too short" into the same null, and telling someone to fill in a field they already filled is
+// worse than saying nothing.
 export function readPassword(value: string | undefined): string | null {
   return typeof value === 'string' && value.length >= MIN_PASSWORD_LENGTH ? value : null;
 }

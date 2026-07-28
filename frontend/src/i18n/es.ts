@@ -135,6 +135,7 @@ export const es = {
     displayNameRequired: 'Ingresar el nombre visible.',
     emailFormat: 'Ingresar un email válido.',
     usernamePasswordRoleRequired: 'Completar usuario, contraseña y rol.',
+    passwordTooShort: 'La contraseña debe tener al menos {min} caracteres.',
     userIdAndPasswordRequired: 'Elegir un usuario e ingresar la nueva contraseña.',
     userCredentialsRequired: 'Completar usuario y contraseña.',
     cannotDeactivateSelf: 'No se puede desactivar la propia cuenta.',

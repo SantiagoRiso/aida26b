@@ -5,7 +5,8 @@ import * as auth from '../auth';
 import { isRole } from '../../../shared/src/types/roles';
 import { guardRoute } from '../helpers';
 import { sendData, sendError } from '../status_messages';
-import { readPassword } from '../auth';
+import { readPassword, MIN_PASSWORD_LENGTH } from '../auth';
+import { isPasswordTooShort, PASSWORD_TOO_SHORT_KEY } from '../../../shared/src/ssot/domain/people';
 import type { AuditWriter } from '../audit';
 import { authenticatedUser } from '../session';
 import { requireBusinessContext } from './business-context';
@@ -61,6 +62,8 @@ type CreateUserInput = {
   username: string;
   emailRaw: string | null;
   password: string | null;
+  // The value exactly as submitted, kept only so a too-short password can be named as such.
+  rawPassword: string;
   role: string;
   displayName: string;
   dni: string | null;
@@ -164,7 +167,16 @@ async function createCredentialedUser(
   res: express.Response,
   input: CreateUserInput,
 ) {
-  const { username, emailRaw, password, role, displayName, dni, businessId } = input;
+  const { username, emailRaw, password, rawPassword, role, displayName, dni, businessId } = input;
+
+  // readPassword returns null both for an absent password and for one under the minimum, so the
+  // raw value is tested first: someone who typed five characters must be told the length, not told
+  // to fill in the box they just filled.
+  if (isPasswordTooShort(rawPassword)) {
+    return sendError(res, 400, 'invalid_request', `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
+      detail: { key: PASSWORD_TOO_SHORT_KEY, params: { min: String(MIN_PASSWORD_LENGTH) } },
+    });
+  }
 
   if (!username || !password || !isRole(role)) {
     return sendError(res, 400, 'invalid_request', 'Valid username, password and role are required', { detail: { key: 'usernamePasswordRoleRequired' } });
@@ -226,6 +238,7 @@ export function mountUserAdminRoutes(
       const emailRaw =
         typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim() : null;
 
+      const rawPassword = typeof req.body.password === 'string' ? req.body.password : '';
       const password = readPassword(req.body.password);
       const role = req.body.role;
       const displayName =
@@ -251,7 +264,7 @@ export function mountUserAdminRoutes(
       const businessId = await resolveCreationBusiness(pool, req, res);
       if (businessId == null) return;
 
-      const input: CreateUserInput = { username, emailRaw, password, role, displayName, dni, businessId };
+      const input: CreateUserInput = { username, emailRaw, password, rawPassword, role, displayName, dni, businessId };
 
       if (role === 'Client' && !username && !password) {
         return createContactOnlyClient(pool, audit, req, res, input);
@@ -311,6 +324,12 @@ export function mountUserAdminRoutes(
       const userId = Number(req.params.id);
       const password = readPassword(req.body.password);
       const sessionUser = authenticatedUser(req);
+
+      if (isPasswordTooShort(typeof req.body.password === 'string' ? req.body.password : '')) {
+        return sendError(res, 400, 'invalid_request', `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
+          detail: { key: PASSWORD_TOO_SHORT_KEY, params: { min: String(MIN_PASSWORD_LENGTH) } },
+        });
+      }
 
       if (!Number.isInteger(userId) || !password) {
         return sendError(res, 400, 'invalid_request', 'Valid user id and password are required', { detail: { key: 'userIdAndPasswordRequired' } });

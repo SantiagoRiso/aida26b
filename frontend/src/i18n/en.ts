@@ -134,6 +134,7 @@ export const en: Messages = {
     displayNameRequired: 'Enter the display name.',
     emailFormat: 'Enter a valid email.',
     usernamePasswordRoleRequired: 'Fill in username, password and role.',
+    passwordTooShort: 'The password must be at least {min} characters.',
     userIdAndPasswordRequired: 'Choose a user and enter the new password.',
     userCredentialsRequired: 'Fill in username and password.',
     cannotDeactivateSelf: "You can't deactivate your own account.",
