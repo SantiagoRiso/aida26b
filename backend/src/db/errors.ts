@@ -59,11 +59,11 @@ export function httpForDbError(
   const mapped = pgCode && PG_ERROR_MAP[pgCode] ? PG_ERROR_MAP[pgCode] : null;
   if (!mapped) return null;
 
-  // The constraint name, when present, says exactly which rule fired — swap in a precise
+  // The constraint name, when present, says exactly which rule fired: swap in a precise
   // detail.key for the ones it's safe to name everywhere (see constraint-messages.ts for the
   // reachability analysis; auth.users' own unique constraints are deliberately excluded here and
   // handled instead by routes/users.ts, the only surfaces where naming them can't leak identity
-  // across tenants or roles). Unmapped/unknown constraints fall through to today's generic message.
+  // across tenants or roles). Unmapped/unknown constraints fall through to the generic message.
   const constraint = err instanceof DbError ? err.constraint : undefined;
   const key = constraint ? CONSTRAINT_DETAIL_KEYS[constraint] : undefined;
   return key ? { ...mapped, detail: { key } } : mapped;

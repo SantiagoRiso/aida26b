@@ -346,7 +346,7 @@ describe('GET /api/audit filters (parameterized values)', () => {
     expect(metaOf(byName).total).toBe(metaOf(byId).total);
   });
 
-  // The paged rows and the reported total have to agree — a filter that only the page applies
+  // The paged rows and the reported total have to agree: a filter that only the page applies
   // would report a count the caller can never page through.
   test('a username filter matching nobody reports a total of zero, not the unfiltered count', async () => {
     currentUser = asUser(adminId, 'Admin');

@@ -9,7 +9,7 @@ import { ACTIVE_SERIES_STATUS, ENDED_SERIES_STATUS, UNTIL_END_KIND } from '../..
 // Same projection appointments.ts joins onto a real row: service_id/professional_user_id/
 // client_user_id are all NOT NULL FKs, so an INNER JOIN never drops a series. Names come from the
 // secret-free auth.users_directory view, never auth.users. Used only by the getActiveSeriesFor*
-// queries that feed virtual-occurrence expansion (series-listing.ts) — a virtual occurrence has no
+// queries that feed virtual-occurrence expansion (series-listing.ts): a virtual occurrence has no
 // row of its own to join at read time, so the names travel with the series instead.
 const SERIES_NAME_JOINS = `
        JOIN services svc ON svc.id = s.service_id

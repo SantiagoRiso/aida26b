@@ -1,5 +1,5 @@
 // How each entity is named, defined once. Both ends compose from these: the frontend for calendar
-// and list titles, the backend for the audit log's entity column. A name written twice drifts —
+// and list titles, the backend for the audit log's entity column. A name written twice drifts:
 // a turno was once "client - service" on one screen and "client · time" on another.
 
 // Parts join with a separator rather than a template so a caller can pass only what it has and

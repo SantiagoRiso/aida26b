@@ -12,11 +12,11 @@ import type { GenericRow } from '../../shared/src/ssot/query-types';
 // Sweeps the "adjacent cases" alongside the reported username-conflict issue: every other
 // unique/CHECK constraint reachable through generic CRUD (see
 // shared/src/ssot/domain/constraint-messages.ts, CONSTRAINT_DETAIL_KEYS) used to collapse to the
-// same opaque "Ya existe un registro con esos datos." — these prove each one now carries its own
+// same opaque "Ya existe un registro con esos datos.". These prove each one now carries its own
 // detail.key. A cross-tenant super-admin fixture keeps authz out of the way; the point here is the
 // error shape, not scoping (already covered by generic-crud-policy.db.test.ts and friends).
 
-// id is a placeholder until beforeAll seeds the row and overwrites it — the generic writes below
+// id is a placeholder until beforeAll seeds the row and overwrites it: the generic writes below
 // are audited against this actor, so it must be a real auth.users row (see src/audit.ts).
 const superAdmin: AuthUser = {
   id: 0,

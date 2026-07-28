@@ -60,7 +60,7 @@ const virtualOccurrence = object<VirtualOccurrence>({
   resource_id: nullable(stringValue), starts_at: stringValue, duration_minutes: numberValue,
   price: stringValue, state: literal('scheduled'), name: literal(null), description: literal(null),
   is_virtual: literal(true), in_conflict: booleanValue,
-  // Always present — expanded from an active series that is itself joined to the referenced names.
+  // Always present: expanded from an active series that is itself joined to the referenced names.
   service_name: stringValue, professional_name: stringValue, client_name: stringValue,
 });
 const listAppointment = union(appointmentContract, virtualOccurrence);

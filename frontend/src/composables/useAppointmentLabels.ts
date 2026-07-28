@@ -39,13 +39,13 @@ export function useAppointmentLabels() {
   });
 
   // client_user_id/professional_user_id/service_id are all NOT NULL FKs, so the server now joins
-  // their names directly onto the appointment payload (list/detail reads) — reading appt.*_name
+  // their names directly onto the appointment payload (list/detail reads): reading appt.*_name
   // first means the title never depends on the FK-options cache having loaded yet. The labelFor
   // calls stay as a fallback for the rare payload that lacks them (a mutation response, which
   // returns the bare RETURNING * row rather than the joined read shape).
   function defaultAppointmentTitle(appt: Appointment): string {
     const viewer = auth.user;
-    // A Professional viewing their own calendar already knows whose calendar it is — appending
+    // A Professional viewing their own calendar already knows whose calendar it is; appending
     // their own name to every event would be pure noise, not information.
     const ownAppointment = viewer?.role === 'Professional' && String(viewer.id) === String(appt.professional_user_id);
     const professional = ownAppointment

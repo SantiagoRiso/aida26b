@@ -155,7 +155,7 @@ export function mountAuthRoutes(
 
     // Reusing the current password defeats a forced reset, so reject it. `currentPassword` was
     // just proven correct above, so comparing it to the proposed new one is the same rule the
-    // client pre-checks with — one shared function, not a second hash-verify of the new password.
+    // client pre-checks with: one shared function, not a second hash-verify of the new password.
     if (isPasswordReused(newPassword, currentPassword)) {
       return sendError(res, 400, 'password_reuse', 'New password must be different from the current password', { detail: { key: PASSWORD_REUSE_KEY } });
     }

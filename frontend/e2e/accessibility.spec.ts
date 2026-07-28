@@ -67,7 +67,7 @@ test.describe('Accessibility (axe-core)', () => {
   // An added filter row names its control only by the field label beside it, so a broken label
   // association shows up here. The referenced-id (combobox) variant of that row is the hardest
   // case, but the only foreign-key filter any generic screen offers is the business column, which
-  // is now withheld from a business-bound admin — and no demo account is a super-admin. That
+  // is now withheld from a business-bound admin, and no demo account is a super-admin. That
   // variant's label wiring is asserted in test/a11y-chrome.test.ts instead.
   test('an active filter row (GenericFilters) has no automatically detectable violations', async ({ page }) => {
     test.skip(!isDesktopWidth(page), 'audited once, at desktop width');

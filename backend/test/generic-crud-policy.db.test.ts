@@ -9,7 +9,7 @@ import type { Server } from 'node:http';
 
 // Handlers fail closed without an authenticated user; inject a cross-business super-admin
 // explicitly so the policy suite exercises the privileged path without a real session.
-// id is a placeholder until beforeAll seeds the row and overwrites it — every generic write in
+// id is a placeholder until beforeAll seeds the row and overwrites it: every generic write in
 // this suite is audited against this actor, so it must be a real auth.users row (see audit.ts).
 const superAdmin: AuthUser = {
   id: 0,

@@ -41,8 +41,8 @@ describe('appointment default title', () => {
     )).toBe('Homero Simpson - Consultorio 2 - Psicología - Dr. Hibbert - Sobreturno');
   });
 
-  // The maintainer's explicit decision: the last-resort label is a bare noun, never "Turno #<id>" —
-  // surrounding UI (calendar position, list row date/time) already disambiguates which one it is.
+  // The maintainer's explicit decision: the last-resort label is a bare noun, never "Turno #<id>".
+  // Surrounding UI (calendar position, list row date/time) already disambiguates which one it is.
   it('never carries a raw database id when nothing else resolves', () => {
     const fallback = formatDefaultAppointmentTitle(null, null, null, null, 'Turno');
     expect(fallback).toBe('Turno');
@@ -84,7 +84,7 @@ describe('useAppointmentLabels — title composed from the server payload, no FK
       client_name: 'Homero Simpson', service_name: 'Psicología', professional_name: 'Dr. Hibbert',
     }));
 
-    // Resolved purely from the payload fields — the mocked FK roster is empty, so any of these
+    // Resolved purely from the payload fields: the mocked FK roster is empty, so any of these
     // appearing proves the title did not go through labelFor at all.
     expect(title).toBe('Homero Simpson - Psicología - Dr. Hibbert');
   });

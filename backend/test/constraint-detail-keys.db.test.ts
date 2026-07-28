@@ -9,7 +9,7 @@ import {
   INTENTIONALLY_GENERIC_CONSTRAINTS,
 } from '../../shared/src/ssot/domain/constraint-messages';
 
-// Migrations are immutable, so a constraint's name can't be derived from TS — it has to be typed
+// Migrations are immutable, so a constraint's name can't be derived from TS: it has to be typed
 // once (constraint-messages.ts) and checked against the REAL catalog, not the migration text
 // (schema-ssot-drift.test.ts's approach breaks the moment a name is auto-generated or discovered
 // at migration time, e.g. ledger_entries_entry_type_check). This guard queries pg_constraint and

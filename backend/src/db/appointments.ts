@@ -294,7 +294,7 @@ export async function listAppointments(
   const limitPh = `$${params.length + 2}`;
   const offsetPh = `$${params.length + 3}`;
 
-  // The count query only needs the business-scoping join, never the name joins — it never
+  // The count query only needs the business-scoping join, never the name joins: it never
   // projects those columns, so adding them would be pure overhead with no consistency benefit.
   const [rows, count] = await Promise.all([
     query<AppointmentRow>(

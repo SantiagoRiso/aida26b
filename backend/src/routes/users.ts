@@ -35,11 +35,11 @@ function isUniqueViolation(error: unknown): error is DbError {
   return error instanceof DbError && error.pgCode === '23505';
 }
 
-// English log prose per identity constraint; the client never reads this — it resolves the
+// English log prose per identity constraint; the client never reads this, it resolves the
 // localized message from `detail.key` below (USER_IDENTITY_CONSTRAINT_DETAIL_KEYS, the SSoT map
 // shared with the drift guard). Kept off the global httpForDbError map deliberately: these three
-// are the only unique constraints allowed a precise message on this admin/staff-only surface — see
-// constraint-messages.ts for why the self-service email/DNI paths must stay generic.
+// are the only unique constraints allowed a precise message on this admin/staff-only surface (see
+// constraint-messages.ts for why the self-service email/DNI paths must stay generic).
 const IDENTITY_CONSTRAINT_LOG_MESSAGE: Readonly<Record<string, string>> = Object.freeze({
   users_username_key: 'Username already exists',
   users_email_unique: 'Email already exists',

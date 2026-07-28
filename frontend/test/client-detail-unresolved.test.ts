@@ -67,7 +67,7 @@ describe('ClientDetail — a professional/service the roster does not carry', ()
       data: { id: '3', display_name: 'Homero Simpson', dni: null, email: 'h@demo.test', phone: null, notes: null },
     });
     // The FK-options roster (professionals/services) never carries the ids the pending
-    // appointment below references — both stay unresolved.
+    // appointment below references, so both stay unresolved.
     mockedListRows.mockResolvedValue({ ok: true, data: [] });
     mockedGetBalance.mockResolvedValue({ ok: true, data: { client_user_id: '3', balance_ars: '0.00' } });
     mockedGetLedger.mockResolvedValue({ ok: true, data: [] });

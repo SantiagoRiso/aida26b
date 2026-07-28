@@ -316,7 +316,7 @@ test('must_change_password blocks write routes and clears after change', async (
 });
 
 // This is the single endpoint both the forced (post-login) and the in-session change-password
-// screens call — there is no second server-side copy of the rule to drift out of sync. The
+// screens call: there is no second server-side copy of the rule to drift out of sync. The
 // detail key it sends is the same PASSWORD_REUSE_KEY constant the frontend's live pre-check reads
 // its message from, so a rename of one side would fail this assertion instead of silently drifting.
 test('change-password rejects a new password identical to the current one', async () => {
@@ -338,7 +338,7 @@ test('change-password rejects a new password identical to the current one', asyn
     assert.equal(rejected.body.error.code, 'password_reuse');
     assert.equal(rejected.body.error.detail.key, PASSWORD_REUSE_KEY);
 
-    // The account's password is untouched — the user can still log in with the original.
+    // The account's password is untouched: the user can still log in with the original.
     const stillWorks = await request(baseUrl, '/api/auth/login', {
       method: 'POST',
       body: { username: 'reusetest', password: 'oldpassword1' },

@@ -10,7 +10,7 @@ import PasswordInput from '@/components/shared/PasswordInput.vue';
 import { isPasswordReused } from '@shared/ssot/domain/people';
 
 // One implementation of "change your own password", embedded wherever a role can reach it
-// (forced post-login screen, staff profile, staff settings, portal preferences) — every entry
+// (forced post-login screen, staff profile, staff settings, portal preferences): every entry
 // point calls the same store action and reuses the same reuse-check, so they can't drift.
 const props = withDefaults(defineProps<{
   currentPasswordId?: string;
@@ -37,7 +37,7 @@ const newPassword = ref('');
 const loading = ref(false);
 const serverError = ref('');
 
-// A new password that just repeats the current one is rejected — surface it as they type,
+// A new password that just repeats the current one is rejected: surface it as they type,
 // not only when they submit. Same rule the server enforces (shared/src/ssot/domain/people.ts).
 const samePassword = computed(() => isPasswordReused(newPassword.value, currentPassword.value));
 

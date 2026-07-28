@@ -950,9 +950,8 @@ describe('GET /api/appointments — paginated list', () => {
     }
   });
 
-  // Settles whether a portal Client can actually read the referenced names: roleRequired.read on
-  // both `services` and `professionals` already lists 'Client' (shared/src/ssot/domain), and this
-  // proves it end-to-end on the list response itself — a Client's own appointment list must never
+  // roleRequired.read on both `services` and `professionals` already lists 'Client' (shared/src/ssot/domain);
+  // this proves it end-to-end on the list response itself. A Client's own appointment list must never
   // depend on a separate FK-options fetch (which races the first render) to know whose turno it is.
   test('client list carries real service/professional/client names, not blank or raw ids', async () => {
     currentUser = asUser(clientId, 'Client');

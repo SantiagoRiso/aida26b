@@ -7,7 +7,7 @@
 // Safe to reveal precisely on ANY surface that can trip them: every one of these constraints sits
 // on a staff-only or self-consistent write (never reachable by an unauthenticated caller or by a
 // Client acting on another tenant's data), and none of them reveal a *person's* existence the way
-// a username/email/DNI collision would — they only say "this pairing/value already exists",
+// a username/email/DNI collision would: they only say "this pairing/value already exists",
 // which the caller already has visibility into via its own authorized reads.
 export const CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, string>> = Object.freeze({
   calendar_grants_unique: 'grantAlreadyExists',
@@ -19,7 +19,7 @@ export const CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, string>> = Object.f
   schedule_exceptions_time_range_check: 'endAfterStart',
   schedule_exceptions_granularity_check: 'exceptionGranularityRequired',
   // Both express "exactly one owner" (schedule_exceptions has a third, business-wide owner, but
-  // it is server-stamped/editable:false — a request body can only ever supply the same two).
+  // it is server-stamped/editable:false, so a request body can only ever supply the same two).
   schedule_blocks_one_owner: 'scheduleOwnerExactlyOne',
   schedule_exceptions_one_owner: 'scheduleOwnerExactlyOne',
   idx_ledger_entries_one_charge_per_appointment: 'chargeAlreadyPosted',
@@ -32,19 +32,18 @@ export const CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, string>> = Object.f
 // logged-in Client a cross-tenant existence oracle: "that email is already registered" leaks a
 // real address's presence anywhere in the system, not just their own business. DNI is per-business
 // (uq_users_business_dni), but is also reachable through a Client's own self-service profile edit
-// (clients.dni is generically editable) — same shape of risk, one tenant instead of every tenant.
+// (clients.dni is generically editable): same shape of risk, one tenant instead of every tenant.
 //
-// This suppresses the WORDING only, and the wording is not the whole channel: a self-service
-// profile edit that collides still answers 409 instead of 200, which is itself an oracle. Because
-// users_email_unique is global rather than per-tenant, an authenticated Client can probe any
-// address system-wide by trying to set it; the per-business DNI constraint gives the same signal
-// inside one tenant. Closing that needs the route to answer alike either way, not a message change.
+// This suppresses the WORDING only: a self-service profile edit that collides still answers 409
+// instead of 200, which is itself an oracle regardless of message text. Closing that gap needs the
+// route to answer alike either way, not a message change.
 //
 // These three stay precise ONLY on the admin/staff user-creation surfaces (POST /api/admin/users,
-// POST /api/admin/users/:id/enable-login — Admin, or a Professional/Receptionist registering a
-// Client, never an anonymous or Client caller), applied explicitly in routes/users.ts rather than
-// through the global constraint map. Every other path that can trip them (self-service profile
-// edit, generic PUT on clients.dni) intentionally keeps today's generic conflict message.
+// POST /api/admin/users/:id/enable-login, restricted to Admin, or a Professional/Receptionist
+// registering a Client, never an anonymous or Client caller), applied explicitly in
+// routes/users.ts rather than through the global constraint map. Every other path that can trip
+// them (self-service profile edit, generic PUT on clients.dni) intentionally keeps today's
+// generic conflict message.
 export const USER_IDENTITY_CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, string>> = Object.freeze({
   users_username_key: 'usernameTaken',
   users_email_unique: 'emailTaken',
@@ -54,7 +53,7 @@ export const USER_IDENTITY_CONSTRAINT_DETAIL_KEYS: Readonly<Record<string, strin
 // Every other UNIQUE/CHECK constraint the live schema declares (see
 // test/constraint-detail-keys.db.test.ts, which asserts this list against pg_constraint/pg_indexes
 // so a migration that adds a new one without a decision here fails a test). Left generic for one
-// of three reasons documented at each group below — never because nobody looked.
+// of three reasons documented at each group below, never because nobody looked.
 export const INTENTIONALLY_GENERIC_CONSTRAINTS: readonly string[] = [
   // --- App-level validation runs first and already produces a precise fieldError/detail before
   // the request can reach the database; the DB CHECK is a defense-in-depth backstop that normal

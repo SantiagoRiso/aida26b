@@ -30,7 +30,7 @@ export const EMAIL_PATTERN_KEY = 'emailFormat';
 
 // A new password identical to the current one defeats the point of changing it. The forced
 // (post-login) and in-session change-password flows both reject it, and both the client's live
-// pre-check and the server's post-verification check test the same equality — the client compares
+// pre-check and the server's post-verification check test the same equality: the client compares
 // what the user just typed, the server compares against a `current_password` it already proved
 // correct, so at that point in the request the two comparisons are the same rule.
 export const PASSWORD_REUSE_KEY = 'passwordReuse';

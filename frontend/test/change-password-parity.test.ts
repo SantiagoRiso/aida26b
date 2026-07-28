@@ -10,7 +10,7 @@ import { isPasswordReused } from '@shared/ssot/domain/people';
 // Before the fix: the forced (post-login) ChangePasswordView blocked a repeated password with a
 // live client-side check; the in-session screen had no such check and only discovered the
 // rejection after a server round trip. Both now share ChangePasswordSection.vue, which runs the
-// same shared/src/ssot isPasswordReused rule the backend enforces — these tests prove the
+// same shared/src/ssot isPasswordReused rule the backend enforces. These tests prove the
 // in-session screen behaves identically to the forced one, not just that some error eventually
 // appears. Staff change their own password from Configuracion; Perfil no longer carries a second
 // copy of the same form.
@@ -19,7 +19,7 @@ import SettingsView from '@/views/staff/SettingsView.vue';
 
 const makeI18n = () => createI18n({ legacy: false, locale: 'es', messages: { es, en } });
 
-// The live pre-check must reject before ever reaching the network — a fetch stub that throws
+// The live pre-check must reject before ever reaching the network: a fetch stub that throws
 // proves submit() short-circuited on the client instead of relying on a server round trip.
 function stubUnreachableFetch() {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network must not be reached')));

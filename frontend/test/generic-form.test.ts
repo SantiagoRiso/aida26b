@@ -442,7 +442,7 @@ describe('GenericForm — internal identity/tenant columns never appear in the r
     wrapper.findAll('span.text-sm.font-semibold.text-neutral').map((s) => s.text());
 
   it('renders neither pk nor business_id for a table whose descriptor carries both', async () => {
-    // services: pk + business_id, no other editable:false column — the read-only block must be
+    // services: pk + business_id, no other editable:false column: the read-only block must be
     // entirely empty, not just missing a label.
     const { pinia, router, i18n } = makePlugins();
     const wrapper = mount(GenericForm, {
@@ -468,7 +468,7 @@ describe('GenericForm — internal identity/tenant columns never appear in the r
   });
 
   it('hides the pk while still rendering the genuinely read-only email and username fields', async () => {
-    // clients: pk plus two legitimate editable:false fields (email, username) — only the pk
+    // clients: pk plus two legitimate editable:false fields (email, username): only the pk
     // is internal plumbing, so the other two must survive the filter.
     const clientsSpec = tableOf('clients');
     const labelOf = (field: string) => {

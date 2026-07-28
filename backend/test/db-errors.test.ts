@@ -104,7 +104,7 @@ describe('httpForDbError — constraint name resolves a precise detail.key', () 
   });
 
   // The security-sensitive exclusion: auth.users' own unique constraints must NEVER be resolved
-  // by the shared, route-agnostic httpForDbError — only routes/users.ts's admin/staff-only surface
+  // by the shared, route-agnostic httpForDbError. Only routes/users.ts's admin/staff-only surface
   // may name them (see constraint-messages.ts for the cross-tenant/self-service enumeration risk).
   test('auth.users identity constraints (username/email/DNI) are never mapped by the shared lookup', () => {
     for (const constraint of Object.keys(USER_IDENTITY_CONSTRAINT_DETAIL_KEYS)) {

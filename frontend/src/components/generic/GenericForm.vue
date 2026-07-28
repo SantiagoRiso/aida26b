@@ -43,7 +43,7 @@ const editableColumns = computed(() => {
   });
 });
 
-// editable:false columns that are still worth showing (email, timestamps, …) — internal plumbing
+// editable:false columns that are still worth showing (email, timestamps, …); internal plumbing
 // (pk, business_id) is excluded via the same isInternalColumn predicate GenericTable uses, so
 // this list can never drift from what the table hides.
 const readOnlyColumns = computed(() => {

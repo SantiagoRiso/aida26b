@@ -38,7 +38,7 @@ const SCAN_FROM = shiftSeedDate('2026-08-25');
 const SCAN_TO = isoDaysFromNow(59);
 
 // The client request endpoint (requestViaApi) cannot override conflicts, so its fixtures need a
-// genuinely open slot — not an assumed-free hardcoded time. beforeAll reruns on every CI retry (a
+// genuinely open slot, not an assumed-free hardcoded time. beforeAll reruns on every CI retry (a
 // fresh worker re-executes it from scratch) and nothing here cleans up what a prior attempt already
 // created, so a fixed date/time is only actually free on the very first attempt; any retry then
 // collides with the previous attempt's own leftover appointment. Scanning /api/availability (the

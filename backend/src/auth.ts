@@ -19,9 +19,9 @@ function scrypt(password: string, salt: string, keyLength: number): Promise<Buff
 export const SESSION_COOKIE = 'aida_session';
 export const SESSION_DAYS = 7;
 
-// A submitted password is only accepted once it clears the minimum length — shared by the
-// change-password and admin create/reset paths so the rule lives in one place. Callers that
-// report failures to a person must ask `isPasswordTooShort` first: this collapses "absent" and
+// A submitted password is only accepted once it clears the minimum length: shared by the
+// change-password and admin create/reset paths so the rule lives in one place. Callers that report
+// failures to a person must ask `isPasswordTooShort` first, since it collapses "absent" and
 // "too short" into the same null, and telling someone to fill in a field they already filled is
 // worse than saying nothing.
 export function readPassword(value: string | undefined): string | null {

@@ -123,7 +123,6 @@ describe('UsersView -- reset password refreshes the row without a remount or nav
     await flushPromises();
 
     expect(resetPassword).toHaveBeenCalledWith('2', 'NuevaClave123!');
-    // Same wrapper instance throughout -- no unmount/remount of UsersView itself, no navigation.
     expect(usersCalls).toBe(2);
     expect(mustChangePasswordCellText()).toBe(es.generic.yes);
   });

@@ -48,7 +48,7 @@ const columns = computed(() => {
   return Object.entries(cols).map(([key, col]) => ({ key, col }));
 });
 
-// Surrogate keys and tenant scoping carry no business meaning to a viewer — hide them from
+// Surrogate keys and tenant scoping carry no business meaning to a viewer: hide them from
 // display. Shared with GenericForm's read-only block via isInternalColumn so the two renderers
 // can't drift on what counts as internal.
 const visibleColumns = computed(() =>
@@ -254,7 +254,7 @@ function cellDisplay(row: Wire<TableRecordMap[K]>, key: string, col: ColumnDef):
     const resolver = fkResolvers.value[col.foreignKey.table];
     const label = resolver?.labelFor(String(v));
     // Whether declined by the server (isUnresolved) or simply not on the cached page yet, a raw
-    // id says nothing to an operator and would assert the row exists — never print it.
+    // id says nothing to an operator and would assert the row exists: never print it.
     return label ?? i18n.global.t('generic.unresolvedReference');
   }
   return formatCell(cellValue(row, key));

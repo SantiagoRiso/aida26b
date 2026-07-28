@@ -102,8 +102,8 @@ const limit = computed(() => listQuery.limit.value ?? LIST_DEFAULT_LIMIT);
 // backend expects in entity_type) stays independent of the SSOT table key used for display.
 // The types worth offering, not every type that occurs: generic CRUD stamps the table key of any
 // non-protected table, so services and the join tables also appear in the log and simply have no
-// option here. `businesses` was removed because it is protected — no generic CRUD writes it and no
-// bespoke route names it — so offering it asked for a set that is always empty.
+// option here. `businesses` was removed because it is protected (no generic CRUD writes it and no
+// bespoke route names it), so offering it asked for a set that is always empty.
 const ENTITY_TYPES: Array<{ value: string; tableKey?: TableKey }> = [
   { value: '' },
   { value: 'appointments', tableKey: 'appointments' },
@@ -122,7 +122,7 @@ function entityTypeLabel(opt: { value: string; tableKey?: TableKey }): string {
 
 const OUTCOMES = AUDIT_OUTCOMES;
 
-// The id stands in when a purged actor leaves the username unresolvable — an audit row must stay
+// The id stands in when a purged actor leaves the username unresolvable: an audit row must stay
 // readable. No actor at all is the system acting on its own.
 function actorLabel(event: AuditEvent): string {
   if (event.actor_username != null) return event.actor_username;

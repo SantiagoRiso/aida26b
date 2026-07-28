@@ -84,10 +84,9 @@ function matchOp(negated: boolean): string {
   return negated ? 'IS DISTINCT FROM' : '=';
 }
 
-// One answer to "what do we call this person", for whichever joined user is being named: the login
-// when there is one, the display name otherwise. A contact-only client has no username, and an
-// actor and an entity must not disagree about the same row. Deliberately not used by the search
-// below — matching is over both identifiers, which is a wider question than what to display.
+// Login when there is one, else display name; a contact-only client has no username, and an actor
+// and an entity must not disagree about the same row. Not used by the search below: matching is
+// over both identifiers, a wider question than what to display.
 function personName(alias: string): string {
   return `coalesce(${alias}.username, ${alias}.display_name)`;
 }
@@ -162,8 +161,8 @@ export async function listAuditEvents(
   // business and gets the same projection they always did.
   const businessCol = f.scope.kind === 'all' ? 'a.business_id, ' : '';
 
-  // Every join is outer so an event whose subject was purged still appears — dropping it would edit
-  // the record. Shared with the count query: a filter only one of them applied would report a total
+  // Every join is outer so an event whose subject was purged still appears (dropping it would edit
+  // the record). Shared with the count query: a filter only one of them applied would report a total
   // the page can't produce. Each ON tests the entity type first, so a row only pays for the join
   // that can match it.
   //
@@ -175,13 +174,10 @@ export async function listAuditEvents(
        LEFT JOIN appointments ap ON a.entity_type = 'appointments' AND ap.id = a.entity_id
        LEFT JOIN auth.users_directory apc ON apc.id = ap.client_user_id`;
 
-  // A contact-only client has no username, so a person falls back to the display name, which is
-  // NOT NULL. A turno is named by whose it is and when, because a client books more than one.
-  // Whatever is left keeps its id: an entity with no natural name is better shown as the locator
-  // it is than given an invented one.
-  // SQL yields the pieces; the name is composed by the shared rule below, so the audit log and the
-  // screens that title a turno cannot end up with two ideas of what one is called. Only the wall
-  // clock is formatted here, because the timezone conversion belongs to the database.
+  // A turno is named by whose it is and when, because a client books more than one. SQL yields the
+  // pieces; the name is composed by the shared rule below, so the audit log and the screens that
+  // title a turno cannot end up with two ideas of what one is called. Only the wall clock is
+  // formatted here, because the timezone conversion belongs to the database.
   const tzParam = p;
   const entityParts = `${personName('tgt')} AS entity_person_name,
             apc.display_name AS entity_appointment_client,

@@ -188,7 +188,7 @@ describe('apiErrorMessage — appointment detail keys interpolate their runtime 
 });
 
 // A duplicate-constraint conflict used to collapse to the generic "Ya existe un registro con esos
-// datos." (apiError.code.conflict) no matter which rule fired — see
+// datos." (apiError.code.conflict) no matter which rule fired. See
 // shared/src/ssot/domain/constraint-messages.ts for the backend side of this mapping. These prove
 // the specific detail.key wins over the coarse code, for every surface the maintainer asked to be
 // precise (admin user creation) plus a sample of the swept adjacent cases.

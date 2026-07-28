@@ -32,7 +32,7 @@ const spansTenants = computed(() => auth.user?.role === 'Admin' && auth.user.bus
 
 // A column may be filterable for API callers and still be wrong to offer here. The pk asks the
 // viewer for a raw id they are never shown, and a session-bound business can only narrow a list to
-// what it already contains — only a tenant-spanning viewer has a business worth choosing.
+// what it already contains: only a tenant-spanning viewer has a business worth choosing.
 function offerable(key: string): boolean {
   if (key === BUSINESS_ID_COLUMN) return spansTenants.value;
   return !isInternalColumn(props.tableKey, key);

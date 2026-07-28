@@ -154,7 +154,7 @@ describe('professional_services per-service window edit authz', () => {
     expect(row.min_booking_days).toBe(2);
     expect(row.max_booking_days).toBe(30);
 
-    // The write is audited against a real actor, so the insert genuinely lands — this is the
+    // The write is audited against a real actor, so the insert genuinely lands: this is the
     // path a fabricated actor id used to fail silently (a swallowed FK violation on audit_events).
     const audited = await auditRows('professional_services_updated', Number(bindingId));
     expect(audited).toHaveLength(1);

@@ -16,7 +16,7 @@ export type AuditWriter = (
 
 // Test-only escape hatch: a pool marked strict makes its writer rethrow a failed insert instead of
 // swallowing it, so a fixture that fabricates an actor id fails the test that exercises it instead
-// of only emitting an error line nobody reads. Never set in production — see markAuditStrict.
+// of only emitting an error line nobody reads. Never set in production; see markAuditStrict.
 const strictPools = new WeakSet<Pool>();
 
 // Call only from test harness code (test/helpers.ts pool factories). A pool never marked here keeps

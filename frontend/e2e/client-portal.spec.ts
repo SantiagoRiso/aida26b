@@ -18,7 +18,7 @@ test.describe('Client portal — own appointments, balance, and settings', () =>
     // demo_client has both a completed (past) and a scheduled (future) seeded appointment.
     const statusBadge = page.locator('li').filter({ hasText: /Solicitado|Programado|Completado|Cancelado|Ausente|Rechazado/ }).first();
     await expect(statusBadge).toBeVisible({ timeout: 10_000 });
-    // "Turno" is only a fallback label for an unresolved professional lookup — seeded data always
+    // "Turno" is only a fallback label for an unresolved professional lookup: seeded data always
     // resolves a real professional name. Assert the price line instead, which every upcoming item
     // renders (AppointmentsView.vue) and confirms full appointment detail, not just the badge.
     await expect(page.locator('li').filter({ hasText: 'Precio:' }).first()).toBeVisible({ timeout: 10_000 });

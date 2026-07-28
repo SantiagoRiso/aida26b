@@ -44,7 +44,7 @@ describe('ProfessionalDetail — a client/service the roster does not carry', ()
     vi.clearAllMocks();
     mockedGetRow.mockResolvedValue({ ok: true, data: { id: '10', display_name: 'Dr. Uno', bio: null } });
     // Neither the FK-options roster (clients) nor the local services map carries the ids the
-    // upcoming appointment below references — both stay unresolved.
+    // upcoming appointment below references, so both stay unresolved.
     mockedListRows.mockResolvedValue({ ok: true, data: [] });
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const futureEnd = new Date(future.getTime() + 30 * 60 * 1000);

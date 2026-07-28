@@ -287,7 +287,7 @@ describe('Rollback safety (no orphan auth.users row)', () => {
       body: { username: 'rollbacktest', password: 'testpass2', role: 'Client', email: 'rollbacktest2@test.com' },
     });
     expect(second.status).toBe(409);
-    // Precise message, not the generic "Ya existe un registro" conflict text — this is the
+    // Precise message, not the generic "Ya existe un registro" conflict text. This is the
     // customer-reported issue: creating a user with a taken username must say so specifically.
     expect(errorOf(second).detail?.key).toBe('usernameTaken');
 

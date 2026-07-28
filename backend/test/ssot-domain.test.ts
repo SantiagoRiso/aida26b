@@ -796,7 +796,7 @@ describe('isInternalColumn: the single predicate both generic renderers hide col
 
   // No table in the live SSOT currently declares a composite pk, but the predicate is written
   // against getPkFields (which returns every part of an array pk), not a single `pk` string
-  // comparison — so a future composite-pk table is covered without touching either renderer.
+  // comparison, so a future composite-pk table is covered without touching either renderer.
   it('derives from every part of a composite pk via getPkFields, not a single `pk` string', () => {
     for (const key of Object.keys(structure.tables) as TableKey[]) {
       const pkFields = getPkFields(key);

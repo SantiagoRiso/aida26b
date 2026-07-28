@@ -55,7 +55,7 @@ function openCreate() {
 
 // The form is novalidate, so nothing stops a submit with the role still on its placeholder. Left
 // to the server it comes back as one message naming three fields, which reads as a rejection of
-// whatever the reader thought they were doing — a duplicate username, say — instead of pointing at
+// whatever the reader thought they were doing (a duplicate username, say) instead of pointing at
 // the empty box.
 function missingCreateFields(): string[] {
   return Object.entries({

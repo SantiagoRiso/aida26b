@@ -160,7 +160,7 @@ describe('listVirtualOccurrences', () => {
     // 09:00 ART == 12:00Z, same calendar day, so the ISO instant still starts with the occurrence date.
     expect(first.starts_at.startsWith(startDate)).toBe(true);
     expect(first.in_conflict).toBe(false);
-    // A recurring turno is synthesized, never selected — its title must not go blank just because
+    // A recurring turno is synthesized, never selected: its title must not go blank just because
     // there is no appointments row to join. The names travel with the series itself (getActiveSeriesFor*).
     expect(first.service_name).toBe('Consulta');
     expect(first.professional_name).toBe('list_pro1');
