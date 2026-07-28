@@ -6,7 +6,8 @@ import { orderByClause } from './sort';
 import type { ListSort, SortColumns } from './sort';
 import type { AuditSortField } from '../../../shared/src/ssot/list-sort';
 import { BUSINESS_TZ } from '../time';
-import { appointmentName } from '../../../shared/src/ssot/domain/naming';
+import { appointmentName, ledgerEntryName } from '../../../shared/src/ssot/domain/naming';
+import { PERSON_ENTITY_TYPES } from '../../../shared/src/utils/utils';
 
 // ip is null for in-transaction writes (auditInTx) that don't carry a request. businessId is null
 // only for events that belong to no tenant — a login attempt on a username nobody holds.
@@ -114,18 +115,31 @@ type EntityNameParts = {
   entity_person_name: string | null;
   entity_appointment_client: string | null;
   entity_appointment_when: string | null;
+  entity_ledger_client: string | null;
+  entity_ledger_service: string | null;
+  entity_ledger_when: string | null;
 };
 
 // An entity with no natural name yields null and keeps its id on screen: better the locator it is
-// than a name invented for it.
-function composeEntityLabel(
-  person: string | null,
-  apptClient: string | null,
-  apptWhen: string | null,
-): string | null {
+// than a name invented for it. Branch order follows entity_type, which the joins already make
+// mutually exclusive, so an appointment or account row can't pick up a ledger label or vice versa.
+// Takes the projection row rather than loose arguments: the parts are all nullable strings, so a
+// positional list lets a caller swap the service for the timestamp and still typecheck, producing a
+// name that looks right and isn't.
+function composeEntityLabel(parts: EntityNameParts): string | null {
+  const person = parts.entity_person_name;
   if (person != null && person !== '') return person;
-  if (apptClient == null && apptWhen == null) return null;
-  return appointmentName({ client: apptClient, when: apptWhen }, '') || null;
+
+  const { entity_appointment_client: apptClient, entity_appointment_when: apptWhen } = parts;
+  if (apptClient != null || apptWhen != null) {
+    return appointmentName({ client: apptClient, when: apptWhen }, '') || null;
+  }
+
+  const { entity_ledger_client: client, entity_ledger_service: service, entity_ledger_when: when } = parts;
+  if (client != null || service != null || when != null) {
+    return ledgerEntryName({ client, service, when }, '') || null;
+  }
+  return null;
 }
 
 // Only code-controlled column names are interpolated; every filter value is a bound $N param.
@@ -161,27 +175,46 @@ export async function listAuditEvents(
   // business and gets the same projection they always did.
   const businessCol = f.scope.kind === 'all' ? 'a.business_id, ' : '';
 
+  // Bound into `params`, not appended after them, because the person join lives in the shared
+  // `from` clause: the count query binds `params` alone, so anything `from` references has to be
+  // in there or the count blows up on a missing parameter.
+  const personEntityParam = p++;
+  params.push([...PERSON_ENTITY_TYPES]);
+
   // Every join is outer so an event whose subject was purged still appears (dropping it would edit
   // the record). Shared with the count query: a filter only one of them applied would report a total
   // the page can't produce. Each ON tests the entity type first, so a row only pays for the join
-  // that can match it.
+  // that can match it. Every join key is a primary key (or, for `le.appointment_id`/`lap.service_id`,
+  // a foreign key into one), so none of them can multiply an audit row.
   //
   // `u` is who acted. The rest answer "on what", which for a reset or a cancellation is the whole
-  // point of the row and which the id alone never says.
+  // point of the row and which the id alone never says. `le`/`lec`/`lap`/`lsvc` chain off the ledger
+  // entry the same way `ap`/`apc` chain off an appointment: client, then (if any) the appointment it
+  // settles, then that appointment's service.
   const from = `FROM audit_events a
        LEFT JOIN auth.users_directory u ON u.id = a.actor_user_id
-       LEFT JOIN auth.users_directory tgt ON a.entity_type = 'auth.users' AND tgt.id = a.entity_id
+       LEFT JOIN auth.users_directory tgt
+              ON a.entity_type = ANY($${personEntityParam}) AND tgt.id = a.entity_id
        LEFT JOIN appointments ap ON a.entity_type = 'appointments' AND ap.id = a.entity_id
-       LEFT JOIN auth.users_directory apc ON apc.id = ap.client_user_id`;
+       LEFT JOIN auth.users_directory apc ON apc.id = ap.client_user_id
+       LEFT JOIN ledger_entries le ON a.entity_type = 'ledger_entries' AND le.id = a.entity_id
+       LEFT JOIN auth.users_directory lec ON lec.id = le.client_user_id
+       LEFT JOIN appointments lap ON lap.id = le.appointment_id
+       LEFT JOIN services lsvc ON lsvc.id = lap.service_id`;
 
   // A turno is named by whose it is and when, because a client books more than one. SQL yields the
   // pieces; the name is composed by the shared rule below, so the audit log and the screens that
   // title a turno cannot end up with two ideas of what one is called. Only the wall clock is
-  // formatted here, because the timezone conversion belongs to the database.
+  // formatted here, because the timezone conversion belongs to the database. A ledger movement
+  // reuses the same bound tz param: a second one would desync the page query's positional args from
+  // the count query, which never binds it.
   const tzParam = p;
   const entityParts = `${personName('tgt')} AS entity_person_name,
             apc.display_name AS entity_appointment_client,
-            to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI') AS entity_appointment_when`;
+            to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI') AS entity_appointment_when,
+            lec.display_name AS entity_ledger_client,
+            lsvc.name AS entity_ledger_service,
+            to_char(lap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI') AS entity_ledger_when`;
 
   const pageRows = await query<AuditEventRow & EntityNameParts & { total_count: string }>(
     db,
@@ -207,15 +240,20 @@ export async function listAuditEvents(
     return { rows: [], total: Number(count[0]?.n ?? 0) };
   }
   const total = Number(pageRows[0].total_count);
-  const rows = pageRows.map(({
-    total_count: _total,
-    entity_person_name: person,
-    entity_appointment_client: apptClient,
-    entity_appointment_when: apptWhen,
-    ...row
-  }) => ({
-    ...row,
-    entity_label: composeEntityLabel(person, apptClient, apptWhen),
-  } as AuditEventRow));
+  // The name is composed before the parts are stripped, so the label is the only trace of them
+  // that leaves this module.
+  const rows = pageRows.map(({ total_count: _total, ...withParts }) => {
+    const entity_label = composeEntityLabel(withParts);
+    const {
+      entity_person_name: _person,
+      entity_appointment_client: _apptClient,
+      entity_appointment_when: _apptWhen,
+      entity_ledger_client: _ledgerClient,
+      entity_ledger_service: _ledgerService,
+      entity_ledger_when: _ledgerWhen,
+      ...row
+    } = withParts;
+    return { ...row, entity_label } as AuditEventRow;
+  });
   return { rows, total };
 }

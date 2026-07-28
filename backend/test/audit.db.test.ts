@@ -325,6 +325,96 @@ describe('GET /api/audit filters (parameterized values)', () => {
       expect(rows[0].entity_label).toBeNull();
       expect(Number(rows[0].entity_id)).toBe(4242);
     });
+
+    // The generic engine stamps the SSoT table key, so editing a client writes entity_type
+    // 'clients' rather than 'auth.users'. Both name the same person row, and the log used to show
+    // only the table's title for the first.
+    test.each(['clients', 'professionals'])(
+      'a generic write stamped %s names the person, like the account routes already did',
+      async (entityType) => {
+        const eventType = `generic_write_named_${entityType}`;
+        await pool.query(
+          `INSERT INTO audit_events
+             (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+           VALUES ($1, $2, $3, $4, $5, 'success', '{}')`,
+          [bizId, adminId, eventType, entityType, clientId],
+        );
+
+        currentUser = asUser(adminId, 'Admin');
+        const rows = dataOf(await auditReq<AuditRow[]>('GET', `/api/audit?filter_event_type=${eventType}`));
+        expect(rows[0]?.entity_label).toBe('audit_client');
+      },
+    );
+
+    // A ledger row says who paid or who was charged, which the id alone never does.
+    test('a ledger charge with no appointment names just the client, with no dangling separator', async () => {
+      const entry = await pool.query<{ id: string }>(
+        `INSERT INTO ledger_entries (client_user_id, entry_type, amount_ars, actor_user_id)
+         VALUES ($1, 'charge', '1000.00', $2) RETURNING id`,
+        [clientId, adminId],
+      );
+      const entryId = Number(entry.rows[0].id);
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'ledger_charge_created_named_noappt', 'ledger_entries', $3, 'success', '{}')`,
+        [bizId, adminId, entryId],
+      );
+
+      currentUser = asUser(adminId, 'Admin');
+      const rows = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=ledger_charge_created_named_noappt'));
+      expect(rows[0]?.entity_label).toBe('audit_client');
+    });
+
+    test('a ledger charge tied to an appointment also names the service and when it was', async () => {
+      const svc = await pool.query<{ id: string }>(
+        `INSERT INTO services (business_id, name, default_duration_minutes, default_price_ars)
+         VALUES ($1, 'Sesión facturada', 30, '1200.00') RETURNING id`,
+        [bizId],
+      );
+      const svcId = Number(svc.rows[0].id);
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO appointments
+           (client_user_id, professional_user_id, service_id, starts_at, duration_minutes, state, price, override_conflict)
+         VALUES ($1, $2, $3, $4, 30, 'scheduled', '1200.00', false)
+         RETURNING id`,
+        [clientId, proId, svcId, FAR_FUTURE_TS],
+      );
+      const apptId = Number(appt.rows[0].id);
+      const entry = await pool.query<{ id: string }>(
+        `INSERT INTO ledger_entries (client_user_id, appointment_id, entry_type, amount_ars, actor_user_id)
+         VALUES ($1, $2, 'charge', '1200.00', $3) RETURNING id`,
+        [clientId, apptId, adminId],
+      );
+      const entryId = Number(entry.rows[0].id);
+      await pool.query(
+        `INSERT INTO audit_events
+           (business_id, actor_user_id, event_type, entity_type, entity_id, outcome, details)
+         VALUES ($1, $2, 'ledger_charge_created_named_withappt', 'ledger_entries', $3, 'success', '{}')`,
+        [bizId, adminId, entryId],
+      );
+
+      currentUser = asUser(adminId, 'Admin');
+      const rows = dataOf(await auditReq<AuditRow[]>('GET', '/api/audit?filter_event_type=ledger_charge_created_named_withappt'));
+      const label = rows[0]?.entity_label ?? '';
+      expect(label).toContain('audit_client');
+      expect(label).toContain('Sesión facturada');
+      // Wall clock in the business timezone, matching how a turno's own audit row is formatted.
+      expect(label).toMatch(/\d{2}\/\d{2} \d{2}:\d{2}$/);
+    });
+
+    // The ledger joins (entry -> client, entry -> appointment -> service) all key off a primary
+    // key, so a ledger audit row must still be exactly one row in the page total, not duplicated.
+    test('meta.total for ledger rows matches an independent count (join-multiplication guard)', async () => {
+      currentUser = asUser(adminId, 'Admin');
+      const res = await auditReq<AuditRow[]>('GET', '/api/audit?filter_entity_type=ledger_entries&limit=1&page=1');
+      expect(res.status).toBe(200);
+      const independent = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM audit_events WHERE business_id = $1 AND entity_type = 'ledger_entries'`,
+        [bizId],
+      );
+      expect(metaOf(res).total).toBe(Number(independent.rows[0].n));
+    });
   });
 
   test('every row carries the actor username, resolved from the directory', async () => {

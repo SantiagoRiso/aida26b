@@ -33,6 +33,16 @@ export function getEntityName(tableKey: TableKey): string {
   return String(tableOf(tableKey).uiName.en);
 }
 
+// The entity_type values an audit row can carry that identify a person. `clients` and
+// `professionals` are logical entities over the one person table, so a row stamped with either
+// names a user and resolves by the same lookup, and a later role-discriminated table joins the set
+// without anyone remembering to add it. 'auth.users' is the literal the bespoke account routes
+// stamp, and belongs to no table key.
+export const PERSON_ENTITY_TYPES: readonly string[] = Object.freeze([
+  'auth.users',
+  ...getTableKeys().filter((key) => String(tableOf(key).sqlTable ?? '').startsWith('auth.users')),
+]);
+
 // Surrogate pk and tenant-scope columns are internal plumbing, never a viewer-facing fact:
 // every generic renderer (list columns, edit-form read-only block) must hide the same set, so
 // this is the one place that decides what "internal" means. Composite pks are handled: all
