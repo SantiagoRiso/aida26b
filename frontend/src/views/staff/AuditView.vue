@@ -9,6 +9,7 @@ import { AUDIT_SORT_FIELDS } from '@shared/ssot/list-sort';
 import { structure } from '@shared/ssot/structure';
 import type { TableStructure } from '@shared/types/types';
 import type { TableKey } from '@shared/ssot/derived';
+import { isTableKey } from '@shared/utils/utils';
 import { useCurrency } from '@/composables/useCurrency';
 import { useLabel } from '@/composables/useLabel';
 import { useListQuerySync } from '@/composables/useListQuerySync';
@@ -125,6 +126,27 @@ function actorLabel(event: AuditEvent): string {
   if (event.actor_username != null) return event.actor_username;
   if (event.actor_user_id != null) return `#${event.actor_user_id}`;
   return t('generic.emptyValue');
+}
+
+// The entity reads like the actor does: a name, not a table name and a number. Generic writes stamp
+// the table key itself, so an unresolved entity still falls back to that table's own title rather
+// than its SQL name. auth.users is the one entity whose stamped value is not a table key.
+function entityKindLabel(entityType: string): string {
+  const key = entityType === 'auth.users' ? 'users' : entityType;
+  return isTableKey(key) ? label((structure.tables[key] as TableStructure).title) : entityType;
+}
+
+function entityLabel(event: AuditEvent): string {
+  if (event.entity_label != null) return event.entity_label;
+  if (event.entity_type != null) return entityKindLabel(event.entity_type);
+  return t('generic.emptyValue');
+}
+
+// The locator the name replaced, kept on hover: reading the log is a human question, but chasing a
+// specific record afterwards still needs the id.
+function entityDetail(event: AuditEvent): string {
+  if (event.entity_type == null) return '';
+  return event.entity_id != null ? `${event.entity_type} #${event.entity_id}` : event.entity_type;
 }
 
 async function load() {
@@ -310,9 +332,7 @@ if (isAdmin.value) {
                 {{ event.event_type }}
               </td>
               <td class="px-4 py-3 text-neutral">
-                {{ event.entity_type }}
-                <span v-if="event.entity_label" class="ml-1 text-xs opacity-70">{{ event.entity_label }}</span>
-                <span v-else-if="event.entity_id" class="ml-1 text-xs opacity-60">#{{ event.entity_id }}</span>
+                <span :title="entityDetail(event)">{{ entityLabel(event) }}</span>
               </td>
               <td class="px-4 py-3 text-neutral">
                 {{ actorLabel(event) }}

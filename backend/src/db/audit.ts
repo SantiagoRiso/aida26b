@@ -44,7 +44,7 @@ export const AUDIT_SORT_COLUMNS: SortColumns<AuditSortField> = {
   created_at: 'a.created_at',
   event_type: 'a.event_type',
   entity_type: 'a.entity_type',
-  actor_username: 'u.username',
+  actor_username: personName('u'),
   outcome: 'a.outcome',
 };
 
@@ -81,6 +81,14 @@ export type AuditListFilter = {
 // IS DISTINCT FROM makes the negated set the exact complement of the positive one.
 function matchOp(negated: boolean): string {
   return negated ? 'IS DISTINCT FROM' : '=';
+}
+
+// One answer to "what do we call this person", for whichever joined user is being named: the login
+// when there is one, the display name otherwise. A contact-only client has no username, and an
+// actor and an entity must not disagree about the same row. Deliberately not used by the search
+// below — matching is over both identifiers, which is a wider question than what to display.
+function personName(alias: string): string {
+  return `coalesce(${alias}.username, ${alias}.display_name)`;
 }
 
 // A reader looking for "who did this" knows a person, not an exact login, so the actor filter
@@ -152,14 +160,14 @@ export async function listAuditEvents(
   // it is than given an invented one.
   const tzParam = p;
   const entityLabel = `CASE
-              WHEN a.entity_type = 'auth.users' THEN coalesce(tgt.username, tgt.display_name)
+              WHEN a.entity_type = 'auth.users' THEN ${personName('tgt')}
               WHEN ap.id IS NOT NULL
                 THEN apc.display_name || ' · ' || to_char(ap.starts_at AT TIME ZONE $${tzParam}, 'DD/MM HH24:MI')
             END AS entity_label`;
 
   const pageRows = await query<AuditEventRow & { total_count: string }>(
     db,
-    `SELECT a.id, ${businessCol}a.actor_user_id, u.username AS actor_username,
+    `SELECT a.id, ${businessCol}a.actor_user_id, ${personName('u')} AS actor_username,
             ${entityLabel},
             a.event_type, a.entity_type, a.entity_id,
             a.outcome, a.ip, a.details, a.created_at,

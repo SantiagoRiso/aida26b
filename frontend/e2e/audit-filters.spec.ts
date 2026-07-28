@@ -124,7 +124,9 @@ test.describe('Audit log (admin) — access, filters, denied styling, pagination
     await page.getByRole('button', { name: es.audit.search }).click();
     const body = await (await resp).json();
     expect(body.meta.total).toBeGreaterThan(0);
-    await expect(page.locator('tbody tr').first()).toContainText('appointments');
+    // The cell names the turno now; the stored literal moved to the hover locator, which is what
+    // proves the option's value and what the writer stamps still agree.
+    await expect(page.locator('tbody tr').first().locator('[title*="appointments"]')).toBeVisible();
   });
 
   test('entity-type "Permisos de calendario" filter matches calendar_grants events', async ({ page }) => {
@@ -137,7 +139,7 @@ test.describe('Audit log (admin) — access, filters, denied styling, pagination
     await page.getByRole('button', { name: es.audit.search }).click();
     const body = await (await resp).json();
     expect(body.meta.total).toBeGreaterThan(0);
-    await expect(page.locator('tbody tr').first()).toContainText('calendar_grants');
+    await expect(page.locator('tbody tr').first().locator('[title*="calendar_grants"]')).toBeVisible();
   });
 
   test('actor + event type + outcome + date range narrow to exactly the self-seeded denied events, styled and paginated', async ({ page }) => {
