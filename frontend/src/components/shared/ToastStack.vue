@@ -67,7 +67,7 @@ function kindClasses(kind: Toast['kind']): string {
         :class="['flex items-center justify-between rounded-md px-4 py-3 text-sm font-semibold shadow-lg min-w-[280px] max-w-sm', kindClasses(toast.kind)]"
         role="alert"
       >
-        <span>{{ t(`toast.${toast.messageKey}`, toast.messageKey) }}</span>
+        <span>{{ toast.params ? t(`toast.${toast.messageKey}`, toast.params) : t(`toast.${toast.messageKey}`, toast.messageKey) }}</span>
         <button
           type="button"
           class="ml-4 flex-shrink-0 rounded opacity-70 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inverted"

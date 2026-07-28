@@ -121,3 +121,50 @@ test.describe('Resources (Salas) — add, inline edit, delete, Horario', () => {
     await expect(page.locator('.fc')).toBeVisible({ timeout: 10_000 });
   });
 });
+
+/**
+ * The editor is mounted inside the detail panel with an inline `:owner="{ kind, id }"` object, so
+ * every re-render handed it a new prop identity. The owner watcher compared by reference, reloaded
+ * the blocks and cleared the selection, and a click on a block then opened the editor with nothing
+ * selected: the modal appeared in create mode and saving added a second block instead of editing.
+ */
+test.describe('Resource schedule — clicking a block edits it, never creates one', () => {
+  async function openRoomSchedule(page: import('@playwright/test').Page, roomId: number) {
+    await openScreen(page, es.nav.business);
+    const row = page.getByTestId(`room-row-${roomId}`);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await row.getByTestId(`room-schedule-${roomId}`).click();
+    await expect(page.locator('.fc')).toBeVisible({ timeout: 10_000 });
+  }
+
+  test('the modal opens on the clicked block, with its times and a delete action', async ({ page }) => {
+    await login(page, DEMO_ACCOUNTS.adminUser.username, DEMO_ACCOUNTS.adminUser.password);
+    const roomId = await createRoom(page.request, `Sala E2E P5 ${ts} BlockEdit`);
+
+    const created = await page.request.post('/api/schedule_blocks', {
+      data: { resource_id: String(roomId), professional_user_id: null, weekday: 'tue', start_time: '10:00', end_time: '12:00' },
+    });
+    expect(created.ok(), `fixture block: ${await created.text()}`).toBe(true);
+    const blockId = String((await created.json()).data.id);
+
+    await openRoomSchedule(page, roomId);
+    await page.locator(`[data-block-id="${blockId}"]`).first().click();
+
+    const modal = page.locator('[data-testid="block-editor-modal"]');
+    await expect(modal).toBeVisible({ timeout: 10_000 });
+    // Editing, not creating: the title and the delete action only exist for an existing block.
+    await expect(modal.getByText(es.schedule.editBlock)).toBeVisible();
+    await expect(modal.getByTestId('block-edit-delete')).toBeVisible();
+
+    // Saving must update that block, not post a new one.
+    const put = page.waitForResponse(
+      (r) => new RegExp(`/api/schedule_blocks/${blockId}$`).test(r.url()) && r.request().method() === 'PUT',
+      { timeout: 10_000 },
+    );
+    await modal.getByTestId('block-edit-save').click();
+    expect((await put).ok()).toBe(true);
+
+    const after = await page.request.get(`/api/schedule_blocks?filter_resource_id=${roomId}&limit=100`);
+    expect((await after.json()).data).toHaveLength(1);
+  });
+});

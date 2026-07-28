@@ -91,19 +91,22 @@ describe('scheduleTemplateGrid', () => {
       expect(result).toEqual({ ok: true, body: { weekday: 'mon', start_time: '13:00', end_time: '14:00' } });
     });
 
-    it('rejects an overlapping candidate', () => {
+    // The rejection names the block that was in the way, so the message can point at it rather
+    // than leaving the user to hunt through the week.
+    it('rejects an overlapping candidate and reports which block it hit', () => {
       const result = decideCreate({ startStr: '2024-01-01T10:00:00', endStr: '2024-01-01T11:00:00' }, existing);
-      expect(result).toEqual({ ok: false, reason: 'overlap' });
+      expect(result).toEqual({ ok: false, reason: 'overlap', conflict: existing[0] });
     });
 
+    // Two different mistakes with two different fixes, so they no longer share one vague reason.
     it('rejects a start >= end candidate', () => {
       const result = decideCreate({ startStr: '2024-01-03T10:00:00', endStr: '2024-01-03T10:00:00' }, existing);
-      expect(result).toEqual({ ok: false, reason: 'invalid' });
+      expect(result).toEqual({ ok: false, reason: 'endAfterStart' });
     });
 
     it('rejects a candidate that crosses midnight into the next date', () => {
       const result = decideCreate({ startStr: '2024-01-03T23:30:00', endStr: '2024-01-04T00:15:00' }, existing);
-      expect(result).toEqual({ ok: false, reason: 'invalid' });
+      expect(result).toEqual({ ok: false, reason: 'crossesDay' });
     });
   });
 
@@ -120,7 +123,7 @@ describe('scheduleTemplateGrid', () => {
 
     it('still rejects overlap with a different block on the same weekday', () => {
       const result = decideUpdate({ startStr: '2024-01-02T10:00:00', endStr: '2024-01-02T11:00:00' }, existing, '1');
-      expect(result).toEqual({ ok: false, reason: 'overlap' });
+      expect(result).toEqual({ ok: false, reason: 'overlap', conflict: existing[1] });
     });
 
     it('allows moving to a different weekday when it does not overlap there', () => {

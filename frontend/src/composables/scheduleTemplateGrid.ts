@@ -99,24 +99,37 @@ export function snapToNeighbors(
   };
 }
 
+// Returns the block in the way, not just that one exists: the message a user can act on names the
+// window they collided with.
+export function findOverlap(
+  candidate: { weekday: Weekday; start_time: string; end_time: string },
+  others: TemplateBlock[],
+  ignoreId?: string,
+): TemplateBlock | null {
+  const a = { startsAt: toMinutes(candidate.start_time), endsAt: toMinutes(candidate.end_time) };
+  return others.find((o) =>
+    o.id !== ignoreId &&
+    o.weekday === candidate.weekday &&
+    detectOverlap(a, { startsAt: toMinutes(o.start_time), endsAt: toMinutes(o.end_time) }),
+  ) ?? null;
+}
+
 export function overlaps(
   candidate: { weekday: Weekday; start_time: string; end_time: string },
   others: TemplateBlock[],
   ignoreId?: string,
 ): boolean {
-  const a = { startsAt: toMinutes(candidate.start_time), endsAt: toMinutes(candidate.end_time) };
-  return others.some((o) =>
-    o.id !== ignoreId &&
-    o.weekday === candidate.weekday &&
-    detectOverlap(a, { startsAt: toMinutes(o.start_time), endsAt: toMinutes(o.end_time) }),
-  );
+  return findOverlap(candidate, others, ignoreId) != null;
 }
 
 export type WeekdayTimes = { weekday: Weekday; start_time: string; end_time: string };
 
+// 'crossesDay' and 'endAfterStart' were one 'invalid' reason answered by one vague message. They are
+// different mistakes and the fix differs, so each carries its own. 'overlap' carries the block hit.
 export type DecideResult =
   | { ok: true; body: WeekdayTimes }
-  | { ok: false; reason: 'invalid' | 'overlap' };
+  | { ok: false; reason: 'crossesDay' | 'endAfterStart' }
+  | { ok: false; reason: 'overlap'; conflict: TemplateBlock };
 
 // A drag-select or drop/resize that lands the event on a different calendar date than it started
 // (crosses midnight) can't be expressed as a single weekday+HH:MM block — reject before converting.
@@ -128,10 +141,11 @@ export function decideCreate(
   candidate: { startStr: string; endStr: string },
   blocks: TemplateBlock[],
 ): DecideResult {
-  if (crossesDay(candidate.startStr, candidate.endStr)) return { ok: false, reason: 'invalid' };
+  if (crossesDay(candidate.startStr, candidate.endStr)) return { ok: false, reason: 'crossesDay' };
   const times = snapToNeighbors(eventToWeekdayTimes(candidate.startStr, candidate.endStr), blocks);
-  if (times.start_time >= times.end_time) return { ok: false, reason: 'invalid' };
-  if (overlaps(times, blocks)) return { ok: false, reason: 'overlap' };
+  if (times.start_time >= times.end_time) return { ok: false, reason: 'endAfterStart' };
+  const conflict = findOverlap(times, blocks);
+  if (conflict) return { ok: false, reason: 'overlap', conflict };
   return { ok: true, body: times };
 }
 
@@ -143,9 +157,10 @@ export function decideUpdate(
 ): DecideResult {
   // No re-snap here: the live custom drag already snapped and clamped, so persist exactly what the
   // ghost showed. This is just the safety net (same-day, valid range, no overlap).
-  if (crossesDay(candidate.startStr, candidate.endStr)) return { ok: false, reason: 'invalid' };
+  if (crossesDay(candidate.startStr, candidate.endStr)) return { ok: false, reason: 'crossesDay' };
   const times = eventToWeekdayTimes(candidate.startStr, candidate.endStr);
-  if (times.start_time >= times.end_time) return { ok: false, reason: 'invalid' };
-  if (overlaps(times, blocks, ignoreId)) return { ok: false, reason: 'overlap' };
+  if (times.start_time >= times.end_time) return { ok: false, reason: 'endAfterStart' };
+  const conflict = findOverlap(times, blocks, ignoreId);
+  if (conflict) return { ok: false, reason: 'overlap', conflict };
   return { ok: true, body: times };
 }

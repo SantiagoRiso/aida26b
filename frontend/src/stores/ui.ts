@@ -11,6 +11,9 @@ export interface Toast {
   id: number;
   kind: ToastKind;
   messageKey: string;
+  // A message that names what went wrong ("overlaps the 09:00 to 13:10 block") beats one that only
+  // says a rule was broken, so a toast can interpolate the offending values.
+  params?: Record<string, string>;
 }
 
 export const useUiStore = defineStore('ui', {
@@ -40,8 +43,8 @@ export const useUiStore = defineStore('ui', {
       this.sessionExpired = true;
       this.toast('error', 'sessionExpired');
     },
-    toast(kind: ToastKind, messageKey: string) {
-      this.toasts.push({ id: Date.now(), kind, messageKey });
+    toast(kind: ToastKind, messageKey: string, params?: Record<string, string>) {
+      this.toasts.push({ id: Date.now(), kind, messageKey, params });
     },
     dismissToast(id: number) {
       this.toasts = this.toasts.filter((t) => t.id !== id);

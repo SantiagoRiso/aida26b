@@ -12,7 +12,7 @@ import { useToast } from '@/composables/useToast';
 import { useScheduleTemplate } from '@/composables/useScheduleTemplate';
 import { useTimegridGeometry } from '@/composables/useTimegridGeometry';
 import { useTemplateBlockDrag } from '@/composables/useTemplateBlockDrag';
-import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type TemplateBlock, type WeekdayTimes } from '@/composables/scheduleTemplateGrid';
+import { decideCreate, decideUpdate, weekdayToDate, dateToWeekday, type TemplateBlock, type WeekdayTimes, type DecideResult } from '@/composables/scheduleTemplateGrid';
 import type { TableRecordMap } from '@shared/ssot/derived';
 import type { OwnerKind } from '@shared/ssot/domain/conflict';
 import { isWeekday } from '@shared/ssot/domain/availability';
@@ -62,7 +62,11 @@ async function loadBlocks() {
       });
   }
 }
-watch(() => props.owner, loadBlocks, { deep: true });
+// Keyed by value, not by the prop object. Both mount sites pass an object literal, so every parent
+// re-render produced a fresh identity: watching the reference reloaded the list and cleared the
+// selection mid-interaction, and a click on a block then opened the editor with nothing selected,
+// which reads as creating a new one.
+watch(() => `${props.owner.kind}:${props.owner.id}`, loadBlocks);
 onMounted(loadBlocks);
 
 // A row we just wrote should always map back; one that doesn't carries a weekday this editor can't
@@ -91,13 +95,24 @@ function writeBody(times: WeekdayTimes): Partial<TableRecordMap['schedule_blocks
   };
 }
 
+// One place turns a rejected placement into words. An overlap names the window it hit, because
+// "se superpone con otro" leaves the user hunting for which one on a week with several blocks.
+function reportRejection(decision: Extract<DecideResult, { ok: false }>) {
+  if (decision.reason === 'overlap') {
+    const { start_time, end_time } = decision.conflict;
+    toast.error('scheduleBlockOverlap', { start: start_time, end: end_time });
+    return;
+  }
+  toast.error(decision.reason === 'crossesDay' ? 'scheduleBlockCrossesDay' : 'scheduleBlockEndAfterStart');
+}
+
 async function onSelect(arg: DateSelectArg) {
   const cal = arg.view.calendar;
   cal.unselect();
 
   const decision = decideCreate({ startStr: arg.startStr, endStr: arg.endStr }, blocks.value);
   if (!decision.ok) {
-    toast.error(decision.reason === 'overlap' ? 'scheduleBlockOverlap' : 'scheduleBlockInvalidRange');
+    reportRejection(decision);
     return;
   }
 
@@ -137,7 +152,7 @@ async function submitBlock(times: { weekday: Weekday; startTime: string; endTime
     block?.id ?? '',
   );
   if (!decision.ok) {
-    toast.error(decision.reason === 'overlap' ? 'scheduleBlockOverlap' : 'scheduleBlockInvalidRange');
+    reportRejection(decision);
     return false;
   }
   const res = block
@@ -162,7 +177,7 @@ function onDeleteRequest() {
 async function applyMove(id: string, startStr: string, endStr: string, revert: () => void) {
   const decision = decideUpdate({ startStr, endStr }, blocks.value, id);
   if (!decision.ok) {
-    toast.error(decision.reason === 'overlap' ? 'scheduleBlockOverlap' : 'scheduleBlockInvalidRange');
+    reportRejection(decision);
     revert();
     return;
   }

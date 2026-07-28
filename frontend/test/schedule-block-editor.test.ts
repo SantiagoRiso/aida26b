@@ -108,7 +108,7 @@ describe('ScheduleBlockEditor', () => {
 
     expect(createRow).not.toHaveBeenCalled();
     const ui = useUiStore();
-    expect(ui.toasts.at(-1)).toMatchObject({ kind: 'error', messageKey: 'scheduleBlockInvalidRange' });
+    expect(ui.toasts.at(-1)).toMatchObject({ kind: 'error', messageKey: 'scheduleBlockEndAfterStart' });
   });
 
   it('moves a block via decideUpdate wiring and calls updateRow with the right body', async () => {
