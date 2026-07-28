@@ -52,9 +52,13 @@ test.describe('Business settings — cancellation cutoff persists and is enforce
     const svc = (await svcRes.json()).data[0];
     const client = (await clientRes.json()).data[0];
 
+    // The turno has to sit inside the 48h cutoff for the cancel to be refused, but the hour must not
+    // be inherited from the clock: a run started in the early evening put the start near 23:00, and
+    // the service duration then spilled past midnight, which the server rejects outright. Booking
+    // midday on the day 30h out keeps it 18 to 42h away, inside the cutoff at any hour of the day.
     const startAt = new Date(Date.now() + 30 * 60 * 60 * 1000);
     const date = `${startAt.getFullYear()}-${String(startAt.getMonth() + 1).padStart(2, '0')}-${String(startAt.getDate()).padStart(2, '0')}`;
-    const start = `${String(startAt.getHours()).padStart(2, '0')}:${String(startAt.getMinutes()).padStart(2, '0')}`;
+    const start = '12:00';
 
     const scheduleRes = await page.request.post('/api/appointments/schedule', {
       data: {
